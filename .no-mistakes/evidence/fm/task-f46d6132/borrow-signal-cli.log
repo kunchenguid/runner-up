@@ -1,0 +1,8 @@
+=== RUN   TestBorrowCLICommandSignalStatus
+    borrow_test.go:127: borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        terminating borrowed command with SIGTERM
+        command exit=143; place released
+        place box-1 on box (tart, 2 cores, 4096 MB) free
+--- PASS: TestBorrowCLICommandSignalStatus (1.65s)
+PASS
+ok  	github.com/kunchenguid/runner-up/cmd	1.854s

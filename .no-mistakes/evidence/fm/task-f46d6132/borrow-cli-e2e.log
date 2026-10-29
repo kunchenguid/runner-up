@@ -1,0 +1,130 @@
+=== RUN   TestBorrowCLIRealTartCleanup
+    borrow_live_test.go:44: borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        created=runner-up-box-1 cwd=/Users/kunchen/.no-mistakes/worktrees/9ec2f2476b69/01M64GVRHPEY238V6FZ6PMVYC6/cmd
+        Tart list after real agent cleanup: [
+        
+        ]
+        
+        stray child stopped; exit=23
+        place box-1 on box (tart, 2 cores, 4096 MB) free
+--- PASS: TestBorrowCLIRealTartCleanup (1.14s)
+=== RUN   TestBorrowCLIRealTartDisconnect
+    borrow_live_test.go:70: caller killed without graceful cancellation
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        borrow: stopping command: context canceled
+        Tart list after disconnect: [
+        
+        ]
+        
+        command stopped; place free
+--- PASS: TestBorrowCLIRealTartDisconnect (0.70s)
+=== RUN   TestBorrowSupervisorLiveDeadline
+    borrow_live_test.go:150: borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        borrow: stopping command: context deadline exceeded
+        borrow completed place=box-1 label="deadline check" borrowedMinutes=60.00
+        Tart list after deadline cleanup: [
+        
+        ]
+        
+        command stopped; exit=124
+--- PASS: TestBorrowSupervisorLiveDeadline (10.34s)
+=== RUN   TestBorrowCLILiveSharedQueue
+    borrow_live_test.go:179: shortest granted while older borrow and GitHub job wait:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T12:11:33-07:00
+        waiting borrow ru-linux "same label" since 2026-10-29T12:11:29-07:00
+        waiting octo-org/app ru-linux "verify / linux" since 2026-10-29T12:10:28-07:00
+    borrow_live_test.go:187: short request:
+        borrow: waiting at position 1: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        long request:
+        borrow: waiting at position 1: box-1: job
+        borrow: waiting at position 2: box-1: job
+        borrow: waiting at position 2: waiting for placement
+        borrow: waiting at position 1: box-1: borrow
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        GitHub acquired after both commands: [9101]
+--- PASS: TestBorrowCLILiveSharedQueue (8.05s)
+=== RUN   TestBorrowCLILiveTwoSlotAccounting
+    borrow_live_test.go:232: two equal-label borrows active after restart; third waits:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T12:11:39-07:00
+        place box-2 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T12:11:42-07:00
+        place box-3 on box (tart, 2 cores, 4096 MB) busy (macOS VM limit: 2 of 2 running)
+        waiting borrow ru-linux "same label" since 2026-10-29T12:11:44-07:00
+        
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+    borrow_live_test.go:237: one:
+        borrow: waiting for coordinator
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        two:
+        borrow: waiting for coordinator
+        borrow: granted box-2 (2 cores, 4096 MB), VM runner-up-box-2; limit 1h0m0s
+        place=box-2 vm=runner-up-box-2
+        three after release:
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+        borrow: waiting for coordinator
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+--- PASS: TestBorrowCLILiveTwoSlotAccounting (12.91s)
+=== RUN   TestBorrowCLILiveOwnerRoom
+=== RUN   TestBorrowCLILiveOwnerRoom/cores
+    borrow_live_test.go:278: owner room preserved across restart:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T12:11:50-07:00
+        place box-2 on box (tart, 2 cores, 4096 MB) busy (cores 2 of 3 in use, 1 kept for the owner)
+        waiting borrow ru-linux "same label" since 2026-10-29T12:11:50-07:00
+        
+        borrow: waiting at position 1: box-2: cores 2 of 3 in use, 1 kept for the owner
+    borrow_live_test.go:282: first:
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        second after share released:
+        borrow: waiting at position 1: box-2: cores 2 of 3 in use, 1 kept for the owner
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+=== RUN   TestBorrowCLILiveOwnerRoom/memory
+    borrow_live_test.go:278: owner room preserved across restart:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T12:11:52-07:00
+        place box-2 on box (tart, 2 cores, 4096 MB) busy (memory 4096 of 7168 MB in use, 1024 MB kept for the owner)
+        waiting borrow ru-linux "same label" since 2026-10-29T12:11:52-07:00
+        
+        borrow: waiting at position 1: box-2: memory 4096 of 7168 MB in use, 1024 MB kept for the owner
+    borrow_live_test.go:282: first:
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        second after share released:
+        borrow: waiting at position 1: box-2: memory 4096 of 7168 MB in use, 1024 MB kept for the owner
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+--- PASS: TestBorrowCLILiveOwnerRoom (4.78s)
+    --- PASS: TestBorrowCLILiveOwnerRoom/cores (2.62s)
+    --- PASS: TestBorrowCLILiveOwnerRoom/memory (2.16s)
+=== RUN   TestBorrowCLIWaitsRunsAndSurvivesRestart
+    borrow_test.go:63: CLI transcript:
+        borrow: waiting at position 1: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1 cpus=2 memory=4096 input=hello
+        
+        Restart preserved the lock; cleanup removed the stand-in VM; exit=23.
+        place box-1 on box (tart, 2 cores, 4096 MB) free
+--- PASS: TestBorrowCLIWaitsRunsAndSurvivesRestart (4.15s)
+=== RUN   TestBorrowCLICancellation
+=== RUN   TestBorrowCLICancellation/queued=true
+    borrow_test.go:109: cancellation exit=130; no VM or request remains
+        borrow: waiting at position 1: box-1: job
+=== RUN   TestBorrowCLICancellation/queued=false
+    borrow_test.go:109: cancellation exit=130; no VM or request remains
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        borrow: stopping command: context canceled
+--- PASS: TestBorrowCLICancellation (2.16s)
+    --- PASS: TestBorrowCLICancellation/queued=true (1.47s)
+    --- PASS: TestBorrowCLICancellation/queued=false (0.68s)
+=== RUN   TestBorrowCLIRejectsInvalidInputs
+    borrow_test.go:193: borrow [--pool ru-linux --label check --minutes 0 -- true]: exit=2, borrow needs --pool LABEL --label TEXT --minutes N -- COMMAND
+    borrow_test.go:193: borrow [--pool ru-linux --minutes 20 -- true]: exit=2, borrow needs --pool LABEL --label TEXT --minutes N -- COMMAND
+    borrow_test.go:193: borrow [--pool ru-linux --label check --minutes 20]: exit=2, borrow needs --pool LABEL --label TEXT --minutes N -- COMMAND
+    borrow_test.go:193: borrow [--config /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/TestBorrowCLIRejectsInvalidInputs2709959216/001/config.json --pool ru-linux --label check --minutes 20 -- true]: exit=2, pool has no tart place
+--- PASS: TestBorrowCLIRejectsInvalidInputs (0.25s)
+PASS
+ok  	github.com/kunchenguid/runner-up/cmd	44.740s

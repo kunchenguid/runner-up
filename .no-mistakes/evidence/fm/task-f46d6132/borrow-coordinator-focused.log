@@ -1,0 +1,39 @@
+=== RUN   TestBorrowRanksAmongRecordedJobs
+=== RUN   TestBorrowRanksAmongRecordedJobs/short_borrow
+    borrow_test.go:84: short borrow: place=mac-1 borrow="request-check" job="native check"
+    borrow_test.go:95: next run on the same place: borrow="" job="verify / linux"
+=== RUN   TestBorrowRanksAmongRecordedJobs/long_borrow
+    borrow_test.go:84: long borrow: place=mac-1 borrow="" job="verify / linux"
+    borrow_test.go:95: next run on the same place: borrow="" job="affected-journeys"
+=== RUN   TestBorrowRanksAmongRecordedJobs/aged_job_goes_first
+    borrow_test.go:84: aged job goes first: place=mac-1 borrow="" job="verify / linux"
+    borrow_test.go:95: next run on the same place: borrow="" job="affected-journeys"
+=== RUN   TestBorrowRanksAmongRecordedJobs/oldest_borrow
+    borrow_test.go:84: oldest borrow: place=mac-1 borrow="request-check" job="native check"
+    borrow_test.go:95: next run on the same place: borrow="" job="verify / linux"
+--- PASS: TestBorrowRanksAmongRecordedJobs (0.06s)
+    --- PASS: TestBorrowRanksAmongRecordedJobs/short_borrow (0.02s)
+    --- PASS: TestBorrowRanksAmongRecordedJobs/long_borrow (0.02s)
+    --- PASS: TestBorrowRanksAmongRecordedJobs/aged_job_goes_first (0.02s)
+    --- PASS: TestBorrowRanksAmongRecordedJobs/oldest_borrow (0.01s)
+=== RUN   TestBorrowCountsOnceAcrossRestart
+    borrow_test.go:136: restart: named VM plus held borrow reserves one share and leaves the second VM slot free
+--- PASS: TestBorrowCountsOnceAcrossRestart (0.00s)
+=== RUN   TestBorrowAbandonedWaiterAndEqualLabels
+--- PASS: TestBorrowAbandonedWaiterAndEqualLabels (0.00s)
+=== RUN   TestBorrowLimit
+--- PASS: TestBorrowLimit (0.00s)
+=== RUN   TestBorrowCommandExitAndDeadline
+=== RUN   TestBorrowCommandExitAndDeadline/exit
+    borrow_test.go:217: exit=23 output="mini-vm1 runner-up-mini-vm1 4 16384"
+=== RUN   TestBorrowCommandExitAndDeadline/deadline
+    borrow_test.go:217: exit=124 output="borrow: stopping command: context deadline exceeded\n"
+--- PASS: TestBorrowCommandExitAndDeadline (0.22s)
+    --- PASS: TestBorrowCommandExitAndDeadline/exit (0.01s)
+    --- PASS: TestBorrowCommandExitAndDeadline/deadline (0.21s)
+=== RUN   TestBorrowCommandSignalStatus
+--- PASS: TestBorrowCommandSignalStatus (0.09s)
+=== RUN   TestBorrowUnpublishedRequestIsNotCollected
+--- PASS: TestBorrowUnpublishedRequestIsNotCollected (0.03s)
+PASS
+ok  	github.com/kunchenguid/runner-up/internal/coordinator	0.621s
