@@ -23,7 +23,9 @@ import (
 // repository only; workflow:GLOB puts a workflow's jobs first; waited:D keeps
 // a job that waited D from being passed over; shortest runs the job with the
 // shortest learned runtime first, and learns it from GitHub's completion
-// messages.
+// messages. pool:NAME puts a pool's jobs first, so short jobs a merge waits
+// on, given a pool of their own, go ahead even of jobs that waited an hour and
+// of labeled pull requests on the places they share with other pools.
 
 // onePlace is one machine with one place for every pool, so the order the
 // place takes waiting jobs in is the order the rules pick.
@@ -91,18 +93,41 @@ func TestDefaultOrderIsFirstInFirstOutWithoutEstimates(t *testing.T) {
 	wantOrder(t, got, []string{oVerify, oPR184, oPublish, oSuite, oRelease, oPR186})
 }
 
+// labelPR186 labels app's open pull request #186 urgent.
+func labelPR186(h *harness) {
+	h.svc.LabelReader = func(_ context.Context, repo string) (map[string]map[string]bool, error) {
+		if repo != "octo-org/app" {
+			return nil, nil
+		}
+		return map[string]map[string]bool{"refs/pull/186/merge": {"urgent": true}}, nil
+	}
+}
+
 func TestLabeledPullRequestGoesFirst(t *testing.T) {
 	cfg := onePlace(t.TempDir(), "label:urgent", "waited:60m", "shortest")
-	got := takeOrder(t, cfg, func(h *harness) {
-		h.svc.LabelReader = func(_ context.Context, repo string) (map[string]map[string]bool, error) {
-			if repo != "octo-org/app" {
-				return nil, nil
-			}
-			return map[string]map[string]bool{"refs/pull/186/merge": {"urgent": true}}, nil
-		}
-	})
+	got := takeOrder(t, cfg, labelPR186)
 	// PR #186's job, the newest, goes first; the rest keep their order.
 	wantOrder(t, got, []string{oPR186, oVerify, oPR184, oPublish, oSuite, oRelease})
+}
+
+func TestPoolGoesFirstAheadOfLabelsAndHourOldJobs(t *testing.T) {
+	cfg := onePlace(t.TempDir(), "pool:ru-large", "label:urgent", "waited:60m", "shortest")
+	got := takeOrder(t, cfg, labelPR186)
+	// The ru-large jobs, publish and the wallet's release, go first, though
+	// verify and PR #184 waited longer and PR #186 is labeled urgent. The
+	// ru-linux jobs follow in the order the later rules give them.
+	wantOrder(t, got, []string{oPublish, oRelease, oPR186, oVerify, oPR184, oSuite})
+}
+
+// A pool rule naming a pool the setup does not have would order nothing and
+// say nothing, so the setup is refused.
+func TestPoolRuleMustNameAPoolOfTheSetup(t *testing.T) {
+	if err := onePlace(t.TempDir(), "pool:ru-large").Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := onePlace(t.TempDir(), "pool:ru-lagre").Validate(); err == nil || !strings.Contains(err.Error(), `"pool:ru-lagre"`) {
+		t.Fatalf("a pool rule for a misspelled pool: %v", err)
+	}
 }
 
 func TestReleaseWorkflowGoesFirst(t *testing.T) {
@@ -156,12 +181,12 @@ func TestShortestLearnedJobGoesFirstUnlessAnotherWaitedAnHour(t *testing.T) {
 }
 
 func TestOrderRulesAreChecked(t *testing.T) {
-	for _, bad := range [][]string{{"label:"}, {"waited:soon"}, {"workflow:["}, {"shortest:yes"}, {"fastest"}} {
+	for _, bad := range [][]string{{"label:"}, {"pool:"}, {"waited:soon"}, {"workflow:["}, {"shortest:yes"}, {"fastest"}} {
 		if _, err := plan.ParseOrder(bad); err == nil {
 			t.Errorf("order %v was accepted", bad)
 		}
 	}
-	if _, err := plan.ParseOrder([]string{"label:urgent", "waited:30m", "workflow:release,deploy-*", "shortest"}); err != nil {
+	if _, err := plan.ParseOrder([]string{"pool:ru-large", "label:urgent", "waited:30m", "workflow:release,deploy-*", "shortest"}); err != nil {
 		t.Fatal(err)
 	}
 }

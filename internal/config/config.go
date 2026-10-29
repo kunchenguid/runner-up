@@ -340,6 +340,12 @@ func (c *Config) Validate() error {
 		}
 		labels[p.Label] = true
 	}
+	// A pool rule that names no pool would order nothing, and say nothing.
+	for _, r := range c.Order {
+		if l, ok := strings.CutPrefix(r, "pool:"); ok && !labels[l] {
+			return fmt.Errorf("order rule %q names no pool of this setup", r)
+		}
+	}
 	machines := map[string]bool{}
 	ids := map[string]bool{}
 	served := map[string]bool{}
