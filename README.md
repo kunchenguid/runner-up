@@ -436,8 +436,9 @@ command starts it under `BORROWED_VM`, the name runner-up reserves and cleans.
   agent stops and deletes any VM left under the granted name before the place
   frees. As with jobs, an outright supervisor crash is cleaned at the next
   use of the place or coordinator startup.
-- The caller returns the command's exit status, `124` for a time limit, `130`
-  for cancellation, or `1` for a supervisor/cleanup failure. `status` names
+- The caller returns the command's exit status (`128 + signal` if a signal
+  ends the command), `124` for a time limit, `130` for cancellation, or `1`
+  for a supervisor/cleanup failure. `status` names
   active borrows and their labels. Separate `borrow placed` and
   `borrow completed` log entries include wait time and borrowed minutes;
   borrowed time is not recorded as a job runtime estimate.

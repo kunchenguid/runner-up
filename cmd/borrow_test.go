@@ -111,6 +111,22 @@ func TestBorrowCLICancellation(t *testing.T) {
 	}
 }
 
+// Intent: signal termination retains its shell-compatible status through the
+// real supervisor, socket protocol and caller, and releases the borrowed place.
+func TestBorrowCLICommandSignalStatus(t *testing.T) {
+	e := borrowE2E(t)
+	e.serve()
+	client, output := startBorrow(t, e, `printf 'terminating borrowed command with SIGTERM\n'; kill -TERM $$`)
+	if err := client.Wait(); err == nil || client.ProcessState.ExitCode() != 128+int(syscall.SIGTERM) {
+		t.Fatalf("exit=%v status=%d output=%s", err, client.ProcessState.ExitCode(), readBorrowOutput(output))
+	}
+	e.eventually("signal-terminated borrow frees its place", func() bool {
+		held, _ := lock.HeldBy(filepath.Join(e.cfg.PlaceDir("box-1"), "busy.lock"))
+		return !held
+	})
+	t.Logf("%scommand exit=143; place released\n%s", readBorrowOutput(output), borrowStatus(t, e))
+}
+
 func borrowE2E(t *testing.T) *e2e {
 	t.Helper()
 	e := newE2E(t)
