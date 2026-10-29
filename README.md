@@ -359,10 +359,11 @@ go, the clone is stopped and deleted.
 
 - **Two macOS VMs at once.** Apple's Virtualization framework runs at most two
   macOS virtual machines on a Mac at once. The coordinator counts the Mac's
-  tart places whose runners are alive, and asks the Mac's agent every 30
-  seconds which macOS VMs run there, so a VM you start by hand takes one of
-  the two. A tart place waits while two run. The agent also waits for a free
-  one before it clones, in case a VM started since the coordinator looked.
+  busy tart places (including [borrows](#borrowing-a-virtual-mac)), and asks
+  the Mac's agent every 30 seconds which macOS VMs run there, so a VM you
+  start by hand takes one of the two. A tart place waits while two run. The
+  agent also waits for a free one before it clones, in case a VM started since
+  the coordinator looked.
   Linux VMs do not count. `machine add` gives a Mac at most two tart places;
   more, added with `--places`, take turns.
 - **A clone that restarts.** A kernel panic restarts the clone's macOS and

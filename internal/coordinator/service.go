@@ -59,8 +59,9 @@ type acquired struct {
 	At    time.Time `json:"at"`
 }
 
-// SavedState is everything the coordinator must remember across a restart.
-// The places remember themselves, through their locks and place.json.
+// SavedState preserves the job queue and learned timings across a restart.
+// Places remember themselves through their locks and place.json; local borrow
+// requests are re-read by refreshBorrowsLocked.
 type SavedState struct {
 	Timings  map[string]time.Duration `json:"timings,omitempty"`
 	Waiting  []plan.Job               `json:"waiting"`
@@ -533,9 +534,9 @@ func (s *Service) headroomLocked() map[string]plan.Headroom {
 	return out
 }
 
-// inUse sums what machine's places reserve while their runners are alive,
-// leaving out the place except. A runner waiting for its job keeps its share,
-// since the job will run there.
+// inUse sums what machine's places reserve while their runner or borrow
+// supervisor is alive, leaving out the place except. A runner waiting for its
+// job keeps its share, since the job will run there.
 func (s *Service) inUse(machine, except string) config.Share {
 	used := config.Share{}
 	for _, q := range s.Cfg.Places() {
@@ -547,10 +548,10 @@ func (s *Service) inUse(machine, except string) config.Share {
 	return used
 }
 
-// PlaceBusy reads one place. Its own lock says whether its runner process is
-// alive. On a machine with cores, a place is also busy while its share does
-// not fit beside the shares of the machine's other places whose runners are
-// alive, within the machine's budget less the owner's room. A tart place is
+// PlaceBusy reads one place. Its own lock says whether its runner or borrow
+// supervisor is alive. On a machine with cores, a place is also busy while its
+// share does not fit beside the machine's other busy places, within the
+// machine's budget less the owner's room. A tart place is
 // also busy while its Mac runs as many macOS VMs as it may (vmlimit.go). A
 // lock that cannot be read counts busy, so a broken reader never starts a
 // second job in a place.
@@ -598,8 +599,8 @@ func (s *Service) tight(p config.Place) string {
 	return ""
 }
 
-// runnerAlive reports whether a place's runner process is alive, from its
-// lock alone. A lock that cannot be read counts alive.
+// runnerAlive reports whether a place's runner or borrow supervisor is alive,
+// from its lock alone. A lock that cannot be read counts alive.
 func (s *Service) runnerAlive(placeID string) bool {
 	held, err := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(placeID), "busy.lock"))
 	return err != nil || held

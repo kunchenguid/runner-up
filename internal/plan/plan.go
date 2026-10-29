@@ -39,8 +39,8 @@ type Job struct {
 	JobID string `json:"jobId,omitempty"`
 
 	// Filled in before planning, never saved.
-	// Estimate is the job's last successful wall time from runner assignment
-	// to finish; zero when no run of it has succeeded yet.
+	// Estimate is a borrow's declared duration, or a job's last successful wall
+	// time from runner assignment to finish; zero for a job with no successful run.
 	Estimate time.Duration `json:"-"`
 	// RunWorkflow is the top-level workflow path read from the run's metadata.
 	RunWorkflow string `json:"-"`
@@ -92,8 +92,8 @@ type PlaceView struct {
 func (v PlaceView) share() config.Share { return config.Share{Cores: v.Cores, MemoryMB: v.MemoryMB} }
 
 // Headroom is what a counted machine's places may still reserve right now:
-// its budget less the shares of its places whose runners are alive. A machine
-// that counts no memory has Memory false.
+// its budget less the shares of places with held locks. A machine that counts
+// no memory has Memory false.
 type Headroom struct {
 	Cores, MemoryMB int
 	Memory          bool
