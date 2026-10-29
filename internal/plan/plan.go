@@ -13,6 +13,8 @@ import (
 
 // Job is one waiting job, as a scale set offered or assigned it.
 type Job struct {
+	// BorrowID identifies a local borrow; it competes with jobs but takes only tart places.
+	BorrowID string `json:"borrowId,omitempty"`
 	// Target is the repository or organization whose scale set has the job;
 	// Repo is the repository the job belongs to, the same for a repository's
 	// scale set.
@@ -59,6 +61,9 @@ func RunKey(target, pool string, runID int64, name string) string {
 }
 
 func (j Job) Key() string {
+	if j.BorrowID != "" {
+		return "borrow|" + j.BorrowID
+	}
 	if j.RequestID != 0 {
 		return RequestKey(j.Target, j.Pool, j.RequestID)
 	}
@@ -109,9 +114,9 @@ type Assignment struct {
 	Place config.Place
 }
 
-// rank orders waiting jobs by the order rules (rules.go); first-in, first-out
+// Rank orders waiting jobs by the order rules (rules.go); first-in, first-out
 // breaks every tie.
-func rank(waiting []Job, rules []Rule, now time.Time) []Job {
+func Rank(waiting []Job, rules []Rule, now time.Time) []Job {
 	jobs := append([]Job(nil), waiting...)
 	sort.SliceStable(jobs, func(a, b int) bool { return before(jobs[a], jobs[b], rules, now) })
 	return jobs
@@ -130,7 +135,7 @@ func fifo(a, b Job) bool {
 // in. No running job is interrupted, and a job no place can take holds
 // nothing, so a smaller job behind it may take a place it cannot.
 func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules []Rule, now time.Time) []Assignment {
-	jobs := rank(waiting, rules, now)
+	jobs := Rank(waiting, rules, now)
 	left := map[string]Headroom{}
 	for m, h := range headroom {
 		left[m] = h
@@ -148,7 +153,7 @@ func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules
 	for _, j := range jobs {
 		best := -1
 		for i, p := range free {
-			if !slices.Contains(p.Pools, j.Pool) {
+			if !slices.Contains(p.Pools, j.Pool) || j.BorrowID != "" && p.Provider != config.ProviderTart {
 				continue
 			}
 			if h, ok := left[p.Machine]; ok && !h.fits(p.share()) {

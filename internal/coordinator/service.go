@@ -40,6 +40,7 @@ type Launcher interface {
 // PlaceRun is a place's place.json: written by the coordinator just before it
 // launches, then updated by the place's runner process.
 type PlaceRun struct {
+	BorrowID   string    `json:"borrowId,omitempty"`
 	RunnerName string    `json:"runnerName"`
 	RunnerID   int       `json:"runnerId"`
 	Target     string    `json:"target"`
@@ -459,6 +460,7 @@ func (s *Service) Place(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked()
+	s.refreshBorrowsLocked()
 	for range len(s.Cfg.Places()) + 1 {
 		assignments := plan.Plan(s.waitingLocked(), s.viewsLocked(), s.headroomLocked(), s.Rules, s.now())
 		if len(assignments) == 0 {
@@ -485,10 +487,12 @@ func (s *Service) Place(ctx context.Context) {
 func (s *Service) waitingLocked() []plan.Job {
 	out := make([]plan.Job, 0, len(s.waiting))
 	for _, j := range s.waiting {
-		if _, ok := s.sets[setKey(j.Target, j.Pool)]; !ok || j.TakenBack {
+		if _, ok := s.sets[setKey(j.Target, j.Pool)]; j.BorrowID == "" && (!ok || j.TakenBack) {
 			continue
 		}
-		j.Estimate = s.timings[j.TimingKey()]
+		if j.BorrowID == "" {
+			j.Estimate = s.timings[j.TimingKey()]
+		}
 		j.RunWorkflow = s.runWorkflows[workflowRun{j.Repo, j.RunID}].path
 		if ref := j.LabelRef(); ref != "" {
 			j.Labels = s.labels[j.Repo][ref]
@@ -556,6 +560,10 @@ func (s *Service) PlaceBusy(p config.Place) (bool, string) {
 		return true, "unreadable"
 	}
 	if held {
+		var run PlaceRun
+		if config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.BorrowID != "" {
+			return true, "borrow"
+		}
 		return true, "job"
 	}
 	if why := s.tight(p); why != "" {
@@ -600,7 +608,7 @@ func (s *Service) runnerAlive(placeID string) bool {
 func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 	j, p := a.Job, a.Place
 	set := s.sets[setKey(j.Target, j.Pool)]
-	if set == nil {
+	if set == nil && j.BorrowID == "" {
 		return false
 	}
 	// A place given in the same plan as another may have to wait for it now.
@@ -615,6 +623,10 @@ func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 	// This place's last run may have ended since the last Tidy, and its
 	// place.json is about to be replaced.
 	s.retireLocked(p)
+
+	if j.BorrowID != "" {
+		return s.assignBorrowLocked(p, j, lock)
+	}
 
 	if !j.Assigned {
 		got, err := set.AcquireJobs(ctx, []int64{j.RequestID})

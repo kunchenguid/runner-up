@@ -396,6 +396,53 @@ The runner runs as the guest agent's user (`admin` in Cirrus Labs' images) in
 `~/actions-runner`, so tools installed for that user are found. Every job
 starts from the image as it is: nothing a job changes is kept.
 
+## Borrowing a virtual Mac
+
+While the coordinator is running, borrow a tart place from a pool instead of
+holding a place by hand:
+
+```sh
+runner-up borrow --pool ru-mac --label "native check" --minutes 30 -- sh -c '
+  set -eu
+  tart clone my-local-image "$BORROWED_VM"
+  tart set "$BORROWED_VM" --cpu "$BORROWED_CPUS" --memory "$BORROWED_MEMORY_MB"
+  exec tart run --no-graphics "$BORROWED_VM"
+'
+```
+
+Replace `my-local-image` with an image already on the Mac. The borrow command
+never builds or downloads an image and does not start the VM for you. Your
+command starts it under `BORROWED_VM`, the name runner-up reserves and cleans.
+
+- `--pool`, `--label`, `--minutes` and a command are required. Minutes must be
+  a positive integer. As with `serve`, use `--config FILE` for another setup.
+- The request waits beside jobs under the same order rules. The declared
+  minutes supply its runtime estimate; the request's queue time breaks ties.
+  It has no repository, pull request labels or workflow, so those rules do
+  not give it a match. While waiting, it prints its rank and why it waits.
+- Only tart places qualify, never host, Docker, KVM or Windows places.
+  The command runs on the coordinator's computer with your working directory,
+  environment and standard input/output. For a remote Mac, your command must
+  reach that Mac itself; `BORROWED_VM` names the VM there, not a local VM.
+- The granted command receives `BORROWED_PLACE`, `BORROWED_VM`,
+  `BORROWED_CPUS` and `BORROWED_MEMORY_MB`. Keep the command in the foreground
+  until its work finishes. It needs no second crew place or declared load-line
+  reservation for the same VM.
+- From grant through cleanup, the place reserves its share once and one of
+  the Mac's two VM slots. A running VM under `BORROWED_VM` is not counted a
+  second time. VMs under other names still count as outside runner-up.
+- The borrow ends with the command, when the caller stops or disconnects, or
+  after **max(1 hour, declared minutes)** from grant. A coordinator restart
+  leaves it running and counted. Command descendants are stopped and the
+  agent stops and deletes any VM left under the granted name before the place
+  frees. As with jobs, an outright supervisor crash is cleaned at the next
+  use of the place or coordinator startup.
+- The caller returns the command's exit status, `124` for a time limit, `130`
+  for cancellation, or `1` for a supervisor/cleanup failure. `status` names
+  active borrows and their labels. Separate `borrow placed` and
+  `borrow completed` log entries include wait time and borrowed minutes;
+  borrowed time is not recorded as a job runtime estimate.
+
 ## Order rules
 
 When a place frees and several jobs it can take are waiting, the rules decide,
