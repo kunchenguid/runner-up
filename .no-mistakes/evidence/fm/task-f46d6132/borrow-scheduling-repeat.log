@@ -1,0 +1,107 @@
+=== RUN   TestBorrowCLILiveSharedQueue
+    borrow_live_test.go:179: shortest granted while older borrow and GitHub job wait:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:34-07:00
+        waiting borrow ru-linux "same label" since 2026-10-29T11:49:32-07:00
+        waiting octo-org/app ru-linux "verify / linux" since 2026-10-29T11:48:31-07:00
+    borrow_live_test.go:187: short request:
+        borrow: waiting at position 1: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        long request:
+        borrow: waiting at position 1: box-1: job
+        borrow: waiting at position 2: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        GitHub acquired after both commands: [9101 9101]
+--- PASS: TestBorrowCLILiveSharedQueue (3.64s)
+=== RUN   TestBorrowCLILiveTwoSlotAccounting
+    borrow_live_test.go:232: two equal-label borrows active after restart; third waits:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:35-07:00
+        place box-2 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:35-07:00
+        place box-3 on box (tart, 2 cores, 4096 MB) busy (macOS VM limit: 2 of 2 running)
+        waiting borrow ru-linux "same label" since 2026-10-29T11:49:35-07:00
+        
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+    borrow_live_test.go:237: one:
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        two:
+        borrow: granted box-2 (2 cores, 4096 MB), VM runner-up-box-2; limit 1h0m0s
+        place=box-2 vm=runner-up-box-2
+        three after release:
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+--- PASS: TestBorrowCLILiveTwoSlotAccounting (2.38s)
+=== RUN   TestBorrowCLILiveSharedQueue
+    borrow_live_test.go:179: shortest granted while older borrow and GitHub job wait:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:39-07:00
+        waiting borrow ru-linux "same label" since 2026-10-29T11:49:37-07:00
+        waiting octo-org/app ru-linux "verify / linux" since 2026-10-29T11:48:37-07:00
+    borrow_live_test.go:187: short request:
+        borrow: waiting at position 1: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        long request:
+        borrow: waiting at position 1: box-1: job
+        borrow: waiting at position 2: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        GitHub acquired after both commands: [9101 9101]
+--- PASS: TestBorrowCLILiveSharedQueue (3.22s)
+=== RUN   TestBorrowCLILiveTwoSlotAccounting
+    borrow_live_test.go:232: two equal-label borrows active after restart; third waits:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:40-07:00
+        place box-2 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:41-07:00
+        place box-3 on box (tart, 2 cores, 4096 MB) busy (macOS VM limit: 2 of 2 running)
+        waiting borrow ru-linux "same label" since 2026-10-29T11:49:41-07:00
+        
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+    borrow_live_test.go:237: one:
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        two:
+        borrow: granted box-2 (2 cores, 4096 MB), VM runner-up-box-2; limit 1h0m0s
+        place=box-2 vm=runner-up-box-2
+        three after release:
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+--- PASS: TestBorrowCLILiveTwoSlotAccounting (2.41s)
+=== RUN   TestBorrowCLILiveSharedQueue
+    borrow_live_test.go:179: shortest granted while older borrow and GitHub job wait:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:45-07:00
+        waiting borrow ru-linux "same label" since 2026-10-29T11:49:43-07:00
+        waiting octo-org/app ru-linux "verify / linux" since 2026-10-29T11:48:43-07:00
+    borrow_live_test.go:187: short request:
+        borrow: waiting at position 1: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        long request:
+        borrow: waiting at position 1: box-1: job
+        borrow: waiting at position 2: box-1: job
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        GitHub acquired after both commands: [9101 9101]
+--- PASS: TestBorrowCLILiveSharedQueue (3.18s)
+=== RUN   TestBorrowCLILiveTwoSlotAccounting
+    borrow_live_test.go:232: two equal-label borrows active after restart; third waits:
+        place box-1 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:46-07:00
+        place box-2 on box (tart, 2 cores, 4096 MB) busy (borrow): borrow "same label" since 2026-10-29T11:49:46-07:00
+        place box-3 on box (tart, 2 cores, 4096 MB) busy (macOS VM limit: 2 of 2 running)
+        waiting borrow ru-linux "same label" since 2026-10-29T11:49:46-07:00
+        
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+    borrow_live_test.go:237: one:
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+        two:
+        borrow: granted box-2 (2 cores, 4096 MB), VM runner-up-box-2; limit 1h0m0s
+        place=box-2 vm=runner-up-box-2
+        three after release:
+        borrow: waiting at position 1: box-3: macOS VM limit: 2 of 2 running
+        borrow: granted box-1 (2 cores, 4096 MB), VM runner-up-box-1; limit 1h0m0s
+        place=box-1 vm=runner-up-box-1
+--- PASS: TestBorrowCLILiveTwoSlotAccounting (2.13s)
+PASS
+ok  	github.com/kunchenguid/runner-up/cmd	17.170s
