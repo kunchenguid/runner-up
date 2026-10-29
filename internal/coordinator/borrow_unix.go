@@ -119,10 +119,15 @@ func borrow(ctx context.Context, cfg *config.Config, pool, label string, minutes
 	if err != nil {
 		return 1, err
 	}
-	// The coordinator owns request-directory garbage collection. A caller
-	// must not RemoveAll while the coordinator atomically updates its rank:
-	// a concurrent .tmp file can make that removal fail part-way through.
-	defer os.Remove(filepath.Join(dir, "request.json"))
+	// Only published directories belong to the coordinator. Before publication
+	// it ignores this directory, so early setup errors can remove it safely.
+	// Afterwards the live lock, not file removal, withdraws the request.
+	published := false
+	defer func() {
+		if !published {
+			os.RemoveAll(dir)
+		}
+	}()
 	live, err := lock.Busy(filepath.Join(dir, "live.lock"))
 	if err != nil {
 		return 1, err
@@ -145,6 +150,7 @@ func borrow(ctx context.Context, cfg *config.Config, pool, label string, minutes
 	if err := config.WriteJSON(filepath.Join(dir, "request.json"), req); err != nil {
 		return 1, err
 	}
+	published = true
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -230,8 +236,19 @@ func (s *Service) refreshBorrowsLocked() {
 			continue
 		}
 		dir := borrowDir(s.Cfg, e.Name())
+		// MkdirTemp and opening live.lock precede taking its lock. Nothing is
+		// queued until the caller atomically publishes request.json, so never
+		// collect an incompletely initialized request directory.
+		if _, err := os.Stat(filepath.Join(dir, "request.json")); err != nil {
+			if _, err := os.Stat(filepath.Join(dir, "granted.json")); err != nil {
+				continue
+			}
+		}
 		held, err := lock.HeldBy(filepath.Join(dir, "live.lock"))
-		if err != nil || !held {
+		if err != nil {
+			continue
+		}
+		if !held {
 			os.RemoveAll(dir)
 			continue
 		}

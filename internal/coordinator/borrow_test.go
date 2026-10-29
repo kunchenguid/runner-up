@@ -218,3 +218,36 @@ func TestBorrowCommandExitAndDeadline(t *testing.T) {
 		})
 	}
 }
+
+// Intent (INF-1823): a request enters the line only after its live lock is
+// held. A scheduling pass during caller initialization must not delete the
+// caller's folder before it can publish the request.
+func TestBorrowUnpublishedRequestIsNotCollected(t *testing.T) {
+	cfg := oneMac(t.TempDir())
+	h := newHarness(t, cfg, newFakeLauncher(), map[string]*fakeSet{})
+	dir := borrowDir(cfg, "request-starting")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, withLockFile := range []bool{false, true} {
+		if withLockFile {
+			if err := os.WriteFile(filepath.Join(dir, "live.lock"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		h.svc.refreshBorrowsLocked()
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("collected unpublished request: %v", err)
+		}
+	}
+	live := enqueueBorrow(t, cfg, borrowRequest{ID: "request-starting", Pool: "ru-mac", Label: "check", Minutes: 20, Queued: time.Now()})
+	h.svc.refreshBorrowsLocked()
+	if len(h.svc.waiting) != 1 {
+		t.Fatal("published request did not enter the line")
+	}
+	live.Close()
+	h.svc.refreshBorrowsLocked()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("abandoned published request not collected: %v", err)
+	}
+}
