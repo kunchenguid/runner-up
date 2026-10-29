@@ -1,0 +1,96 @@
+name: Nix flake
+
+# Validates the flake (flake.nix). Runs on PRs that touch flake-related
+# files and on pushes to main, plus manual dispatch.
+#
+# Steps, in order of what they catch:
+#   1. nix flake check --all-systems --no-build — every system's outputs
+#      evaluate (including darwin on an ubuntu runner).
+#   2. nix build .#default — the Go build + vendor deps realise for the
+#      runner's system. doCheck is false in the flake because the tests
+#      run runner-up as a program beside stand-in ssh, docker and tart
+#      commands, which the Nix sandbox does not provide; the project's own
+#      CI (ci.yml) runs `go test ./...` on three OSes.
+#   3. nix run .#default -- version — the binary actually execs and
+#      reports its version. This is the only step that catches a flake
+#      that evaluates and builds but produces a broken binary.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "default.nix"
+      - "package.nix"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/nix.yml"
+  pull_request:
+    branches: [main]
+    # release-please opens its release PR with GITHUB_TOKEN, which creates a
+    # pull_request run that can only sit in action_required. Its output set
+    # is exactly these files (release-please-config.json extra-files includes
+    # the Nix package files), so excluding them means no run is ever created
+    # on a release PR. Mirrors ci.yml. A Nix-package-file-only logic change that doesn't touch
+    # any other file won't trigger PR CI here — the push trigger above covers
+    # it post-merge, and workflow_dispatch allows manual runs.
+    paths-ignore:
+      - .release-please-manifest.json
+      - CHANGELOG.md
+      - default.nix
+      - flake.nix
+      - package.nix
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  # id-token: write is required by magic-nix-cache-action for the GitHub
+  # Actions cache v2 API (OIDC token exchange for cache auth). The action
+  # is pinned to a commit SHA below, so a compromised mutable ref cannot
+  # exploit this permission.
+  id-token: write
+
+concurrency:
+  group: nix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        # Pinned to SHA — see Greptile feedback on mutable action refs.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        # Pinned to SHA — mutable refs (@main, @v22) can be repointed by a
+        # compromised maintainer account; a SHA pin makes that impossible.
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Enable Nix binary cache (GitHub Actions cache)
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
+      - name: nix flake check --all-systems --no-build
+        run: nix flake check --all-systems --no-build
+
+      - name: nix build .#default
+        run: nix build .#default --print-build-logs
+
+      - name: nix run .#default -- version
+        # Only run the binary on push/dispatch, not pull_request. The job
+        # carries id-token: write (for magic-nix-cache-action), and `nix run`
+        # executes the built binary outside the Nix sandbox on the runner,
+        # where it can reach GitHub's OIDC endpoint. On a PR, that binary is
+        # PR-controlled code — gating this step prevents OIDC exfiltration.
+        # `nix build` above still validates compilation (inside the sandbox,
+        # no network); the smoke test runs post-merge on trusted code.
+        if: github.event_name != 'pull_request'
+        run: nix run .#default -- version
+
+      - name: nix build .#runner-up
+        run: nix build .#runner-up --print-build-logs

@@ -1,0 +1,174 @@
+{
+  "source": "Four messages recorded unchanged from the same scale set; at is when each arrived. The first is the cancellation of an earlier run's job, with a finish time, one second before the next run's job was assigned. Then GitHub assigns the next run's job to the scale set, with runner request 0 and no queue time; the runner the coordinator started for it in place proof-a takes it 38 seconds after the assignment; and the job completes.",
+  "now": "2026-10-20T18:21:58.105Z",
+  "messages": [
+    {
+      "at": "2026-10-20T18:21:58.105Z",
+      "repo": "octo-org/app",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000012,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 0,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 0,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": null,
+        "JobStartedMessages": null,
+        "JobCompletedMessages": [
+          {
+            "result": "canceled",
+            "runnerId": 0,
+            "runnerName": "",
+            "messageType": "JobCompleted",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "03d52bb0-f3a9-5dc3-bdb6-6bd9c7a0c05b",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/verify.yml@refs/heads/feature/proof",
+            "jobDisplayName": "linux",
+            "workflowRunId": 39469344685,
+            "eventName": "workflow_dispatch",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T17:59:01.12295111Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "2026-10-20T18:21:57.950237489Z"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-10-20T18:21:58.991Z",
+      "repo": "octo-org/app",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000013,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 1,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 0,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": [
+          {
+            "messageType": "JobAssigned",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "86027c91-8c33-5152-89d3-6117da0d96d4",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/verify.yml@refs/heads/feature/proof",
+            "jobDisplayName": "linux",
+            "workflowRunId": 39474081020,
+            "eventName": "workflow_dispatch",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T18:21:58.933329266Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ],
+        "JobStartedMessages": null,
+        "JobCompletedMessages": null
+      }
+    },
+    {
+      "at": "2026-10-20T18:22:50.227Z",
+      "repo": "octo-org/app",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000014,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 1,
+          "totalRunningJobs": 1,
+          "totalRegisteredRunners": 1,
+          "totalBusyRunners": 1,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": null,
+        "JobStartedMessages": [
+          {
+            "runnerId": 307,
+            "runnerName": "runner-up-proof-a-1792520518",
+            "messageType": "JobStarted",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "86027c91-8c33-5152-89d3-6117da0d96d4",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/verify.yml@refs/heads/feature/proof",
+            "jobDisplayName": "linux",
+            "workflowRunId": 39474081020,
+            "eventName": "workflow_dispatch",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T18:21:58.933329266Z",
+            "runnerAssignTime": "2026-10-20T18:22:36.420236983Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ],
+        "JobCompletedMessages": null
+      }
+    },
+    {
+      "at": "2026-10-20T18:26:23.189Z",
+      "repo": "octo-org/app",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000015,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 0,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 1,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": null,
+        "JobStartedMessages": null,
+        "JobCompletedMessages": [
+          {
+            "result": "failed",
+            "runnerId": 307,
+            "runnerName": "runner-up-proof-a-1792520518",
+            "messageType": "JobCompleted",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "86027c91-8c33-5152-89d3-6117da0d96d4",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/verify.yml@refs/heads/feature/proof",
+            "jobDisplayName": "linux",
+            "workflowRunId": 39474081020,
+            "eventName": "workflow_dispatch",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T18:21:58.933329266Z",
+            "runnerAssignTime": "2026-10-20T18:22:36.420236983Z",
+            "finishTime": "2026-10-20T18:26:23.057225883Z"
+          }
+        ]
+      }
+    }
+  ]
+}

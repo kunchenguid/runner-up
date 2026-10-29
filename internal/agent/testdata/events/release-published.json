@@ -1,0 +1,36 @@
+{
+  "action": "published",
+  "release": {
+    "id": 1,
+    "tag_name": "tool-v1.9.0",
+    "name": "tool: v1.9.0",
+    "draft": false,
+    "prerelease": false,
+    "body": null,
+    "author": {
+      "login": "octo-user",
+      "id": 2002,
+      "type": "User"
+    }
+  },
+  "repository": {
+    "id": 500001,
+    "node_id": "R_base",
+    "name": "tool",
+    "full_name": "octo-user/tool",
+    "private": true,
+    "fork": false,
+    "owner": {
+      "login": "octo-user",
+      "id": 2002,
+      "type": "User"
+    },
+    "default_branch": "main",
+    "license": null
+  },
+  "sender": {
+    "login": "octo-user",
+    "id": 2002,
+    "type": "User"
+  }
+}

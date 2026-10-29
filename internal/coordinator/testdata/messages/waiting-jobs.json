@@ -1,0 +1,135 @@
+{
+  "source": "Jobs that waited for one machine's places at the same time, from GitHub's job records for three runs of octo-org/app and one each of octo-user/tool and octo-user/wallet (renamed), shaped as scale set JobAvailable messages. The tool and wallet jobs keep their real workflow files and job names; their queue times sit between app's so the order across repositories is tested.",
+  "now": "2026-10-20T06:40:00Z",
+  "messages": [
+    {
+      "repo": "octo-org/app",
+      "label": "ru-linux",
+      "message": {
+        "MessageID": 1,
+        "JobAvailableMessages": [
+          {
+            "messageType": "JobAvailable",
+            "runnerRequestId": 9101,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobDisplayName": "verify / linux",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/verify.yml@refs/heads/main",
+            "workflowRunId": 39361345555,
+            "eventName": "workflow_dispatch",
+            "requestLabels": [
+              "ru-linux"
+            ],
+            "queueTime": "2026-10-20T02:54:08Z"
+          },
+          {
+            "messageType": "JobAvailable",
+            "runnerRequestId": 9102,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobDisplayName": "affected-journeys",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/journeys.yml@refs/pull/184/merge",
+            "workflowRunId": 39372831799,
+            "eventName": "pull_request",
+            "requestLabels": [
+              "ru-linux"
+            ],
+            "queueTime": "2026-10-20T05:03:35Z"
+          }
+        ]
+      }
+    },
+    {
+      "repo": "octo-org/app",
+      "label": "ru-large",
+      "message": {
+        "MessageID": 1,
+        "JobAvailableMessages": [
+          {
+            "messageType": "JobAvailable",
+            "runnerRequestId": 9103,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobDisplayName": "Build and publish (a dry run publishes nothing)",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/release.yml@refs/heads/main",
+            "workflowRunId": 39361345555,
+            "eventName": "workflow_dispatch",
+            "requestLabels": [
+              "ru-large"
+            ],
+            "queueTime": "2026-10-20T05:13:29Z"
+          }
+        ]
+      }
+    },
+    {
+      "repo": "octo-user/tool",
+      "label": "ru-linux",
+      "message": {
+        "MessageID": 1,
+        "JobAvailableMessages": [
+          {
+            "messageType": "JobAvailable",
+            "runnerRequestId": 7201,
+            "repositoryName": "tool",
+            "ownerName": "octo-user",
+            "jobDisplayName": "suite",
+            "jobWorkflowRef": "octo-user/tool/.github/workflows/suite.yml@refs/heads/main",
+            "workflowRunId": 39370000001,
+            "eventName": "workflow_dispatch",
+            "requestLabels": [
+              "ru-linux"
+            ],
+            "queueTime": "2026-10-20T05:20:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "repo": "octo-user/wallet",
+      "label": "ru-large",
+      "message": {
+        "MessageID": 1,
+        "JobAvailableMessages": [
+          {
+            "messageType": "JobAvailable",
+            "runnerRequestId": 6301,
+            "repositoryName": "wallet",
+            "ownerName": "octo-user",
+            "jobDisplayName": "Release",
+            "jobWorkflowRef": "octo-user/wallet/.github/workflows/release.yml@refs/heads/main",
+            "workflowRunId": 39370000002,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-large"
+            ],
+            "queueTime": "2026-10-20T05:30:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "repo": "octo-org/app",
+      "label": "ru-linux",
+      "message": {
+        "MessageID": 2,
+        "JobAvailableMessages": [
+          {
+            "messageType": "JobAvailable",
+            "runnerRequestId": 9104,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobDisplayName": "affected-journeys",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/journeys.yml@refs/pull/186/merge",
+            "workflowRunId": 39381269010,
+            "eventName": "pull_request",
+            "requestLabels": [
+              "ru-linux"
+            ],
+            "queueTime": "2026-10-20T06:35:00Z"
+          }
+        ]
+      }
+    }
+  ]
+}

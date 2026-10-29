@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # release-please opens its release PR with GITHUB_TOKEN, which creates a
+  # pull_request run that can only sit in action_required. Its output set is
+  # exactly these files, so excluding them means no run is ever created.
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - .release-please-manifest.json
+      - CHANGELOG.md
+      - default.nix
+      - flake.nix
+      - package.nix
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Format check
+        run: |
+          output=$(gofmt -l .)
+          if [ -n "$output" ]; then
+            echo "Files not formatted:"
+            echo "$output"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build -o runner-up${{ matrix.os == 'windows-latest' && '.exe' || '' }} .

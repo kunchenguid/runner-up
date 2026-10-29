@@ -1,0 +1,603 @@
+//go:build !windows
+
+package cmd
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/actions/scaleset"
+	"github.com/kunchenguid/runner-up/internal/agent"
+	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/coordinator"
+	"github.com/kunchenguid/runner-up/internal/lock"
+)
+
+// Intent (the design): the coordinator hears of a waiting job
+// from its scale set, acquires it once a place is free, and runs it there
+// through the machine's agent over SSH, handing the runner its registration on
+// standard input only; every runner starts with the fork guard; "a place keeps
+// running through a coordinator restart and a crashed place is cleaned up".
+//
+// The coordinator, its place runners and the agent are the real programs. GitHub's
+// Actions service is a local stand-in speaking the scale set protocol, ssh is a
+// stand-in that runs the agent's command line on this computer, and docker is
+// a stand-in whose "container" is a process that prints what the runner
+// prints when its job starts and ends.
+
+// actionsStandIn answers the scale set protocol as GitHub's Actions service
+// does, for one repository's one scale set.
+type actionsStandIn struct {
+	*httptest.Server
+	t *testing.T
+
+	mu       sync.Mutex
+	queue    []queued // messages not yet acknowledged
+	nextMsg  int
+	setID    int
+	opened   int // sessions opened
+	closed   int // sessions closed
+	polls    int // polls since the last session opened
+	acquired []int64
+	jits     []string // registrations handed out, in order
+	removed  []int64  // runners removed
+	stray    []string // requests the stand-in does not know
+}
+
+type queued struct {
+	id   int
+	body string
+}
+
+func newActionsStandIn(t *testing.T) *actionsStandIn {
+	a := &actionsStandIn{t: t}
+	a.Server = httptest.NewServer(http.HandlerFunc(a.serve))
+	t.Cleanup(a.Close)
+	return a
+}
+
+// send queues one message holding jobs, each a scale set job message.
+func (a *actionsStandIn) send(jobs ...any) {
+	body, err := json.Marshal(jobs)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.nextMsg++
+	a.queue = append(a.queue, queued{a.nextMsg, string(body)})
+}
+
+// adminToken is the shape of the token the service hands a client: a JWT,
+// read for its expiry only.
+func adminToken() string {
+	enc := base64.RawURLEncoding.EncodeToString
+	claims := fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix())
+	return enc([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc([]byte(claims)) + "." + enc([]byte("stand-in"))
+}
+
+func (a *actionsStandIn) serve(w http.ResponseWriter, r *http.Request) {
+	sets := "/tenant/_apis/runtime/runnerscalesets"
+	reply := func(code int, v any) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		if v != nil {
+			json.NewEncoder(w).Encode(v)
+		}
+	}
+	path := r.URL.Path
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/actions/runners/registration-token"):
+		reply(http.StatusCreated, map[string]string{"token": "registration-token"})
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/actions/runner-registration"):
+		reply(http.StatusOK, map[string]string{"url": a.URL + "/tenant/", "token": adminToken()})
+	case r.Method == http.MethodGet && path == sets:
+		if a.setID == 0 {
+			reply(http.StatusOK, map[string]any{"count": 0, "value": []any{}})
+			return
+		}
+		reply(http.StatusOK, map[string]any{"count": 1, "value": []any{a.set(r.URL.Query().Get("name"))}})
+	case r.Method == http.MethodPost && path == sets:
+		var set scaleset.RunnerScaleSet
+		json.NewDecoder(r.Body).Decode(&set)
+		a.setID = 7
+		reply(http.StatusOK, a.set(set.Name))
+	case r.Method == http.MethodPost && path == fmt.Sprintf("%s/%d/sessions", sets, a.setID):
+		a.opened++
+		a.polls = 0
+		reply(http.StatusOK, map[string]any{
+			"sessionId": fmt.Sprintf("00000000-0000-4000-8000-%012d", a.opened), "ownerName": "runner-up",
+			"messageQueueUrl": a.URL + "/queue", "messageQueueAccessToken": "queue-token",
+			"statistics": map[string]int{},
+		})
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, fmt.Sprintf("%s/%d/sessions/", sets, a.setID)):
+		a.closed++
+		reply(http.StatusNoContent, nil)
+	case r.Method == http.MethodGet && path == "/queue":
+		a.polls++
+		last, _ := strconv.Atoi(r.URL.Query().Get("lastMessageId"))
+		for _, m := range a.queue {
+			if m.id > last {
+				reply(http.StatusOK, map[string]any{"messageId": m.id, "messageType": "RunnerScaleSetJobMessages",
+					"body": m.body, "statistics": map[string]int{}})
+				return
+			}
+		}
+		// GitHub holds a poll open until a message comes; a short wait keeps
+		// the stand-in's polls cheap.
+		a.mu.Unlock()
+		time.Sleep(100 * time.Millisecond)
+		a.mu.Lock()
+		reply(http.StatusAccepted, nil)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/queue/"):
+		id, _ := strconv.Atoi(strings.TrimPrefix(path, "/queue/"))
+		a.queue = slices.DeleteFunc(a.queue, func(m queued) bool { return m.id <= id })
+		reply(http.StatusNoContent, nil)
+	case r.Method == http.MethodPost && path == fmt.Sprintf("%s/%d/acquirejobs", sets, a.setID):
+		var ids []int64
+		json.NewDecoder(r.Body).Decode(&ids)
+		a.acquired = append(a.acquired, ids...)
+		reply(http.StatusOK, map[string]any{"count": len(ids), "value": ids})
+	case r.Method == http.MethodPost && path == fmt.Sprintf("%s/%d/generatejitconfig", sets, a.setID):
+		var setting scaleset.RunnerScaleSetJitRunnerSetting
+		json.NewDecoder(r.Body).Decode(&setting)
+		jit := fmt.Sprintf("stand-in-registration-%d-%d", len(a.jits)+1, time.Now().UnixNano())
+		a.jits = append(a.jits, jit)
+		reply(http.StatusOK, map[string]any{"runner": map[string]any{"id": len(a.jits), "name": setting.Name},
+			"encodedJITConfig": jit})
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/tenant/_apis/distributedtask/pools/0/agents/"):
+		id, _ := strconv.ParseInt(strings.TrimPrefix(path, "/tenant/_apis/distributedtask/pools/0/agents/"), 10, 64)
+		a.removed = append(a.removed, id)
+		reply(http.StatusNoContent, nil)
+	default:
+		a.stray = append(a.stray, r.Method+" "+r.URL.String())
+		reply(http.StatusNotFound, nil)
+	}
+}
+
+func (a *actionsStandIn) set(name string) map[string]any {
+	return map[string]any{"id": a.setID, "name": name, "runnerGroupId": 1,
+		"labels": []map[string]string{{"type": "System", "name": name}}}
+}
+
+// read returns a copy of what the stand-in has seen.
+func (a *actionsStandIn) read() actionsStandIn {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return actionsStandIn{opened: a.opened, closed: a.closed, polls: a.polls, acquired: slices.Clone(a.acquired),
+		jits: slices.Clone(a.jits), removed: slices.Clone(a.removed), stray: slices.Clone(a.stray)}
+}
+
+// The stand-in ssh runs the agent's command line, its last argument, here.
+const fakeSSH = `#!/bin/sh
+printf '%s\n' "$*" >> "$E2E_DIR/ssh.log"
+for last; do :; done
+exec sh -c "$last"
+`
+
+// The stand-in docker's "container" for a place is the docker run process
+// itself, recorded with its agent in NAME.pid. It prints what a runner prints,
+// and its job starts once go.PID exists and ends once done.PID does.
+const fakeDocker = `#!/bin/bash
+d=$E2E_DIR/docker
+printf '%s\n' "$*" >> "$d/docker.log"
+name=${!#}
+case $1 in
+run)
+  for a in "$@"; do [ "$prev" = --name ] && name=$a; prev=$a; done
+  printf '%s\n' "$ACTIONS_RUNNER_INPUT_JITCONFIG" >> "$d/registrations"
+  echo "$$ $PPID" > "$d/$name.pid"
+  echo "√ Connected to GitHub"
+  echo "Listening for Jobs"
+  until [ -e "$d/go.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
+  echo "Running job: build"
+  until [ -e "$d/done.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
+  echo "Job build completed with result: Succeeded"
+  rm -f "$d/$name.pid"
+  ;;
+rm)
+  if [ -e "$d/$name.pid" ]; then
+    read pid agent < "$d/$name.pid"
+    kill "$pid"
+    rm -f "$d/$name.pid"
+    echo "$name"
+    exit 0
+  fi
+  echo "Error response from daemon: No such container: $name" >&2
+  exit 1
+  ;;
+esac
+`
+
+// e2e is one coordinator setup: a machine reached over (stand-in) SSH with
+// one Docker place, serving octo-org/app's ru-linux pool.
+type e2e struct {
+	t       *testing.T
+	dir     string
+	config  string
+	cfg     *config.Config
+	actions *actionsStandIn
+	env     []string
+	serving *exec.Cmd
+	served  int
+}
+
+func newE2E(t *testing.T) *e2e {
+	if testing.Short() {
+		t.Skip("runs the coordinator, place runners and agent as programs")
+	}
+	dir := t.TempDir()
+	e := &e2e{t: t, dir: dir, actions: newActionsStandIn(t)}
+	for _, sub := range []string{"bin", "docker", "state", "machine"} {
+		os.MkdirAll(filepath.Join(dir, sub), 0o700)
+	}
+	os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(fakeSSH), 0o755)
+	os.WriteFile(filepath.Join(dir, "bin", "docker"), []byte(fakeDocker), 0o755)
+	e.cfg = &config.Config{
+		StateDir:    filepath.Join(dir, "state"),
+		GitHub:      config.GitHub{Repos: []string{"octo-org/app"}},
+		Pools:       []config.Pool{{Label: "ru-linux"}},
+		TickSeconds: 1,
+		Machines: []config.Machine{{Name: "box", SSH: []string{"ci@box"}, Agent: runnerUp(t), Cores: 4, MemoryMB: 8192,
+			RoomCores: 1, RoomMemoryMB: 1024,
+			Places: []config.Place{{ID: "box-1", Provider: config.ProviderDocker, Pools: []string{"ru-linux"}, Cores: 2, MemoryMB: 4096}}}},
+	}
+	e.config = filepath.Join(dir, "config.json")
+	if err := config.SaveConfig(e.config, e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadConfig(e.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.cfg = cfg
+	e.env = append(os.Environ(),
+		"PATH="+filepath.Join(dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"E2E_DIR="+dir,
+		// The agent's own folder on the machine.
+		"XDG_STATE_HOME="+filepath.Join(dir, "machine"))
+	t.Cleanup(e.stopAll)
+	return e
+}
+
+// serve starts the coordinator; its output goes to coordinator-N.log.
+func (e *e2e) serve() {
+	e.served++
+	out, err := os.Create(filepath.Join(e.dir, fmt.Sprintf("coordinator-%d.log", e.served)))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer out.Close()
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(slices.Clone(e.env), serveEnv+"="+e.config, actionsEnv+"="+e.actions.URL, selfEnv+"="+runnerUp(e.t))
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		e.t.Fatal(err)
+	}
+	e.serving = cmd
+}
+
+// stop stops the coordinator as systemd does, and returns its exit code.
+func (e *e2e) stop() int {
+	e.t.Helper()
+	e.serving.Process.Signal(syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() { done <- e.serving.Wait() }()
+	select {
+	case err := <-done:
+		e.serving = nil
+		return agent.ExitCode(err)
+	case <-time.After(30 * time.Second):
+		e.t.Fatal("the coordinator did not stop within 30 seconds")
+		return -1
+	}
+}
+
+// stopAll ends everything a test left running.
+func (e *e2e) stopAll() {
+	if e.serving != nil {
+		e.serving.Process.Kill()
+		e.serving.Wait()
+	}
+	os.WriteFile(filepath.Join(e.dir, "docker", "stop"), nil, 0o600)
+	for _, name := range []string{"place.json", "last-place.json"} {
+		var run coordinator.PlaceRun
+		if config.ReadJSON(filepath.Join(e.cfg.PlaceDir("box-1"), name), &run) == nil && run.PID > 1 {
+			// A place runner leads its own process group.
+			syscall.Kill(-run.PID, syscall.SIGKILL)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+}
+
+func (e *e2e) eventually(what string, ok func() bool) {
+	e.t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			e.t.Fatalf("after 30 seconds: %s\n%s", what, e.logs())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// logs gathers every log the run wrote, for a failure message.
+func (e *e2e) logs() string {
+	var b strings.Builder
+	paths, _ := filepath.Glob(filepath.Join(e.dir, "coordinator-*.log"))
+	more, _ := filepath.Glob(filepath.Join(e.cfg.LogsDir(), "*.log"))
+	for _, p := range append(append(paths, more...), filepath.Join(e.dir, "ssh.log"), filepath.Join(e.dir, "docker", "docker.log")) {
+		data, _ := os.ReadFile(p)
+		fmt.Fprintf(&b, "--- %s\n%s", filepath.Base(p), data)
+	}
+	return b.String()
+}
+
+// container is the place's running stand-in container: its pid and its
+// agent's, or zeros when none runs.
+func (e *e2e) container() (pid, agentPID int) {
+	data, err := os.ReadFile(filepath.Join(e.dir, "docker", "runner-up-box-1.pid"))
+	if err != nil {
+		return 0, 0
+	}
+	fmt.Sscan(string(data), &pid, &agentPID)
+	return pid, agentPID
+}
+
+// registrations are what each container found in its runner's variable.
+func (e *e2e) registrations() []string {
+	data, _ := os.ReadFile(filepath.Join(e.dir, "docker", "registrations"))
+	return strings.Fields(string(data))
+}
+
+func (e *e2e) startJob(pid int) {
+	os.WriteFile(filepath.Join(e.dir, "docker", fmt.Sprintf("go.%d", pid)), nil, 0o600)
+}
+
+func (e *e2e) endJob(pid int) {
+	os.WriteFile(filepath.Join(e.dir, "docker", fmt.Sprintf("done.%d", pid)), nil, 0o600)
+}
+
+func (e *e2e) placeRun() (coordinator.PlaceRun, bool) {
+	var run coordinator.PlaceRun
+	err := config.ReadJSON(filepath.Join(e.cfg.PlaceDir("box-1"), "place.json"), &run)
+	return run, err == nil
+}
+
+func (e *e2e) busy() bool {
+	held, err := lock.HeldBy(filepath.Join(e.cfg.PlaceDir("box-1"), "busy.lock"))
+	return err != nil || held
+}
+
+func (e *e2e) lines(path string) []string {
+	data, _ := os.ReadFile(path)
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+// messagesDir holds the scale set messages recorded from GitHub.
+const messagesDir = "../internal/coordinator/testdata/messages"
+
+func alive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) == nil }
+
+// verifyJob is the first job of a recorded waiting-jobs message: octo-org/app's
+// "verify / linux" in the ru-linux pool, request 9101, queued a minute ago.
+func verifyJob(t *testing.T) scaleset.JobMessageBase {
+	var f struct {
+		Messages []struct {
+			Message scaleset.RunnerScaleSetMessage `json:"message"`
+		} `json:"messages"`
+	}
+	b, err := os.ReadFile(filepath.Join(messagesDir, "waiting-jobs.json"))
+	if err == nil {
+		err = json.Unmarshal(b, &f)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := f.Messages[0].Message.JobAvailableMessages[0].JobMessageBase
+	job.QueueTime = time.Now().Add(-time.Minute).UTC()
+	return job
+}
+
+func jobMessage(base scaleset.JobMessageBase, kind scaleset.MessageType) scaleset.JobMessageBase {
+	base.MessageType = kind
+	return base
+}
+
+// noSecrets checks no registration appears in any command line or log.
+func (e *e2e) noSecrets(jits []string) {
+	e.t.Helper()
+	logs := e.logs()
+	for _, jit := range jits {
+		if strings.Contains(logs, jit) {
+			e.t.Errorf("a runner registration appeared in a command line or log:\n%s", logs)
+		}
+	}
+}
+
+func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
+	e := newE2E(t)
+	job := verifyJob(t)
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(job, scaleset.MessageTypeJobAvailable)})
+	e.serve()
+
+	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
+	seen := e.actions.read()
+	if !slices.Equal(seen.acquired, []int64{9101}) || len(seen.jits) != 1 {
+		t.Fatalf("acquired %v with %d registrations, want request 9101 with one", seen.acquired, len(seen.jits))
+	}
+	if got := e.registrations(); !slices.Equal(got, seen.jits) {
+		t.Fatalf("the runner got registration %v, want %v", got, seen.jits)
+	}
+	pid, agentPID := e.container()
+	run, _ := e.placeRun()
+	for _, p := range []int{run.PID, agentPID} {
+		args, _ := exec.Command("ps", "-ww", "-o", "args=", "-p", strconv.Itoa(p)).Output()
+		if len(args) == 0 || strings.Contains(string(args), seen.jits[0]) {
+			t.Errorf("process %d's command line is %q", p, args)
+		}
+	}
+	// The agent ran over SSH with every word quoted, and gave the container
+	// the place's share and the fork guard as its job-started hook.
+	ssh := e.lines(filepath.Join(e.dir, "ssh.log"))
+	wantRun := "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 ci@box '" + runnerUp(t) +
+		"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300'"
+	if !slices.Contains(ssh, wantRun) {
+		t.Errorf("ssh ran %q, want %q among them", ssh, wantRun)
+	}
+	docker := e.lines(filepath.Join(e.dir, "docker", "docker.log"))
+	hook := filepath.Join(e.dir, "machine", "runner-up", "agent", "places", "box-1", "fork-guard.sh")
+	wantDocker := "run --rm --name runner-up-box-1 --label runner-up.place=box-1 --cpus 2 --memory 4096m" +
+		" -e ACTIONS_RUNNER_INPUT_JITCONFIG -v " + runnerUp(t) + ":/opt/runner-up/runner-up:ro -v " + hook +
+		":/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh" +
+		" --entrypoint /home/runner/run.sh " + agent.DefaultDockerImage
+	if !slices.Contains(docker, wantDocker) {
+		t.Errorf("docker ran %q, want %q among them", docker, wantDocker)
+	}
+	if b, _ := os.ReadFile(hook); string(b) != agent.ForkGuardHook("/opt/runner-up/runner-up") {
+		t.Errorf("the container's job-started hook is %q", b)
+	}
+
+	e.startJob(pid)
+	e.eventually("the place runner sees the job start", func() bool { run, ok := e.placeRun(); return ok && run.Started })
+	out, err := exec.Command(runnerUp(t), "status", "--config", e.config).Output()
+	if err != nil || !strings.Contains(string(out), `place box-1 on box (docker, 2 cores, 4096 MB) busy (job): octo-org/app "verify / linux" running`) {
+		t.Errorf("status said %q (%v)", out, err)
+	}
+
+	// The coordinator stops; the job carries on in its place.
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM\n%s", code, e.logs())
+	}
+	if seen := e.actions.read(); seen.closed != 1 {
+		t.Errorf("the coordinator closed %d sessions on stopping, want 1", seen.closed)
+	}
+	if !e.busy() || !alive(pid) || !alive(agentPID) {
+		t.Fatalf("the place did not outlive the coordinator: busy %v, container %v, agent %v", e.busy(), alive(pid), alive(agentPID))
+	}
+
+	// The coordinator starts again: it opens a new session, leaves the busy
+	// place alone and starts no second runner.
+	e.serve()
+	// It places jobs as soon as its session is open, before its first poll,
+	// and again after every poll.
+	e.eventually("the coordinator polls its new session twice", func() bool {
+		seen := e.actions.read()
+		return seen.opened == 2 && seen.polls >= 2
+	})
+	if seen := e.actions.read(); len(seen.jits) != 1 || len(seen.acquired) != 1 {
+		t.Fatalf("after the restart the coordinator acquired %v and made %d registrations", seen.acquired, len(seen.jits))
+	}
+	cleans := 0
+	for _, line := range e.lines(filepath.Join(e.dir, "ssh.log")) {
+		if strings.Contains(line, "'agent' 'clean'") {
+			cleans++
+		}
+	}
+	if cleans != 1 {
+		t.Errorf("the agent cleaned the place %d times, want once, at the first start while it was free", cleans)
+	}
+	if !alive(pid) {
+		t.Fatal("the restart stopped the running job")
+	}
+
+	// The job ends and GitHub says so; the place frees and its runner, which
+	// ran its job, is not removed.
+	e.endJob(pid)
+	runner := run.RunnerName
+	e.actions.send(
+		scaleset.JobStarted{RunnerID: 1, RunnerName: runner, JobMessageBase: jobMessage(job, scaleset.MessageTypeJobStarted)},
+		scaleset.JobCompleted{Result: "succeeded", RunnerID: 1, RunnerName: runner, JobMessageBase: jobMessage(job, scaleset.MessageTypeJobCompleted)})
+	e.eventually("the place frees", func() bool { return !e.busy() })
+	e.eventually("the coordinator forgets the finished run", func() bool { _, ok := e.placeRun(); return !ok })
+	if alive(pid) || alive(agentPID) {
+		t.Errorf("the container or agent outlived the job: %v %v", alive(pid), alive(agentPID))
+	}
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+	seen = e.actions.read()
+	if len(seen.removed) != 0 || len(seen.stray) != 0 {
+		t.Errorf("removed runners %v, unknown requests %v", seen.removed, seen.stray)
+	}
+	if len(e.registrations()) != 1 {
+		t.Errorf("%d containers ran, want 1", len(e.registrations()))
+	}
+	e.noSecrets(seen.jits)
+}
+
+func TestCrashedPlaceIsCleanedUpAndItsJobPlacedAgain(t *testing.T) {
+	e := newE2E(t)
+	job := verifyJob(t)
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(job, scaleset.MessageTypeJobAvailable)})
+	e.serve()
+	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
+	first, _ := e.container()
+
+	// The place runner dies before the job reaches its runner, as when the
+	// coordinator's machine loses it or the SSH connection drops: the agent
+	// stops the container, the runner nobody used is removed, and the job
+	// gets a new runner in the place.
+	run, _ := e.placeRun()
+	syscall.Kill(run.PID, syscall.SIGKILL)
+	e.eventually("a second container starts", func() bool { return len(e.registrations()) == 2 })
+	e.eventually("the second container is recorded", func() bool { pid, _ := e.container(); return pid > 0 && pid != first })
+	if alive(first) {
+		t.Error("the first container outlived its place runner")
+	}
+	e.eventually("the unused runner is removed", func() bool { return slices.Equal(e.actions.read().removed, []int64{1}) })
+
+	// The agent itself is killed outright and cannot clean up: its container
+	// is left running until the next agent in the place removes it first.
+	second, agentPID := e.container()
+	syscall.Kill(agentPID, syscall.SIGKILL)
+	e.eventually("a third container starts", func() bool { return len(e.registrations()) == 3 })
+	e.eventually("the third container is recorded", func() bool { pid, _ := e.container(); return pid > 0 && pid != second })
+	if alive(second) {
+		t.Error("the container a killed agent left behind is still running")
+	}
+	docker := e.lines(filepath.Join(e.dir, "docker", "docker.log"))
+	runs := []int{}
+	for i, line := range docker {
+		if strings.HasPrefix(line, "run ") {
+			runs = append(runs, i)
+		}
+	}
+	if len(runs) != 3 || !slices.Contains(docker[runs[1]:runs[2]], "rm -f runner-up-box-1") {
+		t.Errorf("the third agent did not remove what the second left before starting:\n%s", strings.Join(docker, "\n"))
+	}
+	e.eventually("the second unused runner is removed", func() bool { return slices.Equal(e.actions.read().removed, []int64{1, 2}) })
+
+	// The third runner runs the job.
+	third, _ := e.container()
+	e.startJob(third)
+	e.eventually("the job starts", func() bool { run, ok := e.placeRun(); return ok && run.Started })
+	e.endJob(third)
+	e.eventually("the place frees", func() bool { return !e.busy() })
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+	seen := e.actions.read()
+	if !slices.Equal(seen.acquired, []int64{9101, 9101, 9101}) || !slices.Equal(seen.removed, []int64{1, 2}) {
+		t.Errorf("acquired %v and removed runners %v, want 9101 three times and runners 1 and 2", seen.acquired, seen.removed)
+	}
+	if !slices.Equal(e.registrations(), seen.jits) {
+		t.Errorf("the containers got %v, want %v", e.registrations(), seen.jits)
+	}
+	e.noSecrets(seen.jits)
+}

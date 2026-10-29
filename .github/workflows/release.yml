@@ -1,0 +1,242 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build-and-upload:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build -ldflags "-X github.com/kunchenguid/runner-up/internal/version.Version=v${VERSION}" -o "runner-up${ext}" .
+
+      - name: Archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          name="runner-up-v${VERSION}-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            zip "${name}.zip" runner-up.exe
+          else
+            tar czf "${name}.tar.gz" runner-up
+          fi
+
+      - name: Upload archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          name="runner-up-v${VERSION}-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            gh release upload "${TAG_NAME}" "${name}.zip"
+          else
+            gh release upload "${TAG_NAME}" "${name}.tar.gz"
+          fi
+
+      - name: Upload archive as artifact
+        uses: actions/upload-artifact@v4
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        with:
+          name: archive-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: runner-up-v${{ needs.release-please.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.*
+
+  # release-please opens its release PR with GITHUB_TOKEN, and GitHub creates no
+  # workflow runs for such PRs (verified: release PR head commits carry zero
+  # check runs). The "PR must be raised via no-mistakes" required check can
+  # therefore never report on a release PR by itself, which would leave every
+  # release blocked on a status that can never arrive.
+  #
+  # The required check is now decided by the shared require-no-mistakes action.
+  # Publish that status here instead with the repository's local
+  # .github/scripts/no-mistakes-gate.sh, because the shared action can never
+  # report on a GITHUB_TOKEN PR that produces no workflow run at all. The status
+  # is only ever written for a PR the script itself accepts as structurally
+  # release-please's own.
+  release-pr-gate-status:
+    needs: release-please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish the no-mistakes gate status on the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          pr_numbers=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.ref | startswith("release-please--") or startswith("release-please/")) | .number')
+
+          if [ -z "$pr_numbers" ]; then
+            echo "No open release-please PR; nothing to stamp."
+            exit 0
+          fi
+
+          for pr in $pr_numbers; do
+            eval "$(gh api "repos/${REPO}/pulls/${pr}" --jq '
+              "PR_NUMBER=" + (.number|tostring|@sh) +
+              " PR_AUTHOR=" + (.user.login|@sh) +
+              " PR_HEAD_REF=" + (.head.ref|@sh) +
+              " PR_HEAD_REPO=" + (.head.repo.full_name|@sh) +
+              " PR_BASE_REPO=" + (.base.repo.full_name|@sh) +
+              " PR_HEAD_SHA=" + (.head.sha|@sh) +
+              " PR_BODY=" + ((.body // "")|@sh)')"
+            export PR_NUMBER PR_AUTHOR PR_HEAD_REF PR_HEAD_REPO PR_BASE_REPO PR_BODY
+
+            # Overriding PR_AUTHOR defeats the script's bot exemption on
+            # purpose, so a status is stamped only when the STRUCTURAL
+            # release-please conditions hold, never because a bot opened the PR.
+            if PR_AUTHOR="structural-release-please-check" ./.github/scripts/no-mistakes-gate.sh; then
+              echo "Stamping the gate status on PR #${PR_NUMBER} (${PR_HEAD_SHA})."
+              gh api --method POST "repos/${REPO}/statuses/${PR_HEAD_SHA}" \
+                -f state=success \
+                -f context='PR must be raised via no-mistakes' \
+                -f description='release-please release PR: structurally exempt' \
+                -f target_url="${RUN_URL}" >/dev/null
+            else
+              echo "PR #${PR_NUMBER} is not a structural release-please PR; leaving it to the required check."
+            fi
+          done
+
+  notify-issues:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment on resolved issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          # Get the previous tag
+          prev_tag=$(gh api repos/${{ github.repository }}/releases \
+            --jq "[.[] | select(.tag_name != \"${TAG_NAME}\")] | first | .tag_name")
+
+          if [ -z "$prev_tag" ] || [ "$prev_tag" = "null" ]; then
+            echo "No previous release found, skipping"
+            exit 0
+          fi
+
+          echo "Finding PRs between ${prev_tag} and ${TAG_NAME}"
+
+          # Get commits between tags via compare API (excludes base tag, no inclusive-boundary issue)
+          # Note: limited to 250 commits, but we only need PR numbers which are deduped anyway
+          commits=$(gh api repos/${{ github.repository }}/compare/${prev_tag}...${TAG_NAME} \
+            --jq '.commits[].sha')
+
+          # Collect unique PR numbers across all commits (avoids duplicate timeline queries)
+          declare -A seen_prs
+          for sha in $commits; do
+            prs=$(gh api repos/${{ github.repository }}/commits/${sha}/pulls \
+              --jq '.[].number' 2>/dev/null || true)
+            for pr in $prs; do
+              seen_prs[$pr]=1
+            done
+          done
+
+          # For each unique PR, find linked issues via PR body and comment
+          declare -A seen_issues
+          for pr in "${!seen_prs[@]}"; do
+            # Check the PR body for "Fixes #N" / "Closes #N" patterns (same-repo only, excludes org/repo#N)
+            issues=$(gh api repos/${{ github.repository }}/pulls/${pr} \
+              --jq '.body' 2>/dev/null \
+              | grep -oiE '(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#[0-9]+' \
+              | grep -oE '[0-9]+' || true)
+
+            for issue in $issues; do
+              if [ -z "${seen_issues[$issue]+x}" ]; then
+                seen_issues[$issue]=1
+                echo "Commenting on issue #${issue}"
+                gh issue comment "$issue" \
+                  --repo ${{ github.repository }} \
+                  --body "This issue has been addressed in [v${VERSION}](https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}). :tada:"
+              fi
+            done
+          done
+
+  checksums:
+    needs: [release-please, build-and-upload]
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: sha256sum runner-up-v* > checksums.txt
+
+      - name: Upload checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "${TAG_NAME}" checksums.txt
+        working-directory: ${{ github.workspace }}

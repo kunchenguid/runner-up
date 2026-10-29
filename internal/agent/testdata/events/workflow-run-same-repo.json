@@ -1,0 +1,67 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "id": 39484263767,
+    "name": "lint",
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "success",
+    "head_branch": "docs/body",
+    "head_sha": "5b0f1e7c2d4a39e8a1f6c0b7d2e9a4c3f8b1d6e0",
+    "pull_requests": [],
+    "repository": {
+      "id": 500001,
+      "node_id": "R_base",
+      "name": "tool",
+      "full_name": "octo-user/tool",
+      "private": true,
+      "fork": false,
+      "owner": {
+        "login": "octo-user",
+        "id": 2002,
+        "type": "User"
+      },
+      "default_branch": "main",
+      "license": null
+    },
+    "head_repository": {
+      "id": 500001,
+      "node_id": "R_base",
+      "name": "tool",
+      "full_name": "octo-user/tool",
+      "private": true,
+      "fork": false,
+      "owner": {
+        "login": "octo-user",
+        "id": 2002,
+        "type": "User"
+      },
+      "default_branch": "main",
+      "license": null
+    }
+  },
+  "workflow": {
+    "name": "lint",
+    "path": ".github/workflows/lint.yml"
+  },
+  "repository": {
+    "id": 500001,
+    "node_id": "R_base",
+    "name": "tool",
+    "full_name": "octo-user/tool",
+    "private": true,
+    "fork": false,
+    "owner": {
+      "login": "octo-user",
+      "id": 2002,
+      "type": "User"
+    },
+    "default_branch": "main",
+    "license": null
+  },
+  "sender": {
+    "login": "octo-user",
+    "id": 2002,
+    "type": "User"
+  }
+}

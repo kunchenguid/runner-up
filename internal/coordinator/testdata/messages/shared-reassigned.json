@@ -1,0 +1,295 @@
+{
+  "source": "Six messages recorded unchanged from one scale set label in two repositories, here renamed octo-user/tool and octo-org/app, with one place, proof-b; at is when each arrived. tool's suite job is assigned and takes the place. Seventeen minutes later GitHub assigns app's history job to the scale set. Five and ten minutes after that it assigns that job again under a new job id, and the same message takes back the previous assignment, naming its job id, with no runner and no finish time. tool's job completes 69 minutes after it started; GitHub sent nothing more about the history job, whose third assignment stood.",
+  "now": "2026-10-20T19:46:02.760Z",
+  "messages": [
+    {
+      "at": "2026-10-20T19:46:02.760Z",
+      "repo": "octo-user/tool",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000004,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 1,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 0,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": [
+          {
+            "messageType": "JobAssigned",
+            "runnerRequestId": 0,
+            "repositoryName": "tool",
+            "ownerName": "octo-user",
+            "jobId": "1acc1539-9a73-5c63-a282-f3e4bb17865f",
+            "jobWorkflowRef": "octo-user/tool/.github/workflows/suite.yml@refs/heads/proof/inf621-suite",
+            "jobDisplayName": "suite / Full test suite",
+            "workflowRunId": 39486240511,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T19:46:02.646389843Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ],
+        "JobStartedMessages": null,
+        "JobCompletedMessages": null
+      }
+    },
+    {
+      "at": "2026-10-20T19:46:54.647Z",
+      "repo": "octo-user/tool",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000005,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 1,
+          "totalRunningJobs": 1,
+          "totalRegisteredRunners": 1,
+          "totalBusyRunners": 1,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": null,
+        "JobStartedMessages": [
+          {
+            "runnerId": 77,
+            "runnerName": "runner-up-proof-b-1792525562",
+            "messageType": "JobStarted",
+            "runnerRequestId": 0,
+            "repositoryName": "tool",
+            "ownerName": "octo-user",
+            "jobId": "1acc1539-9a73-5c63-a282-f3e4bb17865f",
+            "jobWorkflowRef": "octo-user/tool/.github/workflows/suite.yml@refs/heads/proof/inf621-suite",
+            "jobDisplayName": "suite / Full test suite",
+            "workflowRunId": 39486240511,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T19:46:02.646389843Z",
+            "runnerAssignTime": "2026-10-20T19:46:41.8466861Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ],
+        "JobCompletedMessages": null
+      }
+    },
+    {
+      "at": "2026-10-20T20:03:58.007Z",
+      "repo": "octo-org/app",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000019,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 1,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 0,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": [
+          {
+            "messageType": "JobAssigned",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "c770bdbf-90cb-51a9-b06c-3783ae0dbadd",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/inf621-phone-history.yml@refs/heads/proof/inf621-phone-history",
+            "jobDisplayName": "history",
+            "workflowRunId": 39488786987,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T20:03:57.991996615Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ],
+        "JobStartedMessages": null,
+        "JobCompletedMessages": null
+      }
+    },
+    {
+      "at": "2026-10-20T20:08:58.176Z",
+      "repo": "octo-org/app",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000020,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 1,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 0,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": [
+          {
+            "messageType": "JobAssigned",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "502a1dd1-bb53-58c4-9500-a6afa5f58c93",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/inf621-phone-history.yml@refs/heads/proof/inf621-phone-history",
+            "jobDisplayName": "history",
+            "workflowRunId": 39488786987,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T20:08:58.168270936Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ],
+        "JobStartedMessages": null,
+        "JobCompletedMessages": [
+          {
+            "result": "canceled",
+            "runnerId": 0,
+            "runnerName": "",
+            "messageType": "JobCompleted",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "c770bdbf-90cb-51a9-b06c-3783ae0dbadd",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/inf621-phone-history.yml@refs/heads/proof/inf621-phone-history",
+            "jobDisplayName": "history",
+            "workflowRunId": 39488786987,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T20:03:57.991996615Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-10-20T20:13:58.329Z",
+      "repo": "octo-org/app",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000021,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 1,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 0,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": [
+          {
+            "messageType": "JobAssigned",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "f193ec53-94aa-5aa0-af0c-3a845bc040c6",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/inf621-phone-history.yml@refs/heads/proof/inf621-phone-history",
+            "jobDisplayName": "history",
+            "workflowRunId": 39488786987,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T20:13:58.289099932Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ],
+        "JobStartedMessages": null,
+        "JobCompletedMessages": [
+          {
+            "result": "canceled",
+            "runnerId": 0,
+            "runnerName": "",
+            "messageType": "JobCompleted",
+            "runnerRequestId": 0,
+            "repositoryName": "app",
+            "ownerName": "octo-org",
+            "jobId": "502a1dd1-bb53-58c4-9500-a6afa5f58c93",
+            "jobWorkflowRef": "octo-org/app/.github/workflows/inf621-phone-history.yml@refs/heads/proof/inf621-phone-history",
+            "jobDisplayName": "history",
+            "workflowRunId": 39488786987,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T20:08:58.168270936Z",
+            "runnerAssignTime": "0001-01-01T00:00:00Z",
+            "finishTime": "0001-01-01T00:00:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-10-20T20:55:34.434Z",
+      "repo": "octo-user/tool",
+      "label": "ru-proof",
+      "message": {
+        "MessageID": 100000006,
+        "Statistics": {
+          "totalAvailableJobs": 0,
+          "totalAcquiredJobs": 0,
+          "totalAssignedJobs": 0,
+          "totalRunningJobs": 0,
+          "totalRegisteredRunners": 1,
+          "totalBusyRunners": 0,
+          "totalIdleRunners": 0
+        },
+        "JobAvailableMessages": null,
+        "JobAssignedMessages": null,
+        "JobStartedMessages": null,
+        "JobCompletedMessages": [
+          {
+            "result": "succeeded",
+            "runnerId": 77,
+            "runnerName": "runner-up-proof-b-1792525562",
+            "messageType": "JobCompleted",
+            "runnerRequestId": 0,
+            "repositoryName": "tool",
+            "ownerName": "octo-user",
+            "jobId": "1acc1539-9a73-5c63-a282-f3e4bb17865f",
+            "jobWorkflowRef": "octo-user/tool/.github/workflows/suite.yml@refs/heads/proof/inf621-suite",
+            "jobDisplayName": "suite / Full test suite",
+            "workflowRunId": 39486240511,
+            "eventName": "push",
+            "requestLabels": [
+              "ru-proof"
+            ],
+            "queueTime": "0001-01-01T00:00:00Z",
+            "scaleSetAssignTime": "2026-10-20T19:46:02.646389843Z",
+            "runnerAssignTime": "2026-10-20T19:46:41.8466861Z",
+            "finishTime": "2026-10-20T20:55:34.135404473Z"
+          }
+        ]
+      }
+    }
+  ]
+}

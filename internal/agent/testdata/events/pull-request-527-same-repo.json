@@ -1,0 +1,88 @@
+{
+  "action": "opened",
+  "number": 527,
+  "pull_request": {
+    "number": 527,
+    "state": "open",
+    "draft": false,
+    "title": "docs: describe the setup",
+    "user": {
+      "login": "octo-user",
+      "id": 2002,
+      "type": "User"
+    },
+    "milestone": null,
+    "merged_at": null,
+    "author_association": "OWNER",
+    "head": {
+      "label": "octo-user:docs/body",
+      "ref": "docs/body",
+      "sha": "5b0f1e7c2d4a39e8a1f6c0b7d2e9a4c3f8b1d6e0",
+      "user": {
+        "login": "octo-user",
+        "id": 2002,
+        "type": "User"
+      },
+      "repo": {
+        "id": 500001,
+        "node_id": "R_base",
+        "name": "tool",
+        "full_name": "octo-user/tool",
+        "private": true,
+        "fork": false,
+        "owner": {
+          "login": "octo-user",
+          "id": 2002,
+          "type": "User"
+        },
+        "default_branch": "main",
+        "license": null
+      }
+    },
+    "base": {
+      "label": "octo-user:main",
+      "ref": "main",
+      "sha": "19178f6c169f427276cd7a9972c49b59de3907a7",
+      "user": {
+        "login": "octo-user",
+        "id": 2002,
+        "type": "User"
+      },
+      "repo": {
+        "id": 500001,
+        "node_id": "R_base",
+        "name": "tool",
+        "full_name": "octo-user/tool",
+        "private": true,
+        "fork": false,
+        "owner": {
+          "login": "octo-user",
+          "id": 2002,
+          "type": "User"
+        },
+        "default_branch": "main",
+        "license": null
+      }
+    }
+  },
+  "repository": {
+    "id": 500001,
+    "node_id": "R_base",
+    "name": "tool",
+    "full_name": "octo-user/tool",
+    "private": true,
+    "fork": false,
+    "owner": {
+      "login": "octo-user",
+      "id": 2002,
+      "type": "User"
+    },
+    "default_branch": "main",
+    "license": null
+  },
+  "sender": {
+    "login": "octo-user",
+    "id": 2002,
+    "type": "User"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "inputs": {},
+  "ref": "refs/heads/main",
+  "workflow": ".github/workflows/ci.yml",
+  "repository": {
+    "id": 500001,
+    "node_id": "R_base",
+    "name": "tool",
+    "full_name": "octo-user/tool",
+    "private": true,
+    "fork": false,
+    "owner": {
+      "login": "octo-user",
+      "id": 2002,
+      "type": "User"
+    },
+    "default_branch": "main",
+    "license": null
+  },
+  "sender": {
+    "login": "octo-user",
+    "id": 2002,
+    "type": "User"
+  }
+}
