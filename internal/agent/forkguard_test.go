@@ -28,7 +28,14 @@ func hook(t *testing.T) func(event, name string) (stdout, stderr string, err err
 	}
 	return func(event, name string) (string, string, error) {
 		cmd := exec.Command("bash", path)
-		cmd.Env = append(os.Environ(), "GITHUB_EVENT_NAME="+name)
+		// Under GitHub Actions the test itself runs in a job whose event
+		// variables would stand in for a missing one.
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "GITHUB_EVENT_") {
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+		cmd.Env = append(cmd.Env, "GITHUB_EVENT_NAME="+name)
 		if event != "" {
 			cmd.Env = append(cmd.Env, "GITHUB_EVENT_PATH="+event)
 		}

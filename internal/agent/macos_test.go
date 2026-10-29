@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -290,8 +291,17 @@ func guard(t *testing.T, hook, event string) bool {
 
 const sequoia = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
 
+// newTartMac is a mac for a tart place, which the agent refuses anywhere but
+// a Mac with Apple silicon.
+func newTartMac(t *testing.T) *mac {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("tart places run only on Macs with Apple silicon")
+	}
+	return newMac(t)
+}
+
 func TestTartPlaceRunsTheJobInAFreshCloneAndDeletesIt(t *testing.T) {
-	m := newMac(t)
+	m := newTartMac(t)
 	jit := "eyJydW5uZXIiOiJydW5uZXItdXAtbWFjLTEifQ-mac-1"
 	a := m.run(jit, "--provider", "tart", "--place", "mac-1", "--image", sequoia, "--cores", "4", "--memory", "8192",
 		"--boot-timeout", "30", "--guest-check", "1")
@@ -356,7 +366,7 @@ func TestTartPlaceRunsTheJobInAFreshCloneAndDeletesIt(t *testing.T) {
 }
 
 func TestTartPlaceEndsTheJobWhenTheClonesMacOSRestarts(t *testing.T) {
-	m := newMac(t)
+	m := newTartMac(t)
 	a := m.run("jit-mac-2", "--provider", "tart", "--place", "mac-2", "--image", sequoia, "--boot-timeout", "30", "--guest-check", "1")
 	vm := m.vm(CloneName("mac-2"))
 	m.eventually("the runner starts in the clone", a, func() bool { return m.pid("runner.pid") > 0 })
@@ -383,7 +393,7 @@ func TestTartPlaceEndsTheJobWhenTheClonesMacOSRestarts(t *testing.T) {
 }
 
 func TestTartPlaceWaitsForAFreeMacOSVM(t *testing.T) {
-	m := newMac(t)
+	m := newTartMac(t)
 	// Two VMs run that runner-up did not start: a macOS proof clone and a
 	// Linux VM, which does not count. A leftover clone of this same place is
 	// cleaned up first and does not count either.
@@ -521,7 +531,7 @@ func TestHostPlaceKeepsItsToolCacheBetweenJobs(t *testing.T) {
 }
 
 func TestTartPlaceRunnerUsesTheImagesToolCache(t *testing.T) {
-	m := newMac(t)
+	m := newTartMac(t)
 	// The fake tart runs the guest's commands here, so a folder of the test
 	// stands in for the image's tool cache.
 	tools := filepath.Join(m.dir, "image-tool-cache")
