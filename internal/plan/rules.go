@@ -11,6 +11,8 @@ import (
 // splits the line in two, matching jobs first; the next rule orders each half,
 // and first-in, first-out breaks the last tie:
 //
+//	pool:NAME         jobs asking for the pool NAME, such as short jobs a
+//	                  merge waits on, on the places it shares with other pools
 //	label:NAME        jobs from an open pull request labeled NAME, from the
 //	                  same repository, including runs on its head branch
 //	waited:DURATION   jobs waiting at least DURATION, oldest first among them,
@@ -30,6 +32,7 @@ const unknownDuration = 15 * time.Minute
 type Rule struct {
 	kind  string
 	label string
+	pool  string
 	wait  time.Duration
 	globs []string
 }
@@ -48,6 +51,11 @@ func ParseOrder(order []string) ([]Rule, error) {
 				return nil, fmt.Errorf("order rule %q names no label", s)
 			}
 			r.label = arg
+		case "pool":
+			if arg == "" {
+				return nil, fmt.Errorf("order rule %q names no pool", s)
+			}
+			r.pool = arg
 		case "waited":
 			d, err := time.ParseDuration(arg)
 			if err != nil || d <= 0 {
@@ -67,7 +75,7 @@ func ParseOrder(order []string) ([]Rule, error) {
 				return nil, fmt.Errorf("order rule %q takes no argument", s)
 			}
 		default:
-			return nil, fmt.Errorf("unknown order rule %q: use label:, waited:, workflow: or shortest", s)
+			return nil, fmt.Errorf("unknown order rule %q: use pool:, label:, waited:, workflow: or shortest", s)
 		}
 		out = append(out, r)
 	}
@@ -78,6 +86,10 @@ func ParseOrder(order []string) ([]Rule, error) {
 func before(x, y Job, rules []Rule, now time.Time) bool {
 	for _, r := range rules {
 		switch r.kind {
+		case "pool":
+			if a, b := x.Pool == r.pool, y.Pool == r.pool; a != b {
+				return a
+			}
 		case "label":
 			if a, b := x.Labels[r.label], y.Labels[r.label]; a != b {
 				return a

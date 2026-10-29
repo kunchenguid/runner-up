@@ -404,12 +404,18 @@ half, and the oldest job breaks a tie.
 
 | Rule | Puts first |
 | --- | --- |
+| `pool:NAME` | jobs asking for the pool NAME, which must be one of the setup's pools |
 | `label:NAME` | jobs from an open pull request labeled NAME, in the same repository (not from forks), including runs on its branch |
 | `waited:DURATION` | jobs that have waited at least DURATION, oldest first |
 | `workflow:GLOB,...` | jobs whose top-level workflow file (without `.yml`) matches, such as `release` or `deploy-*` |
 | `shortest` | jobs with shorter runtimes learned from earlier successful runs; a job never seen counts as 15 minutes |
 
 For example, `["label:urgent", "workflow:release", "waited:60m", "shortest"]`.
+
+A `pool:` rule matters where places serve several pools. To let short jobs that
+a merge waits on go ahead of everything else, give them a pool of their own,
+have the same places serve it, and list `pool:` first:
+`["pool:quick", "label:urgent", "waited:60m", "shortest"]`.
 
 GitHub picks which of a scale set's jobs a new runner takes. So the order is
 exact between pools and repositories, but only close within one pool of one
