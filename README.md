@@ -225,7 +225,8 @@ jobs:
     runs-on: my-pool
 ```
 
-`runner-up status` shows each place, the job it runs, and the jobs waiting.
+`runner-up status` shows each place and the waiting work; for borrows, see
+[Borrowing a virtual Mac](#borrowing-a-virtual-mac).
 
 ### Windows machines
 
