@@ -190,5 +190,6 @@ func TestBorrowCLIRejectsInvalidInputs(t *testing.T) {
 		if err == nil || cmd.ProcessState.ExitCode() != 2 {
 			t.Fatalf("borrow %v: %v %s", args, err, b)
 		}
+		t.Logf("borrow %v: exit=2, %s", args, b)
 	}
 }

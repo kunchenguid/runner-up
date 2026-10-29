@@ -37,8 +37,8 @@ type Launcher interface {
 	Stop(placeID string) error
 }
 
-// PlaceRun is a place's place.json: written by the coordinator just before it
-// launches, then updated by the place's runner process.
+// PlaceRun is a place's place.json for a job or borrow, written by the coordinator
+// just before launch. For jobs, the place's runner updates it as the job starts.
 type PlaceRun struct {
 	BorrowID   string    `json:"borrowId,omitempty"`
 	RunnerName string    `json:"runnerName"`

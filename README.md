@@ -426,8 +426,7 @@ command starts it under `BORROWED_VM`, the name runner-up reserves and cleans.
   reach that Mac itself; `BORROWED_VM` names the VM there, not a local VM.
 - The granted command receives `BORROWED_PLACE`, `BORROWED_VM`,
   `BORROWED_CPUS` and `BORROWED_MEMORY_MB`. Keep the command in the foreground
-  until its work finishes. It needs no second crew place or declared load-line
-  reservation for the same VM.
+  until its work finishes; the borrow itself reserves the place for that VM.
 - From grant through cleanup, the place reserves its share once and one of
   the Mac's two VM slots. A running VM under `BORROWED_VM` is not counted a
   second time. VMs under other names still count as outside runner-up.

@@ -59,8 +59,8 @@ func borrowLimit(minutes int) time.Duration {
 	return max(time.Hour, time.Duration(minutes)*time.Minute)
 }
 
-// BorrowMain runs a command in a borrowed tart place, without a second crew
-// reservation. It runs on the coordinator's computer; commands addressing a
+// BorrowMain runs a command with a tart place reserved for its VM.
+// It runs on the coordinator's computer; commands addressing a
 // remote Mac must reach it themselves, as they would without a borrow.
 func BorrowMain(args []string) int {
 	fs := flag.NewFlagSet("borrow", flag.ContinueOnError)

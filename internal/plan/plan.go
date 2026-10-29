@@ -11,7 +11,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Job is one waiting job, as a scale set offered or assigned it.
+// Job is waiting work: a job offered or assigned by a scale set, or a local borrow.
 type Job struct {
 	// BorrowID identifies a local borrow; it competes with jobs but takes only tart places.
 	BorrowID string `json:"borrowId,omitempty"`
