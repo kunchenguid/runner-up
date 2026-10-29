@@ -49,6 +49,7 @@ Setting up:
 Running:
   serve         run the coordinator
   status        show each place and the waiting jobs
+  borrow        borrow a tart place: --pool LABEL --label TEXT --minutes N -- COMMAND
 
 On each machine (run by the coordinator):
   agent probe|vms|run|clean
@@ -84,7 +85,7 @@ func Main() {
 	case "version":
 		fmt.Println(version.Version)
 		return
-	case "serve", "status", "check-config", "run-place", "init", "machine":
+	case "serve", "status", "check-config", "run-place", "run-borrow", "borrow", "init", "machine":
 		if err := proc.CoordinatorRuns(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -98,6 +99,8 @@ func Main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "borrow":
+		os.Exit(coordinator.BorrowMain(os.Args[2:]))
 	case "init":
 		os.Exit(initMain(os.Args[2:]))
 	case "machine":
@@ -109,6 +112,7 @@ func Main() {
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	configPath := fs.String("config", config.DefaultConfigPath(), "setup file")
+	borrowID := fs.String("borrow", "", "borrow request (run-borrow)")
 	placeID := fs.String("place", "", "place to run (run-place)")
 	fs.Parse(os.Args[2:])
 	cfg, err := config.LoadConfig(*configPath)
@@ -122,6 +126,8 @@ func Main() {
 	switch os.Args[1] {
 	case "serve":
 		os.Exit(serve(cfg, *configPath))
+	case "run-borrow":
+		os.Exit(coordinator.RunBorrow(cfg, *placeID, *borrowID))
 	case "run-place":
 		os.Exit(coordinator.RunPlace(cfg, *placeID))
 	case "status":
@@ -258,18 +264,25 @@ func status(cfg *config.Config, w io.Writer) int {
 		}
 		job := ""
 		var run coordinator.PlaceRun
-		if why == "job" && config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil {
+		if (why == "job" || why == "borrow") && config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil {
 			started := "waiting for its job"
 			if run.Started {
 				started = "running"
 			}
 			job = fmt.Sprintf(": %s %q %s", run.Repo, run.JobName, started)
+			if run.BorrowID != "" {
+				job = fmt.Sprintf(": borrow %q since %s", run.JobName, run.LaunchedAt.Local().Format(time.RFC3339))
+			}
 		}
 		fmt.Fprintf(w, "place %s on %s (%s, %d cores, %d MB) %s%s\n", p.ID, p.Machine, p.Provider, p.Cores, p.MemoryMB, state, job)
 	}
 	var st coordinator.SavedState
 	if config.ReadJSON(filepath.Join(cfg.StateDir, "state.json"), &st) == nil {
 		for _, j := range st.Waiting {
+			if j.BorrowID != "" {
+				fmt.Fprintf(w, "waiting borrow %s %q since %s\n", j.Pool, j.Name, j.QueueTime.Local().Format(time.RFC3339))
+				continue
+			}
 			fmt.Fprintf(w, "waiting %s %s %q since %s\n", j.Repo, j.Pool, j.Name, j.QueueTime.Local().Format(time.RFC3339))
 		}
 		for _, a := range st.Acquired {

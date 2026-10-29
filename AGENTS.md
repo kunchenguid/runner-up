@@ -23,7 +23,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 - A runner's one-time registration reaches it only on standard input or a VM's serial port, never in a file, a command line or an environment variable.
 - Every runner starts with the fork guard as its job-started hook unless `allowForkPullRequests` is set.
 - A place is busy exactly while some process holds its lock; running jobs outlive a coordinator stop.
-- A place's share of its machine's cores and memory counts while its runner lives, within the machine's budget less the owner's room.
+- Resource reservations: see README.md, "Setup file" and "Borrowing a virtual Mac".
 - The coordinator stores no token; it asks `gh auth token` for each session.
 - Recorded GitHub payloads in `testdata/` are renamed; keep them free of real repository, account and machine names.
 

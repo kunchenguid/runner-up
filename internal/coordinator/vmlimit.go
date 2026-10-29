@@ -18,9 +18,9 @@ import (
 // owner runs by hand, takes one of those two as much as a place's clone does,
 // and tart then refuses the next clone. So a free tart place counts as busy
 // while its Mac already runs as many macOS VMs as the framework allows: its
-// other tart places whose runners are alive, each of which runs or is about
-// to run its clone, and the macOS VMs the Mac's agent reports that are no
-// clone of those places.
+// other tart places whose runners or borrow supervisors are alive, each of
+// which reserves its named clone, and the macOS VMs the Mac's agent reports
+// that are no clone of those places.
 
 // vmReader names the macOS VMs running on machine m right now.
 type vmReader func(ctx context.Context, m config.Machine) ([]string, error)

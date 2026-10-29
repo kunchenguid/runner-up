@@ -11,8 +11,10 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Job is one waiting job, as a scale set offered or assigned it.
+// Job is waiting work: a job offered or assigned by a scale set, or a local borrow.
 type Job struct {
+	// BorrowID identifies a local borrow; it competes with jobs but takes only tart places.
+	BorrowID string `json:"borrowId,omitempty"`
 	// Target is the repository or organization whose scale set has the job;
 	// Repo is the repository the job belongs to, the same for a repository's
 	// scale set.
@@ -37,8 +39,8 @@ type Job struct {
 	JobID string `json:"jobId,omitempty"`
 
 	// Filled in before planning, never saved.
-	// Estimate is the job's last successful wall time from runner assignment
-	// to finish; zero when no run of it has succeeded yet.
+	// Estimate is a borrow's declared duration, or a job's last successful wall
+	// time from runner assignment to finish; zero for a job with no successful run.
 	Estimate time.Duration `json:"-"`
 	// RunWorkflow is the top-level workflow path read from the run's metadata.
 	RunWorkflow string `json:"-"`
@@ -59,6 +61,9 @@ func RunKey(target, pool string, runID int64, name string) string {
 }
 
 func (j Job) Key() string {
+	if j.BorrowID != "" {
+		return "borrow|" + j.BorrowID
+	}
 	if j.RequestID != 0 {
 		return RequestKey(j.Target, j.Pool, j.RequestID)
 	}
@@ -87,8 +92,8 @@ type PlaceView struct {
 func (v PlaceView) share() config.Share { return config.Share{Cores: v.Cores, MemoryMB: v.MemoryMB} }
 
 // Headroom is what a counted machine's places may still reserve right now:
-// its budget less the shares of its places whose runners are alive. A machine
-// that counts no memory has Memory false.
+// its budget less the shares of places with held locks. A machine that counts
+// no memory has Memory false.
 type Headroom struct {
 	Cores, MemoryMB int
 	Memory          bool
@@ -109,9 +114,9 @@ type Assignment struct {
 	Place config.Place
 }
 
-// rank orders waiting jobs by the order rules (rules.go); first-in, first-out
+// Rank orders waiting jobs by the order rules (rules.go); first-in, first-out
 // breaks every tie.
-func rank(waiting []Job, rules []Rule, now time.Time) []Job {
+func Rank(waiting []Job, rules []Rule, now time.Time) []Job {
 	jobs := append([]Job(nil), waiting...)
 	sort.SliceStable(jobs, func(a, b int) bool { return before(jobs[a], jobs[b], rules, now) })
 	return jobs
@@ -130,7 +135,7 @@ func fifo(a, b Job) bool {
 // in. No running job is interrupted, and a job no place can take holds
 // nothing, so a smaller job behind it may take a place it cannot.
 func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules []Rule, now time.Time) []Assignment {
-	jobs := rank(waiting, rules, now)
+	jobs := Rank(waiting, rules, now)
 	left := map[string]Headroom{}
 	for m, h := range headroom {
 		left[m] = h
@@ -148,7 +153,7 @@ func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules
 	for _, j := range jobs {
 		best := -1
 		for i, p := range free {
-			if !slices.Contains(p.Pools, j.Pool) {
+			if !slices.Contains(p.Pools, j.Pool) || j.BorrowID != "" && p.Provider != config.ProviderTart {
 				continue
 			}
 			if h, ok := left[p.Machine]; ok && !h.fits(p.share()) {

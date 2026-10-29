@@ -1,0 +1,4 @@
+# Keep pipeline-owned maintenance commits compatible with this project's
+# conventional-subject requirement without skipping or suppressing any stage.
+commit:
+  fix_message: "chore({{.Step}}): {{.Summary}}"

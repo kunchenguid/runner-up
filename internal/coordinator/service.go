@@ -37,9 +37,10 @@ type Launcher interface {
 	Stop(placeID string) error
 }
 
-// PlaceRun is a place's place.json: written by the coordinator just before it
-// launches, then updated by the place's runner process.
+// PlaceRun is a place's place.json for a job or borrow, written by the coordinator
+// just before launch. For jobs, the place's runner updates it as the job starts.
 type PlaceRun struct {
+	BorrowID   string    `json:"borrowId,omitempty"`
 	RunnerName string    `json:"runnerName"`
 	RunnerID   int       `json:"runnerId"`
 	Target     string    `json:"target"`
@@ -58,8 +59,9 @@ type acquired struct {
 	At    time.Time `json:"at"`
 }
 
-// SavedState is everything the coordinator must remember across a restart.
-// The places remember themselves, through their locks and place.json.
+// SavedState preserves the job queue and learned timings across a restart.
+// Places remember themselves through their locks and place.json; local borrow
+// requests are re-read by refreshBorrowsLocked.
 type SavedState struct {
 	Timings  map[string]time.Duration `json:"timings,omitempty"`
 	Waiting  []plan.Job               `json:"waiting"`
@@ -459,6 +461,7 @@ func (s *Service) Place(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked()
+	s.refreshBorrowsLocked()
 	for range len(s.Cfg.Places()) + 1 {
 		assignments := plan.Plan(s.waitingLocked(), s.viewsLocked(), s.headroomLocked(), s.Rules, s.now())
 		if len(assignments) == 0 {
@@ -485,10 +488,12 @@ func (s *Service) Place(ctx context.Context) {
 func (s *Service) waitingLocked() []plan.Job {
 	out := make([]plan.Job, 0, len(s.waiting))
 	for _, j := range s.waiting {
-		if _, ok := s.sets[setKey(j.Target, j.Pool)]; !ok || j.TakenBack {
+		if _, ok := s.sets[setKey(j.Target, j.Pool)]; j.BorrowID == "" && (!ok || j.TakenBack) {
 			continue
 		}
-		j.Estimate = s.timings[j.TimingKey()]
+		if j.BorrowID == "" {
+			j.Estimate = s.timings[j.TimingKey()]
+		}
 		j.RunWorkflow = s.runWorkflows[workflowRun{j.Repo, j.RunID}].path
 		if ref := j.LabelRef(); ref != "" {
 			j.Labels = s.labels[j.Repo][ref]
@@ -529,9 +534,9 @@ func (s *Service) headroomLocked() map[string]plan.Headroom {
 	return out
 }
 
-// inUse sums what machine's places reserve while their runners are alive,
-// leaving out the place except. A runner waiting for its job keeps its share,
-// since the job will run there.
+// inUse sums what machine's places reserve while their runner or borrow
+// supervisor is alive, leaving out the place except. A runner waiting for its
+// job keeps its share, since the job will run there.
 func (s *Service) inUse(machine, except string) config.Share {
 	used := config.Share{}
 	for _, q := range s.Cfg.Places() {
@@ -543,10 +548,10 @@ func (s *Service) inUse(machine, except string) config.Share {
 	return used
 }
 
-// PlaceBusy reads one place. Its own lock says whether its runner process is
-// alive. On a machine with cores, a place is also busy while its share does
-// not fit beside the shares of the machine's other places whose runners are
-// alive, within the machine's budget less the owner's room. A tart place is
+// PlaceBusy reads one place. Its own lock says whether its runner or borrow
+// supervisor is alive. On a machine with cores, a place is also busy while its
+// share does not fit beside the machine's other busy places, within the
+// machine's budget less the owner's room. A tart place is
 // also busy while its Mac runs as many macOS VMs as it may (vmlimit.go). A
 // lock that cannot be read counts busy, so a broken reader never starts a
 // second job in a place.
@@ -556,6 +561,10 @@ func (s *Service) PlaceBusy(p config.Place) (bool, string) {
 		return true, "unreadable"
 	}
 	if held {
+		var run PlaceRun
+		if config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.BorrowID != "" {
+			return true, "borrow"
+		}
 		return true, "job"
 	}
 	if why := s.tight(p); why != "" {
@@ -590,8 +599,8 @@ func (s *Service) tight(p config.Place) string {
 	return ""
 }
 
-// runnerAlive reports whether a place's runner process is alive, from its
-// lock alone. A lock that cannot be read counts alive.
+// runnerAlive reports whether a place's runner or borrow supervisor is alive,
+// from its lock alone. A lock that cannot be read counts alive.
 func (s *Service) runnerAlive(placeID string) bool {
 	held, err := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(placeID), "busy.lock"))
 	return err != nil || held
@@ -600,7 +609,7 @@ func (s *Service) runnerAlive(placeID string) bool {
 func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 	j, p := a.Job, a.Place
 	set := s.sets[setKey(j.Target, j.Pool)]
-	if set == nil {
+	if set == nil && j.BorrowID == "" {
 		return false
 	}
 	// A place given in the same plan as another may have to wait for it now.
@@ -615,6 +624,10 @@ func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 	// This place's last run may have ended since the last Tidy, and its
 	// place.json is about to be replaced.
 	s.retireLocked(p)
+
+	if j.BorrowID != "" {
+		return s.assignBorrowLocked(p, j, lock)
+	}
 
 	if !j.Assigned {
 		got, err := set.AcquireJobs(ctx, []int64{j.RequestID})
