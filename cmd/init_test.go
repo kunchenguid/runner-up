@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -24,19 +25,29 @@ for last; do :; done
 cd "$HOME" && exec sh -c "$last"
 `
 
+// standInSSH puts the stand-in ssh first on PATH, under home. It is a shell
+// script reaching a Unix machine, so it cannot run on Windows.
+func standInSSH(t *testing.T, home, bin string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in ssh is a shell script")
+	}
+	os.WriteFile(filepath.Join(bin, "ssh"), []byte(sshInHome), 0o755)
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+}
+
 func TestMachineAddFindsTheAgentAnEarlierMachineAddInstalled(t *testing.T) {
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
 	bin := filepath.Join(dir, "bin")
 	os.MkdirAll(filepath.Join(home, ".local", "bin"), 0o700)
 	os.MkdirAll(bin, 0o700)
-	os.WriteFile(filepath.Join(bin, "ssh"), []byte(sshInHome), 0o755)
 	installed := filepath.Join(home, installedAgent)
 	if err := os.Symlink(runnerUp(t), installed); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	standInSSH(t, home, bin)
 
 	m := config.Machine{Name: "lima", SSH: []string{"ci@lima"}}
 	var out strings.Builder
@@ -61,9 +72,7 @@ func TestMachineAddInstallsItselfOnAMachineLikeItsOwn(t *testing.T) {
 	bin := filepath.Join(dir, "bin")
 	os.MkdirAll(home, 0o700)
 	os.MkdirAll(bin, 0o700)
-	os.WriteFile(filepath.Join(bin, "ssh"), []byte(sshInHome), 0o755)
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	standInSSH(t, home, bin)
 
 	// The machine is this computer, reached over the stand-in ssh, with no
 	// runner-up yet: its real uname answers.

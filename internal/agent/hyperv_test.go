@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -201,6 +202,10 @@ func TestStoppingThePlaceLetsGoOfTheVM(t *testing.T) {
 
 func python(t *testing.T) string {
 	t.Helper()
+	// The guest script runs on the VM's Linux, and needs its termios.
+	if runtime.GOOS == "windows" {
+		t.Skip("the guest script needs a Unix python")
+	}
 	p, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("no python3")
