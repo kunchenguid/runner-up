@@ -219,6 +219,22 @@ func TestBorrowCommandExitAndDeadline(t *testing.T) {
 	}
 }
 
+// Intent (INF-1823): a borrowed command that a signal ends reports the
+// shell-compatible status 128 plus the signal, not a lost status.
+func TestBorrowCommandSignalStatus(t *testing.T) {
+	out, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	in, _ := os.Open(os.DevNull)
+	defer in.Close()
+	code := runBorrowCommand(context.Background(), config.Place{ID: "mini-vm1"}, borrowCommand{Args: []string{"sh", "-c", "kill -TERM $$"}, Env: os.Environ()}, in, out, out)
+	if want := 128 + int(syscall.SIGTERM); code != want {
+		t.Fatalf("code %d want %d", code, want)
+	}
+}
+
 // Intent (INF-1823): a request enters the line only after its live lock is
 // held. A scheduling pass during caller initialization must not delete the
 // caller's folder before it can publish the request.

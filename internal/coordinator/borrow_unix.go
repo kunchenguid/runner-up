@@ -482,6 +482,12 @@ func runBorrowCommand(ctx context.Context, p config.Place, command borrowCommand
 		select {
 		case err = <-done:
 			code = agent.ExitCode(err)
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+					code = 128 + int(ws.Signal())
+				}
+			}
 		case <-ctx.Done():
 			fmt.Fprintln(stderr, "borrow: stopping command:", ctx.Err())
 			syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
