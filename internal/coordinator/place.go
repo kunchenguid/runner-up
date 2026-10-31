@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,9 +107,15 @@ func AgentCommand(m config.Machine, args ...string) []string {
 	return append(SshArgs(m), remoteLine(m, argv))
 }
 
-// SshArgs is ssh to the machine, before the remote command.
+// SshArgs is ssh to the machine, before the remote command. ssh gives up on
+// a machine that does not answer within ten seconds, rather than wait the
+// system's own connect timeout, unless the machine's own options set
+// ConnectTimeout; ssh takes the first value it is given for an option.
 func SshArgs(m config.Machine) []string {
 	ssh := []string{"ssh", "-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"}
+	if !slices.ContainsFunc(m.SSH, func(w string) bool { return strings.Contains(strings.ToLower(w), "connecttimeout") }) {
+		ssh = append(ssh, "-o", "ConnectTimeout=10")
+	}
 	return append(ssh, m.SSH...)
 }
 
@@ -243,7 +250,11 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	for {
 		select {
 		case err := <-done:
-			r.log.Info("agent ended", "exit", agent.ExitCode(err), "job", gotJob)
+			code := agent.ExitCode(err)
+			r.log.Info("agent ended", "exit", code, "job", gotJob)
+			if code == sshFailed && !r.cfg.Machine(r.p.Machine).Local() {
+				r.markUnreachable()
+			}
 			if !gotJob {
 				return agent.ExitUnstarted
 			}
@@ -270,11 +281,23 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 }
 
 func (r *placeRunner) markStarted() {
+	r.update(func(run *PlaceRun) { run.Started = true })
+	r.log.Info("job reached the runner")
+}
+
+// markUnreachable records, before this process ends and lets go of the place,
+// that ssh could not reach the machine's agent or lost it, for the
+// coordinator to rest the machine (reach.go).
+func (r *placeRunner) markUnreachable() {
+	r.update(func(run *PlaceRun) { run.Unreachable = true })
+	r.log.Warn("ssh could not reach the machine's agent, or lost it", "machine", r.p.Machine)
+}
+
+func (r *placeRunner) update(change func(*PlaceRun)) {
 	path := filepath.Join(r.cfg.PlaceDir(r.p.ID), "place.json")
 	var run PlaceRun
 	if config.ReadJSON(path, &run) == nil {
-		run.Started = true
+		change(&run)
 		config.WriteJSON(path, run)
 	}
-	r.log.Info("job reached the runner")
 }

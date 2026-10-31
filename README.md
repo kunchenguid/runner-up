@@ -38,6 +38,9 @@ place's machine over SSH.
   default, on every provider (see [Pull requests from forks](#pull-requests-from-forks)).
 - **Restarts.** A running job keeps its place while the coordinator restarts.
   A crashed place is cleaned up, and its job gets a new runner.
+- **Down machines.** A machine whose agent cannot be reached rests until its
+  agent answers again, and its job goes to another place (see
+  [When a machine is down](#when-a-machine-is-down)).
 - **Sign-in.** The coordinator uses the GitHub command line's sign-in. It
   stores no token: it asks `gh auth token` each time it opens a session.
 
@@ -316,6 +319,19 @@ launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.github.runner-up.p
 When the coordinator stops, running jobs carry on. Each place's runner runs in
 its own process, which holds the place until its job ends. Waiting jobs stay
 queued at GitHub, and the next start picks them up again.
+
+### When a machine is down
+
+ssh to a machine gives up after ten seconds without an answer
+(`ConnectTimeout=10`), unless the machine's own `ssh` options set
+`ConnectTimeout`. When a place's runner cannot reach its machine's agent,
+because SSH was refused, timed out or dropped, the machine rests. Its places
+take no job, so the coordinator acquires no job and registers no runner for
+them, and the job the runner was started for goes to another place, in line
+from where it was. Once a minute the coordinator asks the machine's agent its
+version, which costs no call to GitHub. Once it answers, the machine's places
+take jobs again. A machine still resting when the coordinator restarts is
+asked at once. `runner-up status` shows a resting machine's places as resting.
 
 ## Setup file
 

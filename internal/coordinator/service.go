@@ -51,6 +51,9 @@ type PlaceRun struct {
 	LaunchedAt time.Time `json:"launchedAt"`
 	Started    bool      `json:"started"`
 	PID        int       `json:"pid,omitempty"`
+	// Unreachable: the place runner could not reach its machine's agent, or
+	// lost it (reach.go).
+	Unreachable bool `json:"unreachable,omitempty"`
 }
 
 type acquired struct {
@@ -67,6 +70,8 @@ type SavedState struct {
 	Waiting  []plan.Job               `json:"waiting"`
 	Acquired []acquired               `json:"acquired"`
 	Unused   []PlaceRun               `json:"unused,omitempty"`
+	// Unreachable is when each resting machine was found unreachable, by name.
+	Unreachable map[string]time.Time `json:"unreachable,omitempty"`
 }
 
 type Service struct {
@@ -86,6 +91,14 @@ type Service struct {
 	// unused are runners that ended before a job reached them, by unusedKey:
 	// each is still registered with its scale set until Tidy removes it.
 	unused map[string]PlaceRun
+	// unreachable are the resting machines, by name, with when each was found
+	// unreachable, and reachAsked when each was last asked (reach.go).
+	unreachable map[string]time.Time
+	reachAsked  map[string]time.Time
+	// Reach asks a resting machine's agent for an answer; asking counts the
+	// questions not yet answered.
+	Reach  reacher
+	asking sync.WaitGroup
 
 	// The readers the order rules need, set only when the rules use them.
 	LabelReader    func(context.Context, string) (map[string]map[string]bool, error)
@@ -146,6 +159,9 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 		wasted:       map[string]time.Time{},
 		timings:      map[string]time.Duration{},
 		unused:       map[string]PlaceRun{},
+		unreachable:  map[string]time.Time{},
+		reachAsked:   map[string]time.Time{},
+		Reach:        ReachAgent,
 		labelsRead:   map[string]time.Time{},
 		labels:       map[string]map[string]map[string]bool{},
 		runWorkflows: map[workflowRun]runWorkflow{},
@@ -179,7 +195,13 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 		for _, run := range st.Unused {
 			s.unused[unusedKey(run)] = run
 		}
-		log.Info("restored state", "waiting", len(s.waiting), "acquired", len(s.acquired), "unused", len(s.unused))
+		for name, since := range st.Unreachable {
+			if slices.ContainsFunc(cfg.Machines, func(m config.Machine) bool { return m.Name == name }) {
+				s.unreachable[name] = since
+			}
+		}
+		log.Info("restored state", "waiting", len(s.waiting), "acquired", len(s.acquired), "unused", len(s.unused),
+			"resting", len(s.unreachable))
 	case !errors.Is(err, os.ErrNotExist):
 		return nil, err
 	}
@@ -460,6 +482,7 @@ func (s *Service) Place(ctx context.Context) {
 	s.refreshVMs(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.askRestingLocked(ctx)
 	s.expireLocked()
 	s.refreshBorrowsLocked()
 	for range len(s.Cfg.Places()) + 1 {
@@ -504,14 +527,15 @@ func (s *Service) waitingLocked() []plan.Job {
 }
 
 // viewsLocked reads every place's state from its lock. A place cooling down
-// after a failed launch reads as busy for a minute.
+// after a failed launch reads as busy for a minute, and a place on a resting
+// machine until the machine's agent answers (reach.go).
 func (s *Service) viewsLocked() []plan.PlaceView {
 	now := s.now()
 	places := s.Cfg.Places()
 	out := make([]plan.PlaceView, 0, len(places))
 	for _, p := range places {
 		busy, _ := s.PlaceBusy(p)
-		if !busy && now.Before(s.cooling[p.ID]) {
+		if !busy && (now.Before(s.cooling[p.ID]) || s.restingLocked(p.Machine)) {
 			busy = true
 		}
 		out = append(out, plan.PlaceView{Place: p, Busy: busy})
@@ -622,8 +646,12 @@ func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 	}
 	defer lock.Close()
 	// This place's last run may have ended since the last Tidy, and its
-	// place.json is about to be replaced.
+	// place.json is about to be replaced. That run may have found the machine
+	// unreachable.
 	s.retireLocked(p)
+	if s.restingLocked(p.Machine) {
+		return true
+	}
 
 	if j.BorrowID != "" {
 		return s.assignBorrowLocked(p, j, lock)
@@ -745,13 +773,17 @@ func (s *Service) Tidy(ctx context.Context) {
 // saved before its place.json goes. The job it was started for waits again,
 // in line from where it was: GitHub keeps an assigned job assigned to the
 // scale set and sends nothing more, so a job dropped here would never be
-// placed again.
+// placed again. A run that could not reach its machine's agent rests the
+// machine.
 func (s *Service) retireLocked(p config.Place) {
 	dir := s.Cfg.PlaceDir(p.ID)
 	path := filepath.Join(dir, "place.json")
 	var run PlaceRun
 	if config.ReadJSON(path, &run) != nil {
 		return
+	}
+	if run.Unreachable {
+		s.restLocked(p.Machine)
 	}
 	if !run.Started {
 		if run.RunnerID > 0 {
@@ -828,7 +860,7 @@ func (s *Service) noteWasteLocked() {
 }
 
 func (s *Service) saveLocked() {
-	st := SavedState{Timings: s.timings}
+	st := SavedState{Timings: s.timings, Unreachable: s.unreachable}
 	for _, j := range s.waiting {
 		st.Waiting = append(st.Waiting, j)
 	}
