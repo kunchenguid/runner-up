@@ -25,9 +25,12 @@ import (
 const (
 	serviceName = "runner-up"
 	pipeName    = `\\.\pipe\runner-up`
-	// Read and write data only: a client cannot make a pipe instance of
+	// clientAccess is what the runner account may do with the pipe, and
+	// all the agent asks for when it opens it: read and write data, and
+	// read its owner (READ_CONTROL, in FILE_GENERIC_READ). Windows refuses
+	// an open that asks for more. A client cannot make a pipe instance of
 	// its own (FILE_CREATE_PIPE_INSTANCE is FILE_APPEND_DATA).
-	clientRights = "0x12008b"
+	clientAccess = windows.FILE_GENERIC_READ | windows.FILE_WRITE_DATA // 0x12008b
 )
 
 // serviceSettings is what runner-up setup writes to service.json in the
@@ -289,9 +292,7 @@ func listen(runner string) (*listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", runner, err)
 	}
-	// SYSTEM owns the pipe, which the agent checks: no other account can
-	// make a pipe SYSTEM owns.
-	sa, err := securityAttributes(fmt.Sprintf("O:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;%s;;;%s)", clientRights, sid.String()))
+	sa, err := securityAttributes(pipeSDDL(sid.String()))
 	if err != nil {
 		return nil, err
 	}
@@ -303,6 +304,13 @@ func listen(runner string) (*listener, error) {
 	}
 	l.pending = h
 	return l, nil
+}
+
+// pipeSDDL is the pipe's access, runner being the runner account's SID.
+// SYSTEM owns the pipe, which the agent checks: no other account can make a
+// pipe SYSTEM owns.
+func pipeSDDL(runner string) string {
+	return fmt.Sprintf("O:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;%#x;;;%s)", clientAccess, runner)
 }
 
 func (l *listener) instance(first bool) (windows.Handle, error) {

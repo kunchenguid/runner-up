@@ -49,16 +49,27 @@ func accountReady() string {
 	return "ok"
 }
 
-// dialService opens the service's pipe, waiting up to a minute for a free
-// instance, and checks SYSTEM owns it: any account may make a pipe of the
-// same name while the service is stopped, to take the runner's registration.
+// dialService opens the service's pipe and checks SYSTEM owns it: any
+// account may make a pipe of the same name while the service is stopped, to
+// take the runner's registration.
 func dialService() (io.ReadWriteCloser, error) {
-	name, _ := windows.UTF16PtrFromString(pipeName)
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return nil, err
+	}
+	return dialPipe(pipeName, system)
+}
+
+// dialPipe opens the service's pipe at path, waiting up to a minute for a
+// free instance, asking only for what the service grants the runner
+// account, and checks owner owns it.
+func dialPipe(path string, owner *windows.SID) (io.ReadWriteCloser, error) {
+	name, _ := windows.UTF16PtrFromString(path)
 	deadline := time.Now().Add(time.Minute)
 	var h windows.Handle
 	for {
 		var err error
-		h, err = windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.READ_CONTROL, 0, nil,
+		h, err = windows.CreateFile(name, clientAccess, 0, nil,
 			windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IDENTIFICATION, 0)
 		if err == nil {
 			break
@@ -71,18 +82,15 @@ func dialService() (io.ReadWriteCloser, error) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
-	if err == nil {
-		var ok bool
-		if ok, err = ownerIs(h, system); err == nil && !ok {
-			err = errors.New("the pipe named runner-up is not the service's own")
-		}
+	ok, err := ownerIs(h, owner)
+	if err == nil && !ok {
+		err = errors.New("the pipe named runner-up is not the service's own")
 	}
 	if err != nil {
 		windows.CloseHandle(h)
 		return nil, err
 	}
-	return os.NewFile(uintptr(h), pipeName), nil
+	return os.NewFile(uintptr(h), path), nil
 }
 
 // memoryMB is the machine's memory.
