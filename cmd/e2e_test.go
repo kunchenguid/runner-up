@@ -646,9 +646,7 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 	box.Pools = []string{"ru-linux", "ru-linux-2604"}
 	box.Image = "runner-2404:latest"
 	box.PoolImages = map[string]string{"ru-linux-2604": "runner-2604:latest"}
-	if err := config.SaveConfig(e.config, e.cfg); err != nil {
-		t.Fatal(err)
-	}
+	e.save()
 	checked, err := exec.Command(runnerUp(t), "check-config", "--config", e.config).CombinedOutput()
 	wantChecked := "ok: 1 targets, 2 pools, 1 machines, 1 places\n" +
 		"box (ci@box): box-1 docker 2 cores 4096 MB; places may reserve 3 of 4 cores and 7168 of 8192 MB, all at once\n"
@@ -704,7 +702,7 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 
 	// Each job's agent and container got its pool's image, in the one place.
 	agentRun := func(image string) string {
-		return "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 ci@box '" + runnerUp(t) +
+		return "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '" + runnerUp(t) +
 			"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300' '--image' '" + image + "'"
 	}
 	var runs []string
@@ -749,9 +747,7 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 func TestPlaceRunnerRefusesAPoolItsPlaceDoesNotServe(t *testing.T) {
 	e := newE2E(t)
 	e.cfg.Machines[0].Places[0].PoolImages = map[string]string{"ru-linux": "runner-2604:latest"}
-	if err := config.SaveConfig(e.config, e.cfg); err != nil {
-		t.Fatal(err)
-	}
+	e.save()
 	for pool, logged := range map[string]string{"ru-large": "ru-large", "": `""`} {
 		args := []string{"run-place", "--config", e.config, "--place", "box-1"}
 		if pool != "" {
