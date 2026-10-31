@@ -3,9 +3,11 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -65,6 +67,8 @@ type fakeSet struct {
 	workFolders map[string]string
 	// unreachable is how many removals fail before GitHub answers again.
 	unreachable int
+	// running are the runners GitHub gave a job, which it refuses to remove.
+	running map[int64]bool
 }
 
 func (f *fakeSet) AcquireJobs(_ context.Context, ids []int64) ([]int64, error) {
@@ -97,6 +101,12 @@ func (f *fakeSet) RemoveRunner(_ context.Context, id int64) error {
 	if f.unreachable > 0 {
 		f.unreachable--
 		return errors.New("failed to issue the request: dial tcp: lookup api.github.com: no such host")
+	}
+	if f.running[id] {
+		// As GitHub refused a runner it had given a job (DOP-200).
+		return fmt.Errorf("bad request: request DELETE https://broker.actions.githubusercontent.com/rest/_apis/distributedtask/pools/0/agents/%d"+
+			"?api-version=6.0-preview failed(status=\"400 Bad Request\"): %w: Runner is currently running a job and cannot be deleted.",
+			id, scaleset.JobStillRunningError)
 	}
 	f.removed = append(f.removed, id)
 	return nil
@@ -536,6 +546,97 @@ func TestUnusedRunnerOutlivesAFailedRemovalAndARestart(t *testing.T) {
 	h2.svc.Tidy(context.Background())
 	if !slices.Equal(set.removed, []int64{int64(spare.RunnerID)}) {
 		t.Fatalf("removed runners %v after the restart, want box-2's stopped runner %d", set.removed, spare.RunnerID)
+	}
+}
+
+// Intent (DOP-200: at the start timeout, "runner-up removes the runner's
+// GitHub registration first and powers off only after GitHub accepts the
+// removal"): a runner no job reached in time keeps its place while GitHub
+// cannot be reached, and is asked about again at the next tick. Once GitHub
+// removes it, its place is stopped; when the place ends the runner is not
+// removed a second time, and its job gets a new runner.
+func TestIdleRunnerKeepsItsPlaceUntilGitHubRemovesIt(t *testing.T) {
+	f := loadFixture(t, "assigned-takebacks.json")
+	h := newHarness(t, proofBox(t.TempDir(), "box-1"), newFakeLauncher(), map[string]*fakeSet{})
+	set := h.sets[setKey("octo-org/app", "ru-proof")]
+	h.feedRange(f, 0, 1)
+	h.want(map[string]string{"box-1": proofJob})
+	var first PlaceRun
+	if err := config.ReadJSON(filepath.Join(h.cfg.PlaceDir("box-1"), "place.json"), &first); err != nil {
+		t.Fatal(err)
+	}
+	tick := func(d time.Duration) {
+		h.now = h.now.Add(d)
+		h.svc.Tidy(context.Background())
+	}
+
+	// A second before the start timeout the runner is left alone.
+	tick(h.cfg.Seconds(h.cfg.StartTimeoutSeconds) - time.Second)
+	if len(set.removed) != 0 || len(h.launcher.stopped) != 0 {
+		t.Fatalf("before the start timeout removed %v and stopped %v", set.removed, h.launcher.stopped)
+	}
+	// At the start timeout GitHub cannot be reached: the runner keeps its
+	// place.
+	set.unreachable = 1
+	tick(time.Second)
+	if len(set.removed) != 0 || len(h.launcher.stopped) != 0 {
+		t.Fatalf("while GitHub could not be reached removed %v and stopped %v", set.removed, h.launcher.stopped)
+	}
+	// At the next tick GitHub removes it, and its place is stopped once.
+	tick(10 * time.Second)
+	tick(10 * time.Second)
+	if !slices.Equal(set.removed, []int64{int64(first.RunnerID)}) || !slices.Equal(h.launcher.stopped, []string{"box-1"}) {
+		t.Fatalf("removed %v and stopped %v, want runner %d removed and box-1 stopped, once each", set.removed,
+			h.launcher.stopped, first.RunnerID)
+	}
+
+	// Its place ends. The runner is gone at GitHub already, and its job
+	// gets a new runner.
+	h.launcher.giveUp(t, "box-1")
+	tick(time.Second)
+	h.svc.Place(context.Background())
+	tick(10 * time.Second)
+	if len(set.removed) != 1 {
+		t.Fatalf("removed %v, want the runner removed once", set.removed)
+	}
+	h.want(map[string]string{"box-1": proofJob})
+	var again PlaceRun
+	if err := config.ReadJSON(filepath.Join(h.cfg.PlaceDir("box-1"), "place.json"), &again); err != nil {
+		t.Fatal(err)
+	}
+	if again.RunnerName == first.RunnerName {
+		t.Fatalf("box-1 still names the first runner %s", first.RunnerName)
+	}
+}
+
+// Intent (DOP-200: "optionally log a refused removal for an ended place as
+// a stranded job, so the next one is diagnosed at once"): when a runner's
+// place has ended but GitHub will not remove the runner because it gave it a
+// job, the coordinator says that job is stranded, naming the runner, and
+// keeps trying to remove the runner.
+func TestRefusedRemovalOfAnEndedRunnerNamesTheStrandedJob(t *testing.T) {
+	f := loadFixture(t, "assigned-takebacks.json")
+	h := newHarness(t, proofBox(t.TempDir(), "box-1"), newFakeLauncher(), map[string]*fakeSet{})
+	var out bytes.Buffer
+	h.svc.Log = slog.New(slog.NewTextHandler(&out, nil))
+	set := h.sets[setKey("octo-org/app", "ru-proof")]
+	h.feedRange(f, 0, 1)
+	var run PlaceRun
+	if err := config.ReadJSON(filepath.Join(h.cfg.PlaceDir("box-1"), "place.json"), &run); err != nil {
+		t.Fatal(err)
+	}
+
+	// GitHub gives the runner a job just as its place ends, as when SSH to
+	// the machine drops.
+	set.running = map[int64]bool{int64(run.RunnerID): true}
+	h.launcher.giveUp(t, "box-1")
+	h.now = h.now.Add(time.Minute)
+	h.svc.Tidy(context.Background())
+	if !strings.Contains(out.String(), `msg="a runner whose place has ended is running a job at GitHub; the job is stranded" runner=`+run.RunnerName) {
+		t.Fatalf("the coordinator logged:\n%s", out.String())
+	}
+	if _, ok := h.svc.unused[unusedKey(run)]; !ok || len(set.removed) != 0 {
+		t.Fatalf("unused %v, removed %v; want the runner still to remove", h.svc.unused, set.removed)
 	}
 }
 

@@ -209,9 +209,12 @@ type placeRunner struct {
 }
 
 // watch runs the agent, feeding it the registration and holding its input
-// open, and watches its output for the job starting. A runner that gets no
-// job within the start timeout, or runs past the job limit, is stopped by
-// closing the agent's input; one that does not stop then is killed.
+// open, and watches its output for the job starting. A runner that runs past
+// the job limit, or that the coordinator asks to stop, is stopped by closing
+// the agent's input; one that does not stop then is killed. A runner no job
+// reached in time is the coordinator's to stop: it removes the runner's
+// registration first (Service.stopIdleLocked), since GitHub can give the
+// runner a job up to that moment.
 func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -248,9 +251,7 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait(); pw.Close() }()
 
-	startTimer := time.NewTimer(r.cfg.Seconds(r.cfg.StartTimeoutSeconds))
 	jobTimer := time.NewTimer(r.cfg.Seconds(r.cfg.MaxJobSeconds))
-	defer startTimer.Stop()
 	defer jobTimer.Stop()
 	var kill <-chan time.Time
 	end := func(why string) {
@@ -277,11 +278,6 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 		case <-started:
 			gotJob = true
 			started = nil
-			startTimer.Stop()
-		case <-startTimer.C:
-			if !gotJob {
-				end("no job reached the runner in time; stopping it")
-			}
 		case <-jobTimer.C:
 			end("the job ran past the limit; stopping it")
 		case <-ctx.Done():

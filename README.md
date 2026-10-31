@@ -317,8 +317,10 @@ launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.github.runner-up.p
 ```
 
 When the coordinator stops, running jobs carry on. Each place's runner runs in
-its own process, which holds the place until its job ends. Waiting jobs stay
-queued at GitHub, and the next start picks them up again.
+its own process, which holds the place until its job ends. A runner still
+waiting for its job keeps waiting, and can take one, until the coordinator is
+back to give up on it. Waiting jobs stay queued at GitHub, and the next start
+picks them up again.
 
 ### When a machine is down
 
@@ -341,7 +343,7 @@ Besides what `init` and `machine add` write, you can set:
 | --- | --- | --- |
 | `order` | `["waited:60m", "shortest"]` | the [order rules](#order-rules) |
 | `allowForkPullRequests` | `false` | let jobs from forks' pull requests run |
-| `startTimeoutSeconds` | 600 | how long a runner may wait for its job |
+| `startTimeoutSeconds` | 600 | how long a runner may wait for its job. Then the coordinator removes the runner from its scale set and stops it; a runner GitHub says is running a job keeps it |
 | `bootTimeoutSeconds` | 300 | how long a KVM, tart or Hyper-V place may take to boot |
 | `guestCheckSeconds` | 30 | how often a tart place checks its clone has not restarted |
 | `maxJobSeconds` | 21600 | the longest a job may run |

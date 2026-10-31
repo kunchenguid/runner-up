@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/lock"
 	"github.com/kunchenguid/runner-up/internal/plan"
@@ -178,6 +179,56 @@ func TestRunnerThatTakesAnotherJobHandsItsOwnBack(t *testing.T) {
 		t.Fatalf("acquired %v, want the first job in proof-a", h.svc.acquired)
 	}
 	h.want(map[string]string{"proof-a": proofJob})
+}
+
+// Intent (DOP-200: "a runner whose job another took counts as free at
+// hand-back so no surplus runner idles to the timeout"): the runner started
+// for verify takes PR #184's job, whose own runner is still waiting. That
+// waiting runner is free now and takes verify: no third runner starts in the
+// free large place, and once it takes verify nothing waits.
+func TestRunnerWhoseJobAnotherTookServesTheJobHandedBack(t *testing.T) {
+	f := loadFixture(t, "waiting-jobs.json")
+	cfg := oneBox(t.TempDir())
+	h := newHarness(t, cfg, newFakeLauncher(), map[string]*fakeSet{})
+	h.now = f.Now
+	h.feedRange(f, 0, 1)
+	h.want(map[string]string{"box-1": verify, "box-2": pr184})
+	runner := func(id string) string {
+		var run PlaceRun
+		if err := config.ReadJSON(filepath.Join(cfg.PlaceDir(id), "place.json"), &run); err != nil {
+			t.Fatal(err)
+		}
+		return run.RunnerName
+	}
+	jobs := f.Messages[0].Message.JobAvailableMessages
+	start := func(job int, place string) {
+		t.Helper()
+		base := jobs[job].JobMessageBase
+		base.MessageType = scaleset.MessageTypeJobStarted
+		h.now = h.now.Add(time.Second)
+		if err := h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{
+			JobStartedMessages: []*scaleset.JobStarted{{RunnerName: runner(place), JobMessageBase: base}}}); err != nil {
+			t.Fatal(err)
+		}
+		markStarted(t, cfg, place)
+	}
+
+	// GitHub gives box-1's runner PR #184's job.
+	start(1, "box-1")
+	verifyKey := plan.RequestKey("octo-org/app", "ru-linux", jobs[0].RunnerRequestID)
+	if a, ok := h.svc.acquired[verifyKey]; !ok || a.Place != "box-2" || len(h.svc.waiting) != 0 {
+		t.Fatalf("acquired %v, waiting %v; want verify on box-2's runner and nothing waiting", h.svc.acquired, h.svc.waiting)
+	}
+	h.svc.Place(context.Background())
+	h.want(map[string]string{"box-1": verify, "box-2": pr184})
+
+	// box-2's runner takes verify: no job is left without a runner.
+	start(0, "box-2")
+	if len(h.svc.acquired) != 0 || len(h.svc.waiting) != 0 {
+		t.Fatalf("acquired %v, waiting %v; want both jobs running", h.svc.acquired, h.svc.waiting)
+	}
+	h.svc.Place(context.Background())
+	h.want(map[string]string{"box-1": verify, "box-2": pr184})
 }
 
 // GitHub assigns a job again and takes back its previous assignment in one
