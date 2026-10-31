@@ -229,6 +229,9 @@ func TestPoolImagesKeepThePlacesAndTheirShares(t *testing.T) {
 // Intent (RUU-16): a pool image no job could run on is refused when the
 // setup loads, not when a job reaches it.
 func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
+	// An absolute path on the system the test runs on, as the coordinator's
+	// own system reads the KVM rule.
+	noble := filepath.Join(t.TempDir(), "noble.img")
 	for _, tc := range []struct {
 		why  string
 		p    config.Place
@@ -240,7 +243,7 @@ func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 			`place "lima-1": poolImages gives pool "ru-linux" no image`},
 		{"a host place", config.Place{Provider: config.ProviderHost, PoolImages: map[string]string{"ru-linux": "runner:2604"}},
 			`place "lima-1": pool "ru-linux"'s image: a host place runs on the machine itself and takes no image`},
-		{"a KVM disk that is not an absolute path", config.Place{Provider: config.ProviderKVM, Image: "/var/lib/noble.img",
+		{"a KVM disk that is not an absolute path", config.Place{Provider: config.ProviderKVM, Image: noble,
 			PoolImages: map[string]string{"ru-linux": "resolute.img"}},
 			`place "lima-1": pool "ru-linux"'s image: a KVM place needs the absolute path of its base disk image on the machine`},
 		{"a tart image with a space", config.Place{Provider: config.ProviderTart, Image: "ci-base",
