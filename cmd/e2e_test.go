@@ -55,6 +55,16 @@ type actionsStandIn struct {
 	jits     []string // registrations handed out, in order
 	removed  []int64  // runners removed
 	stray    []string // requests the stand-in does not know
+	// names are the runners registered, by id; busy are those GitHub gave a
+	// job, which it refuses to remove; refused are the removals it refused,
+	// in order.
+	names   map[int64]string
+	busy    map[int64]bool
+	refused []int64
+	// containerUp, when set, says whether the place's container runs; up
+	// records its answer at each removal.
+	containerUp func() bool
+	up          []bool
 }
 
 type queued struct {
@@ -63,7 +73,8 @@ type queued struct {
 }
 
 func newActionsStandIn(t *testing.T) *actionsStandIn {
-	a := &actionsStandIn{t: t, queues: map[string][]queued{}, sets: map[string]int{}}
+	a := &actionsStandIn{t: t, queues: map[string][]queued{}, sets: map[string]int{}, names: map[int64]string{},
+		busy: map[int64]bool{}}
 	a.Server = httptest.NewServer(http.HandlerFunc(a.serve))
 	t.Cleanup(a.Close)
 	return a
@@ -183,11 +194,22 @@ func (a *actionsStandIn) serve(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&setting)
 		jit := fmt.Sprintf("stand-in-registration-%d-%d", len(a.jits)+1, time.Now().UnixNano())
 		a.jits = append(a.jits, jit)
+		a.names[int64(len(a.jits))] = setting.Name
 		reply(http.StatusOK, map[string]any{"runner": map[string]any{"id": len(a.jits), "name": setting.Name},
 			"encodedJITConfig": jit})
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/tenant/_apis/distributedtask/pools/0/agents/"):
 		id, _ := strconv.ParseInt(strings.TrimPrefix(path, "/tenant/_apis/distributedtask/pools/0/agents/"), 10, 64)
+		if a.busy[id] {
+			// GitHub's answer, as it refused a runner it had given a job.
+			a.refused = append(a.refused, id)
+			reply(http.StatusBadRequest, map[string]string{"typeName": "JobStillRunningException",
+				"message": fmt.Sprintf("Runner %s is currently running a job and cannot be deleted.", a.names[id])})
+			return
+		}
 		a.removed = append(a.removed, id)
+		if a.containerUp != nil {
+			a.up = append(a.up, a.containerUp())
+		}
 		reply(http.StatusNoContent, nil)
 	default:
 		a.stray = append(a.stray, r.Method+" "+r.URL.String())
@@ -205,7 +227,15 @@ func (a *actionsStandIn) read() actionsStandIn {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return actionsStandIn{opened: a.opened, closed: a.closed, polls: a.polls, acquired: slices.Clone(a.acquired),
-		jits: slices.Clone(a.jits), removed: slices.Clone(a.removed), stray: slices.Clone(a.stray)}
+		jits: slices.Clone(a.jits), removed: slices.Clone(a.removed), stray: slices.Clone(a.stray),
+		refused: slices.Clone(a.refused), up: slices.Clone(a.up)}
+}
+
+// giveJob has GitHub give runner id a job, so it refuses to remove it.
+func (a *actionsStandIn) giveJob(id int64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.busy[id] = true
 }
 
 // The stand-in ssh runs the agent's command line, its last argument, here.
@@ -631,6 +661,92 @@ func TestCrashedPlaceIsCleanedUpAndItsJobPlacedAgain(t *testing.T) {
 	}
 	if !slices.Equal(e.registrations(), seen.jits) {
 		t.Errorf("the containers got %v, want %v", e.registrations(), seen.jits)
+	}
+	e.noSecrets(seen.jits)
+}
+
+// Intent (RUU-18: a runner "was powered off by runner-up's idle timer the
+// same second GitHub gave it" a job; "GitHub then failed the job with 'lost
+// communication'"): GitHub can give a scale set's idle runner a job
+// until the runner is removed, so a runner no job reached within the start
+// timeout is removed from its scale set while it still runs, and only then
+// stopped. Its job gets a new runner.
+func TestIdleRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
+	e := newE2E(t)
+	e.cfg.StartTimeoutSeconds = 2
+	e.save()
+	e.actions.containerUp = func() bool { pid, _ := e.container(); return alive(pid) }
+	job := verifyJob(t)
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(job, scaleset.MessageTypeJobAvailable)})
+	e.serve()
+	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
+	first, _ := e.container()
+
+	// No job reaches the runner: once the start timeout passes it is removed,
+	// with its container still running, and then its container stops.
+	e.eventually("the idle runner is removed", func() bool { return len(e.actions.read().removed) > 0 })
+	e.eventually("the idle runner's container stops", func() bool { return !alive(first) })
+	if seen := e.actions.read(); seen.removed[0] != 1 || !seen.up[0] {
+		t.Fatalf("removed runners %v with the container running %v, want runner 1 removed while it ran\n%s",
+			seen.removed, seen.up, e.logs())
+	}
+
+	// The job waits again and gets a new runner in the place.
+	e.eventually("the job gets a second runner", func() bool { return len(e.registrations()) == 2 })
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+	seen := e.actions.read()
+	if slices.Contains(seen.removed[1:], 1) || len(seen.stray) != 0 {
+		t.Errorf("removed runners %v, unknown requests %v; want runner 1 removed once", seen.removed, seen.stray)
+	}
+	if len(seen.acquired) < 2 || !slices.Equal(seen.acquired[:2], []int64{9101, 9101}) {
+		t.Errorf("acquired %v, want 9101 for the first runner and again for the second", seen.acquired)
+	}
+	e.noSecrets(seen.jits)
+}
+
+// Intent (RUU-18): a runner GitHub gave a job just as the start timeout
+// passed is one GitHub refuses to remove, saying it is running a job. That
+// runner keeps running and runs the job; no second runner starts.
+func TestRunnerGivenAJobAtTheStartTimeoutKeepsRunning(t *testing.T) {
+	e := newE2E(t)
+	e.cfg.StartTimeoutSeconds = 2
+	e.save()
+	e.actions.giveJob(1)
+	job := verifyJob(t)
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(job, scaleset.MessageTypeJobAvailable)})
+	e.serve()
+	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
+	pid, _ := e.container()
+	run, _ := e.placeRun()
+
+	// The start timeout passes before the runner says its job started.
+	// GitHub refuses the removal; the runner keeps running through the next
+	// ticks, and is not asked about again.
+	e.eventually("GitHub refuses to remove the runner", func() bool { return len(e.actions.read().refused) > 0 })
+	time.Sleep(2 * time.Second)
+	if seen := e.actions.read(); !alive(pid) || !slices.Equal(seen.refused, []int64{1}) || len(seen.removed) != 0 {
+		t.Fatalf("container running %v, refused removals %v, removed runners %v; want it running, refused once\n%s",
+			alive(pid), seen.refused, seen.removed, e.logs())
+	}
+
+	// Its job starts and ends; the place frees.
+	e.startJob(pid)
+	e.eventually("the place runner sees the job start", func() bool { run, ok := e.placeRun(); return ok && run.Started })
+	e.endJob(pid)
+	e.actions.send(
+		scaleset.JobStarted{RunnerID: 1, RunnerName: run.RunnerName, JobMessageBase: jobMessage(job, scaleset.MessageTypeJobStarted)},
+		scaleset.JobCompleted{Result: "succeeded", RunnerID: 1, RunnerName: run.RunnerName,
+			JobMessageBase: jobMessage(job, scaleset.MessageTypeJobCompleted)})
+	e.eventually("the place frees", func() bool { return !e.busy() })
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+	seen := e.actions.read()
+	if len(e.registrations()) != 1 || len(seen.removed) != 0 || !slices.Equal(seen.refused, []int64{1}) || len(seen.stray) != 0 {
+		t.Errorf("%d containers ran, removed %v, refused %v, unknown requests %v; want one container, one refusal",
+			len(e.registrations()), seen.removed, seen.refused, seen.stray)
 	}
 	e.noSecrets(seen.jits)
 }
