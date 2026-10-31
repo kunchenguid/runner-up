@@ -116,7 +116,7 @@ func newFakeLauncher() *fakeLauncher {
 	return &fakeLauncher{held: map[string]int{}, dirs: map[string]string{}, jits: map[string]string{}}
 }
 
-func (l *fakeLauncher) Launch(p config.Place, lock *os.File, jit string) error {
+func (l *fakeLauncher) Launch(p config.Place, pool string, lock *os.File, jit string) error {
 	fd, err := syscall.Dup(int(lock.Fd()))
 	if err != nil {
 		return err

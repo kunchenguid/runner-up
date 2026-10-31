@@ -26,14 +26,15 @@ import (
 
 // The place runner is this same program run as `runner-up run-place`. The
 // coordinator starts it in its own session, so it outlives a coordinator
-// restart, with the place's locked busy.lock as file descriptor 3 and the
-// runner's one-time registration on standard input, never in an argument or
-// an environment. It runs the place's machine's agent - over SSH, or directly
-// on the coordinator's own machine - hands it the registration, and holds the
-// agent's input open until the runner ends. The agent makes a fresh place,
-// runs one job there and removes the place whatever happened; when its input
-// closes, because this process ended or gave up on the runner, it stops the
-// job and cleans up.
+// restart, with the place's locked busy.lock as file descriptor 3, the pool
+// of the job it was started for as an argument, and the runner's one-time
+// registration on standard input, never in an argument or an environment. It
+// runs the place's machine's agent - over SSH, or directly on the
+// coordinator's own machine - with the pool's image, hands it the
+// registration, and holds the agent's input open until the runner ends. The
+// agent makes a fresh place, runs one job there and removes the place
+// whatever happened; when its input closes, because this process ended or
+// gave up on the runner, it stops the job and cleans up.
 
 // ProcLauncher is the real Launcher.
 type ProcLauncher struct {
@@ -49,14 +50,14 @@ func NewProcLauncher(cfg *config.Config, configPath, self string, log *slog.Logg
 	return &ProcLauncher{cfg: cfg, configPath: configPath, self: self, log: log, Exited: make(chan string, 16)}
 }
 
-func (l *ProcLauncher) Launch(p config.Place, lock *os.File, jit string) error {
+func (l *ProcLauncher) Launch(p config.Place, pool string, lock *os.File, jit string) error {
 	logPath := filepath.Join(l.cfg.LogsDir(), fmt.Sprintf("%s-%s.log", p.ID, time.Now().UTC().Format("20060102T150405Z")))
 	out, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	cmd := exec.Command(l.self, "run-place", "--config", l.configPath, "--place", p.ID)
+	cmd := exec.Command(l.self, "run-place", "--config", l.configPath, "--place", p.ID, "--pool", pool)
 	cmd.Stdin = strings.NewReader(jit + "\n")
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.ExtraFiles = []*os.File{lock}
@@ -132,14 +133,15 @@ func remoteLine(m config.Machine, argv []string) string {
 	return strings.Join(quoted, " ")
 }
 
-// RunArgs are the agent's arguments for running one job in place p. None is
-// secret: the registration travels on standard input only.
-func RunArgs(cfg *config.Config, p config.Place) []string {
+// RunArgs are the agent's arguments for running one job of pool in place p,
+// on the pool's image there. None is secret: the registration travels on
+// standard input only.
+func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	args := []string{"agent", "run", "--provider", p.Provider, "--place", p.ID,
 		"--cores", strconv.Itoa(p.Cores), "--memory", strconv.Itoa(p.MemoryMB),
 		"--boot-timeout", strconv.Itoa(cfg.BootTimeoutSeconds)}
-	if p.Image != "" {
-		args = append(args, "--image", p.Image)
+	if image := p.ImageFor(pool); image != "" {
+		args = append(args, "--image", image)
 	}
 	if p.DiskGB > 0 {
 		args = append(args, "--disk-gb", strconv.Itoa(p.DiskGB))
@@ -159,12 +161,20 @@ func RunArgs(cfg *config.Config, p config.Place) []string {
 	return args
 }
 
-// RunPlace is the place runner's main.
-func RunPlace(cfg *config.Config, placeID string) int {
+// RunPlace is the place runner's main, for a job of pool.
+func RunPlace(cfg *config.Config, placeID, pool string) int {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil)).With("place", placeID)
 	p, ok := cfg.Place(placeID)
 	if !ok {
 		log.Error("unknown place")
+		return agent.ExitFailed
+	}
+	// The pool picks the job's image, so a pool the place does not serve
+	// would run the job on an image chosen for none of its pools. A place
+	// runner started by a coordinator from before pools had images names no
+	// pool, which is safe only where every pool runs on the place's image.
+	if !slices.Contains(p.Pools, pool) && (pool != "" || len(p.PoolImages) > 0) {
+		log.Error("the place does not serve the pool", "pool", pool)
 		return agent.ExitFailed
 	}
 	// fd 3 is the place's lock. Keep it open until this process ends, and out
@@ -185,16 +195,17 @@ func RunPlace(cfg *config.Config, placeID string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer stop()
-	argv := AgentCommand(cfg.Machine(p.Machine), RunArgs(cfg, p)...)
+	argv := AgentCommand(cfg.Machine(p.Machine), RunArgs(cfg, p, pool)...)
 	cmd := exec.Command(argv[0], argv[1:]...)
-	r := &placeRunner{cfg: cfg, p: p, log: log}
+	r := &placeRunner{cfg: cfg, p: p, pool: pool, log: log}
 	return r.watch(ctx, cmd, jit)
 }
 
 type placeRunner struct {
-	cfg *config.Config
-	p   config.Place
-	log *slog.Logger
+	cfg  *config.Config
+	p    config.Place
+	pool string
+	log  *slog.Logger
 }
 
 // watch runs the agent, feeding it the registration and holding its input
@@ -213,7 +224,11 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 		r.log.Error("agent did not start", "err", err)
 		return agent.ExitFailed
 	}
-	r.log.Info("agent started", "machine", r.p.Machine, "provider", r.p.Provider)
+	attrs := []any{"machine", r.p.Machine, "provider", r.p.Provider, "pool", r.pool}
+	if image := r.p.ImageFor(r.pool); image != "" {
+		attrs = append(attrs, "image", image)
+	}
+	r.log.Info("agent started", attrs...)
 	// Wait closes the pipe once the agent has ended.
 	go io.WriteString(stdin, jit+"\n")
 	started := make(chan struct{})

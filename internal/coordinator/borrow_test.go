@@ -21,7 +21,7 @@ import (
 )
 
 func (l *fakeLauncher) LaunchBorrow(p config.Place, f *os.File, id string) error {
-	return l.Launch(p, f, "borrow:"+id)
+	return l.Launch(p, "", f, "borrow:"+id)
 }
 
 func enqueueBorrow(t *testing.T, cfg *config.Config, r borrowRequest) *os.File {

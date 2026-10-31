@@ -29,11 +29,11 @@ type SetClient interface {
 	RemoveRunner(ctx context.Context, runnerID int64) error
 }
 
-// Launcher starts a place's runner process. It is handed the place's locked
-// busy.lock and must pass it to the process it starts, which keeps the place
-// busy for as long as that process lives.
+// Launcher starts a place's runner process for a job of pool. It is handed
+// the place's locked busy.lock and must pass it to the process it starts,
+// which keeps the place busy for as long as that process lives.
 type Launcher interface {
-	Launch(place config.Place, lock *os.File, jit string) error
+	Launch(place config.Place, pool string, lock *os.File, jit string) error
 	Stop(placeID string) error
 }
 
@@ -680,7 +680,7 @@ func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 		run := PlaceRun{RunnerName: name, RunnerID: runnerID, Target: j.Target, Pool: j.Pool, Repo: j.Repo,
 			RequestID: j.RequestID, JobName: j.Name, LaunchedAt: now}
 		if err = config.WriteJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), run); err == nil {
-			err = s.launcher.Launch(p, lock, jit)
+			err = s.launcher.Launch(p, j.Pool, lock, jit)
 		}
 	}
 	if err != nil {
