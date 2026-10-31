@@ -48,7 +48,8 @@ func ReadVMs(ctx context.Context, m config.Machine) ([]string, error) {
 
 // refreshVMs reads the running macOS VMs of every Mac with a free tart place,
 // at most every vmReadEvery each, outside the queue lock. A Mac whose reading
-// fails counts no VM beyond its places' own until a reading succeeds.
+// fails counts no VM beyond its places' own until a reading succeeds. A
+// resting Mac is not read: its places take no job (reach.go).
 func (s *Service) refreshVMs(ctx context.Context) {
 	if s.VmReader == nil {
 		return
@@ -57,7 +58,7 @@ func (s *Service) refreshVMs(ctx context.Context) {
 	now := s.now()
 	var due []config.Machine
 	for _, m := range s.Cfg.Machines {
-		if now.Sub(s.vmsRead[m.Name]) < vmReadEvery {
+		if now.Sub(s.vmsRead[m.Name]) < vmReadEvery || s.restingLocked(m.Name) {
 			continue
 		}
 		for _, p := range m.Places {

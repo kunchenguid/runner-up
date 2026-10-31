@@ -38,7 +38,7 @@ func TestWindowsCommandLineReadsTheSameInCmdAndPowerShell(t *testing.T) {
 	if line != want {
 		t.Errorf("the command line for win-pc is\n%s\nwant\n%s", line, want)
 	}
-	if got := strings.Join(argv[:len(argv)-1], " "); got != "ssh -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 runner@win-pc" {
+	if got := strings.Join(argv[:len(argv)-1], " "); got != "ssh -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 runner@win-pc" {
 		t.Errorf("ssh runs as %q", got)
 	}
 }

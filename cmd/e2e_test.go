@@ -258,14 +258,7 @@ func newE2E(t *testing.T) *e2e {
 			Places: []config.Place{{ID: "box-1", Provider: config.ProviderDocker, Pools: []string{"ru-linux"}, Cores: 2, MemoryMB: 4096}}}},
 	}
 	e.config = filepath.Join(dir, "config.json")
-	if err := config.SaveConfig(e.config, e.cfg); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.LoadConfig(e.config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.cfg = cfg
+	e.save()
 	e.env = append(os.Environ(),
 		"PATH="+filepath.Join(dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"E2E_DIR="+dir,
@@ -273,6 +266,19 @@ func newE2E(t *testing.T) *e2e {
 		"XDG_STATE_HOME="+filepath.Join(dir, "machine"))
 	t.Cleanup(e.stopAll)
 	return e
+}
+
+// save writes the setup file and reads it back, as the coordinator will.
+func (e *e2e) save() {
+	e.t.Helper()
+	if err := config.SaveConfig(e.config, e.cfg); err != nil {
+		e.t.Fatal(err)
+	}
+	cfg, err := config.LoadConfig(e.config)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.cfg = cfg
 }
 
 // serve starts the coordinator; its output goes to coordinator-N.log.
@@ -315,11 +321,13 @@ func (e *e2e) stopAll() {
 		e.serving.Wait()
 	}
 	os.WriteFile(filepath.Join(e.dir, "docker", "stop"), nil, 0o600)
-	for _, name := range []string{"place.json", "last-place.json"} {
-		var run coordinator.PlaceRun
-		if config.ReadJSON(filepath.Join(e.cfg.PlaceDir("box-1"), name), &run) == nil && run.PID > 1 {
-			// A place runner leads its own process group.
-			syscall.Kill(-run.PID, syscall.SIGKILL)
+	for _, p := range e.cfg.Places() {
+		for _, name := range []string{"place.json", "last-place.json"} {
+			var run coordinator.PlaceRun
+			if config.ReadJSON(filepath.Join(e.cfg.PlaceDir(p.ID), name), &run) == nil && run.PID > 1 {
+				// A place runner leads its own process group.
+				syscall.Kill(-run.PID, syscall.SIGKILL)
+			}
 		}
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -455,7 +463,7 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	// The agent ran over SSH with every word quoted, and gave the container
 	// the place's share and the fork guard as its job-started hook.
 	ssh := e.lines(filepath.Join(e.dir, "ssh.log"))
-	wantRun := "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 ci@box '" + runnerUp(t) +
+	wantRun := "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '" + runnerUp(t) +
 		"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300'"
 	if !slices.Contains(ssh, wantRun) {
 		t.Errorf("ssh ran %q, want %q among them", ssh, wantRun)

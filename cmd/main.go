@@ -256,11 +256,15 @@ func cleanLeftovers(ctx context.Context, cfg *config.Config, log *slog.Logger) {
 // status prints each place and the waiting jobs, for a person or a check.
 func status(cfg *config.Config, w io.Writer) int {
 	svc := &coordinator.Service{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	var st coordinator.SavedState
+	saved := config.ReadJSON(filepath.Join(cfg.StateDir, "state.json"), &st) == nil
 	for _, p := range cfg.Places() {
 		busy, why := svc.PlaceBusy(p)
 		state := "free"
 		if busy {
 			state = "busy (" + why + ")"
+		} else if since, ok := st.Unreachable[p.Machine]; ok {
+			state = "resting (agent unreachable since " + since.Local().Format(time.RFC3339) + ")"
 		}
 		job := ""
 		var run coordinator.PlaceRun
@@ -276,8 +280,7 @@ func status(cfg *config.Config, w io.Writer) int {
 		}
 		fmt.Fprintf(w, "place %s on %s (%s, %d cores, %d MB) %s%s\n", p.ID, p.Machine, p.Provider, p.Cores, p.MemoryMB, state, job)
 	}
-	var st coordinator.SavedState
-	if config.ReadJSON(filepath.Join(cfg.StateDir, "state.json"), &st) == nil {
+	if saved {
 		for _, j := range st.Waiting {
 			if j.BorrowID != "" {
 				fmt.Fprintf(w, "waiting borrow %s %q since %s\n", j.Pool, j.Name, j.QueueTime.Local().Format(time.RFC3339))
