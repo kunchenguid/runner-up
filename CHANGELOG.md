@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/kunchenguid/runner-up/compare/v0.1.2...v0.1.3) (2026-10-31)
+
+
+### Features
+
+* **config:** run each pool's jobs on its own image in a shared place ([b013a47](https://github.com/kunchenguid/runner-up/commit/b013a47af19e83e79201f73a9043db477fecac85))
+
+
+### Bug Fixes
+
+* **coordinator:** rest a machine whose agent cannot be reached ([4bb6e7f](https://github.com/kunchenguid/runner-up/commit/4bb6e7f2fb7f972612f7e5bd3ac43de2a9022828))
+
 ## [0.1.2](https://github.com/kunchenguid/runner-up/compare/v0.1.1...v0.1.2) (2026-10-29)
 
 
