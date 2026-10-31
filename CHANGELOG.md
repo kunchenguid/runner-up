@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/kunchenguid/runner-up/compare/v0.1.1...v0.1.2) (2026-10-29)
+
+
+### Features
+
+* **coordinator:** add queued borrowing of tart places ([0bc347d](https://github.com/kunchenguid/runner-up/commit/0bc347d091a780e46f0cee7b74376af193ef1945))
+
 ## [0.1.1](https://github.com/kunchenguid/runner-up/compare/v0.1.0...v0.1.1) (2026-10-29)
 
 
