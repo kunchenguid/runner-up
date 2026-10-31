@@ -30,7 +30,7 @@ func TestWindowsCommandLineReadsTheSameInCmdAndPowerShell(t *testing.T) {
 	cfg := initialSetup(t)
 	p := config.Place{ID: "win-pc-1", Provider: config.ProviderHyperV, Cores: 4, MemoryMB: 8192,
 		Image: `C:\runner-up\noble.vhdx`, Switch: "Default Switch", DiskGB: 64}
-	argv := coordinator.AgentCommand(winPC, coordinator.RunArgs(cfg, p)...)
+	argv := coordinator.AgentCommand(winPC, coordinator.RunArgs(cfg, p, "ru-linux")...)
 	line := argv[len(argv)-1]
 	// Plain words pass as they are; the one with a space is in double
 	// quotes, which cmd and PowerShell both take as one argument.
@@ -40,6 +40,23 @@ func TestWindowsCommandLineReadsTheSameInCmdAndPowerShell(t *testing.T) {
 	}
 	if got := strings.Join(argv[:len(argv)-1], " "); got != "ssh -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 runner@win-pc" {
 		t.Errorf("ssh runs as %q", got)
+	}
+}
+
+// Intent (RUU-16): the same Hyper-V places run Ubuntu 24.04 and 26.04 jobs,
+// each on the base disk of the pool its job asked for, with the same share
+// of the PC whichever disk boots.
+func TestHyperVPlaceBootsThePoolsBaseDisk(t *testing.T) {
+	cfg := initialSetup(t)
+	p := config.Place{ID: "win-pc-1", Provider: config.ProviderHyperV, Pools: []string{"ru-linux", "ru-linux-gate", "ru-linux-2604"},
+		Cores: 4, MemoryMB: 8192, Image: `C:\runner-up\job.vhdx`, PoolImages: map[string]string{"ru-linux-2604": `C:\runner-up\job-2604.vhdx`}}
+	const head = `runner-up agent run --provider hyperv --place win-pc-1 --cores 4 --memory 8192 --boot-timeout 300 --image `
+	for pool, image := range map[string]string{"ru-linux": `C:\runner-up\job.vhdx`, "ru-linux-gate": `C:\runner-up\job.vhdx`,
+		"ru-linux-2604": `C:\runner-up\job-2604.vhdx`} {
+		argv := coordinator.AgentCommand(winPC, coordinator.RunArgs(cfg, p, pool)...)
+		if line := argv[len(argv)-1]; line != head+image {
+			t.Errorf("a %s job runs\n%s\nwant\n%s", pool, line, head+image)
+		}
 	}
 }
 
@@ -71,6 +88,8 @@ func TestWindowsSetupThatTheShellWouldChangeIsRefused(t *testing.T) {
 			"a Hyper-V place needs the full path"},
 		{"an image with a variable cmd would expand", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderHyperV, Image: `C:\Users\%USERNAME%\noble.vhdx`})}},
 			"cannot pass to a Windows machine's shell unchanged"},
+		{"a pool's image with a variable cmd would expand", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderHyperV, Image: `C:\vm\noble.vhdx`, PoolImages: map[string]string{"ru-linux": `C:\Users\%USERNAME%\resolute.vhdx`}})}},
+			`pool "ru-linux"'s image: "C:\\Users\\%USERNAME%\\resolute.vhdx" cannot pass to a Windows machine's shell unchanged`},
 		{"a switch name PowerShell would expand", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderHyperV, Image: `C:\vm\noble.vhdx`, Switch: "$env:x"})}},
 			"cannot pass to a Windows machine's shell unchanged"},
 		{"a place id that is a path", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{ID: `pc\1`})}},

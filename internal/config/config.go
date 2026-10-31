@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -146,6 +147,11 @@ type Place struct {
 	// clones, such as ghcr.io/cirruslabs/macos-sequoia-base:latest or a local
 	// VM's name.
 	Image string `json:"image,omitempty"`
+	// PoolImages gives some of the place's pools their own image, by pool
+	// label: a job of a named pool runs on that image, any other job on
+	// Image. The place stays one place with one share of its machine,
+	// whichever image its job uses.
+	PoolImages map[string]string `json:"poolImages,omitempty"`
 	// DiskGB is a KVM place's disk size, defaultDiskGB when zero; a tart
 	// place's clone or a Hyper-V place's disk grows to it when its image is
 	// smaller.
@@ -197,6 +203,14 @@ func (m Machine) Budget() Share {
 		b.MemoryMB = m.MemoryMB - m.RoomMemoryMB
 	}
 	return b
+}
+
+// ImageFor is the image a job of pool runs on in the place.
+func (p Place) ImageFor(pool string) string {
+	if image, ok := p.PoolImages[pool]; ok {
+		return image
+	}
+	return p.Image
 }
 
 func (p Place) RunnerWorkFolder() string {
@@ -415,20 +429,24 @@ func (c *Config) Validate() error {
 			if b.MemoryMB > 0 && p.MemoryMB > b.MemoryMB {
 				return fmt.Errorf("place %q: its %d MB never fit its machine's %d MB, less the owner's room", p.ID, p.MemoryMB, b.MemoryMB)
 			}
-			if p.Provider == ProviderKVM && !filepath.IsAbs(p.Image) {
-				return fmt.Errorf("place %q: a KVM place needs the absolute path of its base disk image on the machine", p.ID)
+			if err := checkImage(p.Provider, p.Image); err != nil {
+				return fmt.Errorf("place %q: %w", p.ID, err)
 			}
-			if p.Provider == ProviderTart && (p.Image == "" || strings.ContainsAny(p.Image, " \t\n")) {
-				return fmt.Errorf("place %q: a tart place needs the tart image it clones, such as ghcr.io/cirruslabs/macos-sequoia-base:latest", p.ID)
-			}
-			if p.Provider == ProviderHost && p.Image != "" {
-				return fmt.Errorf("place %q: a host place runs on the machine itself and takes no image", p.ID)
-			}
-			if p.Provider == ProviderHyperV && !winAbs.MatchString(p.Image) {
-				return fmt.Errorf(`place %q: a Hyper-V place needs the full path of its base disk image on the machine, such as C:\runner-up\noble.vhdx`, p.ID)
-			}
-			if p.Provider == ProviderAccount && p.Image != "" {
-				return fmt.Errorf("place %q: an account place runs on the machine itself and takes no image", p.ID)
+			for _, l := range slices.Sorted(maps.Keys(p.PoolImages)) {
+				image := p.PoolImages[l]
+				if !slices.Contains(p.Pools, l) {
+					return fmt.Errorf("place %q: poolImages names pool %q, which the place does not serve", p.ID, l)
+				}
+				if image == "" {
+					return fmt.Errorf("place %q: poolImages gives pool %q no image", p.ID, l)
+				}
+				err := checkImage(p.Provider, image)
+				if err == nil && m.Windows() {
+					err = quote.CheckWinWord(image, false)
+				}
+				if err != nil {
+					return fmt.Errorf("place %q: pool %q's image: %w", p.ID, l, err)
+				}
 			}
 			if p.Switch != "" && p.Provider != ProviderHyperV {
 				return fmt.Errorf("place %q: only a Hyper-V place joins a switch", p.ID)
@@ -450,6 +468,23 @@ func (c *Config) Validate() error {
 		if len(c.Machines) > 0 && !served[p.Label] {
 			return fmt.Errorf("pool %q: no place serves it", p.Label)
 		}
+	}
+	return nil
+}
+
+// checkImage refuses an image a place of provider cannot run its jobs on.
+func checkImage(provider, image string) error {
+	switch {
+	case provider == ProviderKVM && !filepath.IsAbs(image):
+		return fmt.Errorf("a KVM place needs the absolute path of its base disk image on the machine")
+	case provider == ProviderTart && (image == "" || strings.ContainsAny(image, " \t\n")):
+		return fmt.Errorf("a tart place needs the tart image it clones, such as ghcr.io/cirruslabs/macos-sequoia-base:latest")
+	case provider == ProviderHost && image != "":
+		return fmt.Errorf("a host place runs on the machine itself and takes no image")
+	case provider == ProviderHyperV && !winAbs.MatchString(image):
+		return fmt.Errorf(`a Hyper-V place needs the full path of its base disk image on the machine, such as C:\runner-up\noble.vhdx`)
+	case provider == ProviderAccount && image != "":
+		return fmt.Errorf("an account place runs on the machine itself and takes no image")
 	}
 	return nil
 }

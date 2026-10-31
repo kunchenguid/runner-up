@@ -114,6 +114,7 @@ func Main() {
 	configPath := fs.String("config", config.DefaultConfigPath(), "setup file")
 	borrowID := fs.String("borrow", "", "borrow request (run-borrow)")
 	placeID := fs.String("place", "", "place to run (run-place)")
+	pool := fs.String("pool", "", "pool of the job the place runs (run-place)")
 	fs.Parse(os.Args[2:])
 	cfg, err := config.LoadConfig(*configPath)
 	if err == nil {
@@ -129,7 +130,7 @@ func Main() {
 	case "run-borrow":
 		os.Exit(coordinator.RunBorrow(cfg, *placeID, *borrowID))
 	case "run-place":
-		os.Exit(coordinator.RunPlace(cfg, *placeID))
+		os.Exit(coordinator.RunPlace(cfg, *placeID, *pool))
 	case "status":
 		os.Exit(status(cfg, os.Stdout))
 	case "check-config":

@@ -39,18 +39,18 @@ import (
 // prints when its job starts and ends.
 
 // actionsStandIn answers the scale set protocol as GitHub's Actions service
-// does, for one repository's one scale set.
+// does, for one repository's scale sets, one per pool.
 type actionsStandIn struct {
 	*httptest.Server
 	t *testing.T
 
 	mu       sync.Mutex
-	queue    []queued // messages not yet acknowledged
+	queues   map[string][]queued // messages not yet acknowledged, by scale set name
 	nextMsg  int
-	setID    int
-	opened   int // sessions opened
-	closed   int // sessions closed
-	polls    int // polls since the last session opened
+	sets     map[string]int // scale set ids by name
+	opened   int            // sessions opened
+	closed   int            // sessions closed
+	polls    int            // polls since the last session opened
 	acquired []int64
 	jits     []string // registrations handed out, in order
 	removed  []int64  // runners removed
@@ -63,14 +63,18 @@ type queued struct {
 }
 
 func newActionsStandIn(t *testing.T) *actionsStandIn {
-	a := &actionsStandIn{t: t}
+	a := &actionsStandIn{t: t, queues: map[string][]queued{}, sets: map[string]int{}}
 	a.Server = httptest.NewServer(http.HandlerFunc(a.serve))
 	t.Cleanup(a.Close)
 	return a
 }
 
-// send queues one message holding jobs, each a scale set job message.
-func (a *actionsStandIn) send(jobs ...any) {
+// send queues one message holding jobs, each a scale set job message, for
+// the ru-linux scale set every setup here serves.
+func (a *actionsStandIn) send(jobs ...any) { a.sendTo("ru-linux", jobs...) }
+
+// sendTo queues one message holding jobs for pool's scale set.
+func (a *actionsStandIn) sendTo(pool string, jobs ...any) {
 	body, err := json.Marshal(jobs)
 	if err != nil {
 		a.t.Fatal(err)
@@ -78,7 +82,23 @@ func (a *actionsStandIn) send(jobs ...any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.nextMsg++
-	a.queue = append(a.queue, queued{a.nextMsg, string(body)})
+	a.queues[pool] = append(a.queues[pool], queued{a.nextMsg, string(body)})
+}
+
+// setPath reads a path under one scale set's address: the set's name and
+// what follows its id, or ok false for a set the stand-in did not make.
+func (a *actionsStandIn) setPath(path string) (name, rest string, ok bool) {
+	tail, found := strings.CutPrefix(path, "/tenant/_apis/runtime/runnerscalesets/")
+	if !found {
+		return "", "", false
+	}
+	idText, rest, _ := strings.Cut(tail, "/")
+	for n, id := range a.sets {
+		if strconv.Itoa(id) == idText {
+			return n, rest, true
+		}
+	}
+	return "", "", false
 }
 
 // adminToken is the shape of the token the service hands a client: a JWT,
@@ -101,37 +121,41 @@ func (a *actionsStandIn) serve(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	setName, setRest, inSet := a.setPath(path)
 	switch {
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/actions/runners/registration-token"):
 		reply(http.StatusCreated, map[string]string{"token": "registration-token"})
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/actions/runner-registration"):
 		reply(http.StatusOK, map[string]string{"url": a.URL + "/tenant/", "token": adminToken()})
 	case r.Method == http.MethodGet && path == sets:
-		if a.setID == 0 {
+		name := r.URL.Query().Get("name")
+		if _, ok := a.sets[name]; !ok {
 			reply(http.StatusOK, map[string]any{"count": 0, "value": []any{}})
 			return
 		}
-		reply(http.StatusOK, map[string]any{"count": 1, "value": []any{a.set(r.URL.Query().Get("name"))}})
+		reply(http.StatusOK, map[string]any{"count": 1, "value": []any{a.set(name)}})
 	case r.Method == http.MethodPost && path == sets:
 		var set scaleset.RunnerScaleSet
 		json.NewDecoder(r.Body).Decode(&set)
-		a.setID = 7
+		if _, ok := a.sets[set.Name]; !ok {
+			a.sets[set.Name] = 7 + len(a.sets)
+		}
 		reply(http.StatusOK, a.set(set.Name))
-	case r.Method == http.MethodPost && path == fmt.Sprintf("%s/%d/sessions", sets, a.setID):
+	case r.Method == http.MethodPost && inSet && setRest == "sessions":
 		a.opened++
 		a.polls = 0
 		reply(http.StatusOK, map[string]any{
 			"sessionId": fmt.Sprintf("00000000-0000-4000-8000-%012d", a.opened), "ownerName": "runner-up",
-			"messageQueueUrl": a.URL + "/queue", "messageQueueAccessToken": "queue-token",
+			"messageQueueUrl": a.URL + "/queue/" + setName, "messageQueueAccessToken": "queue-token",
 			"statistics": map[string]int{},
 		})
-	case r.Method == http.MethodDelete && strings.HasPrefix(path, fmt.Sprintf("%s/%d/sessions/", sets, a.setID)):
+	case r.Method == http.MethodDelete && inSet && strings.HasPrefix(setRest, "sessions/"):
 		a.closed++
 		reply(http.StatusNoContent, nil)
-	case r.Method == http.MethodGet && path == "/queue":
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/queue/"):
 		a.polls++
 		last, _ := strconv.Atoi(r.URL.Query().Get("lastMessageId"))
-		for _, m := range a.queue {
+		for _, m := range a.queues[strings.TrimPrefix(path, "/queue/")] {
 			if m.id > last {
 				reply(http.StatusOK, map[string]any{"messageId": m.id, "messageType": "RunnerScaleSetJobMessages",
 					"body": m.body, "statistics": map[string]int{}})
@@ -145,15 +169,16 @@ func (a *actionsStandIn) serve(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		reply(http.StatusAccepted, nil)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/queue/"):
-		id, _ := strconv.Atoi(strings.TrimPrefix(path, "/queue/"))
-		a.queue = slices.DeleteFunc(a.queue, func(m queued) bool { return m.id <= id })
+		name, idText, _ := strings.Cut(strings.TrimPrefix(path, "/queue/"), "/")
+		id, _ := strconv.Atoi(idText)
+		a.queues[name] = slices.DeleteFunc(a.queues[name], func(m queued) bool { return m.id <= id })
 		reply(http.StatusNoContent, nil)
-	case r.Method == http.MethodPost && path == fmt.Sprintf("%s/%d/acquirejobs", sets, a.setID):
+	case r.Method == http.MethodPost && inSet && setRest == "acquirejobs":
 		var ids []int64
 		json.NewDecoder(r.Body).Decode(&ids)
 		a.acquired = append(a.acquired, ids...)
 		reply(http.StatusOK, map[string]any{"count": len(ids), "value": ids})
-	case r.Method == http.MethodPost && path == fmt.Sprintf("%s/%d/generatejitconfig", sets, a.setID):
+	case r.Method == http.MethodPost && inSet && setRest == "generatejitconfig":
 		var setting scaleset.RunnerScaleSetJitRunnerSetting
 		json.NewDecoder(r.Body).Decode(&setting)
 		jit := fmt.Sprintf("stand-in-registration-%d-%d", len(a.jits)+1, time.Now().UnixNano())
@@ -171,7 +196,7 @@ func (a *actionsStandIn) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *actionsStandIn) set(name string) map[string]any {
-	return map[string]any{"id": a.setID, "name": name, "runnerGroupId": 1,
+	return map[string]any{"id": a.sets[name], "name": name, "runnerGroupId": 1,
 		"labels": []map[string]string{{"type": "System", "name": name}}}
 }
 
@@ -608,4 +633,140 @@ func TestCrashedPlaceIsCleanedUpAndItsJobPlacedAgain(t *testing.T) {
 		t.Errorf("the containers got %v, want %v", e.registrations(), seen.jits)
 	}
 	e.noSecrets(seen.jits)
+}
+
+// Intent (RUU-16): a place serving two pools runs each pool's job on that
+// pool's image - two Ubuntu releases on the same place, picked by the label
+// the job asks for - and stays one place with one share of its machine: the
+// second job waits for it rather than getting a place of its own.
+func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
+	e := newE2E(t)
+	e.cfg.Pools = append(e.cfg.Pools, config.Pool{Label: "ru-linux-2604"})
+	box := &e.cfg.Machines[0].Places[0]
+	box.Pools = []string{"ru-linux", "ru-linux-2604"}
+	box.Image = "runner-2404:latest"
+	box.PoolImages = map[string]string{"ru-linux-2604": "runner-2604:latest"}
+	if err := config.SaveConfig(e.config, e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	checked, err := exec.Command(runnerUp(t), "check-config", "--config", e.config).CombinedOutput()
+	wantChecked := "ok: 1 targets, 2 pools, 1 machines, 1 places\n" +
+		"box (ci@box): box-1 docker 2 cores 4096 MB; places may reserve 3 of 4 cores and 7168 of 8192 MB, all at once\n"
+	if err != nil || string(checked) != wantChecked {
+		t.Fatalf("check-config said %q (%v), want %q", checked, err, wantChecked)
+	}
+
+	newer := verifyJob(t)
+	newer.RunnerRequestID, newer.JobDisplayName = 9102, "verify / linux 26.04"
+	older := verifyJob(t)
+	e.actions.sendTo("ru-linux-2604", scaleset.JobAvailable{JobMessageBase: jobMessage(newer, scaleset.MessageTypeJobAvailable)})
+	e.serve()
+	e.eventually("a container starts for the 26.04 job", func() bool { pid, _ := e.container(); return pid > 0 })
+	first, _ := e.container()
+	if run, _ := e.placeRun(); run.Pool != "ru-linux-2604" {
+		t.Fatalf("the place runs a job of %q, want ru-linux-2604", run.Pool)
+	}
+
+	// The 24.04 job arrives while the only place is busy: it waits.
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(older, scaleset.MessageTypeJobAvailable)})
+	status := func() string {
+		out, _ := exec.Command(runnerUp(t), "status", "--config", e.config).Output()
+		return string(out)
+	}
+	e.eventually("the 24.04 job waits for the place", func() bool {
+		return strings.Contains(status(), `waiting octo-org/app ru-linux "verify / linux"`)
+	})
+	if n := len(e.registrations()); n != 1 {
+		t.Fatalf("%d containers ran while the place was busy, want 1", n)
+	}
+	t.Logf("status while the 26.04 job holds the place:\n%s", status())
+
+	e.startJob(first)
+	e.endJob(first)
+	run, _ := e.placeRun()
+	e.actions.sendTo("ru-linux-2604",
+		scaleset.JobStarted{RunnerID: 1, RunnerName: run.RunnerName, JobMessageBase: jobMessage(newer, scaleset.MessageTypeJobStarted)},
+		scaleset.JobCompleted{Result: "succeeded", RunnerID: 1, RunnerName: run.RunnerName, JobMessageBase: jobMessage(newer, scaleset.MessageTypeJobCompleted)})
+	e.eventually("a container starts for the 24.04 job", func() bool {
+		pid, _ := e.container()
+		return pid > 0 && pid != first && len(e.registrations()) == 2
+	})
+	second, _ := e.container()
+	if run, _ := e.placeRun(); run.Pool != "ru-linux" {
+		t.Fatalf("the place runs a job of %q, want ru-linux", run.Pool)
+	}
+	e.startJob(second)
+	e.endJob(second)
+	e.eventually("the place frees", func() bool { return !e.busy() })
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+
+	// Each job's agent and container got its pool's image, in the one place.
+	agentRun := func(image string) string {
+		return "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 ci@box '" + runnerUp(t) +
+			"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300' '--image' '" + image + "'"
+	}
+	var runs []string
+	for _, line := range e.lines(filepath.Join(e.dir, "ssh.log")) {
+		if strings.Contains(line, "'agent' 'run'") {
+			runs = append(runs, line)
+		}
+	}
+	if want := []string{agentRun("runner-2604:latest"), agentRun("runner-2404:latest")}; !slices.Equal(runs, want) {
+		t.Errorf("ssh ran the agent as\n%s\nwant\n%s", strings.Join(runs, "\n"), strings.Join(want, "\n"))
+	}
+	var images []string
+	for _, line := range e.lines(filepath.Join(e.dir, "docker", "docker.log")) {
+		if strings.HasPrefix(line, "run ") {
+			images = append(images, line[strings.LastIndex(line, " ")+1:])
+		}
+	}
+	if want := []string{"runner-2604:latest", "runner-2404:latest"}; !slices.Equal(images, want) {
+		t.Errorf("the containers ran images %v, want %v", images, want)
+	}
+	logs := e.logs()
+	for _, want := range []string{
+		`msg="agent started" place=box-1 machine=box provider=docker pool=ru-linux-2604 image=runner-2604:latest`,
+		`msg="agent started" place=box-1 machine=box provider=docker pool=ru-linux image=runner-2404:latest`,
+	} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("no place log says %q\n%s", want, logs)
+		}
+	}
+	seen := e.actions.read()
+	if !slices.Equal(seen.acquired, []int64{9102, 9101}) || len(seen.stray) != 0 {
+		t.Errorf("acquired %v, unknown requests %v, want 9102 then 9101", seen.acquired, seen.stray)
+	}
+	e.noSecrets(seen.jits)
+	t.Logf("check-config:\n%sagent runs:\n%s\ncontainer images: %v", checked, strings.Join(runs, "\n"), images)
+}
+
+// Intent (RUU-16): a place runner started for a pool its place does not
+// serve starts no agent, since no image there was chosen for that pool; nor
+// does one started with no pool, as a coordinator from before pools had
+// images would start it, in a place whose pools have their own images.
+func TestPlaceRunnerRefusesAPoolItsPlaceDoesNotServe(t *testing.T) {
+	e := newE2E(t)
+	e.cfg.Machines[0].Places[0].PoolImages = map[string]string{"ru-linux": "runner-2604:latest"}
+	if err := config.SaveConfig(e.config, e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	for pool, logged := range map[string]string{"ru-large": "ru-large", "": `""`} {
+		args := []string{"run-place", "--config", e.config, "--place", "box-1"}
+		if pool != "" {
+			args = append(args, "--pool", pool)
+		}
+		cmd := exec.Command(runnerUp(t), args...)
+		cmd.Env = e.env
+		cmd.Stdin = strings.NewReader("stand-in-registration\n")
+		out, err := cmd.CombinedOutput()
+		want := `msg="the place does not serve the pool" place=box-1 pool=` + logged + "\n"
+		if code := agent.ExitCode(err); code != agent.ExitFailed || !strings.Contains(string(out), want) {
+			t.Errorf("run-place for pool %q exited %d saying %q", pool, code, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "ssh.log")); !os.IsNotExist(err) {
+		t.Errorf("a refused place runner reached the machine: %v", err)
+	}
 }

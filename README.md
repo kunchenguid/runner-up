@@ -360,6 +360,19 @@ Each place may also set:
 | --- | --- | --- |
 | `workFolder` | `_work` | where the runner keeps its jobs' work, relative to the runner's folder or absolute; GitHub's Ubuntu runners use `/home/runner/work` |
 | `toolCache` | see meaning | the runner's tool cache (`RUNNER_TOOL_CACHE`). A host place keeps it between jobs, in its folder under the agent's by default, so a tool such as `setup-node`'s Node is downloaded once. For a tart place, a folder inside the clone that the image was set up with; by default the runner's own, which every job starts without |
+| `poolImages` | none | another image for some of the place's pools, by pool label. A job of a named pool runs on that image, any other job on `image` |
+
+A place that serves several pools can run each on its own image. For example,
+the same Hyper-V places can run Ubuntu 24.04 and 26.04 jobs:
+
+```json
+{"id": "pc-1", "provider": "hyperv", "pools": ["linux", "linux-2604"], "cores": 4, "memoryMB": 8192,
+ "image": "C:\\runner-up\\noble.vhdx", "poolImages": {"linux-2604": "C:\\runner-up\\resolute.vhdx"}}
+```
+
+A `linux-2604` job boots `resolute.vhdx`, and a `linux` job boots
+`noble.vhdx`. Either way it is one place, with one share of its machine's
+budget.
 
 ## Macs
 
