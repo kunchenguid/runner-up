@@ -665,9 +665,9 @@ func TestCrashedPlaceIsCleanedUpAndItsJobPlacedAgain(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
-// Intent (DOP-200: runner-up's idle timer powered off a runner "the same
-// second GitHub gave it job 124515939915; GitHub then failed the job with
-// 'lost communication'"): GitHub can give a scale set's idle runner a job
+// Intent (RUU-18: a runner "was powered off by runner-up's idle timer the
+// same second GitHub gave it" a job; "GitHub then failed the job with 'lost
+// communication'"): GitHub can give a scale set's idle runner a job
 // until the runner is removed, so a runner no job reached within the start
 // timeout is removed from its scale set while it still runs, and only then
 // stopped. Its job gets a new runner.
@@ -706,7 +706,7 @@ func TestIdleRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
-// Intent (DOP-200): a runner GitHub gave a job just as the start timeout
+// Intent (RUU-18): a runner GitHub gave a job just as the start timeout
 // passed is one GitHub refuses to remove, saying it is running a job. That
 // runner keeps running and runs the job; no second runner starts.
 func TestRunnerGivenAJobAtTheStartTimeoutKeepsRunning(t *testing.T) {

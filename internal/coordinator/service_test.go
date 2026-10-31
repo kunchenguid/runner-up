@@ -103,7 +103,7 @@ func (f *fakeSet) RemoveRunner(_ context.Context, id int64) error {
 		return errors.New("failed to issue the request: dial tcp: lookup api.github.com: no such host")
 	}
 	if f.running[id] {
-		// As GitHub refused a runner it had given a job (DOP-200).
+		// As GitHub refused a runner it had given a job (RUU-18).
 		return fmt.Errorf("bad request: request DELETE https://broker.actions.githubusercontent.com/rest/_apis/distributedtask/pools/0/agents/%d"+
 			"?api-version=6.0-preview failed(status=\"400 Bad Request\"): %w: Runner is currently running a job and cannot be deleted.",
 			id, scaleset.JobStillRunningError)
@@ -549,7 +549,7 @@ func TestUnusedRunnerOutlivesAFailedRemovalAndARestart(t *testing.T) {
 	}
 }
 
-// Intent (DOP-200: at the start timeout, "runner-up removes the runner's
+// Intent (RUU-18: at the start timeout, "runner-up removes the runner's
 // GitHub registration first and powers off only after GitHub accepts the
 // removal"): a runner no job reached in time keeps its place while GitHub
 // cannot be reached, and is asked about again at the next tick. Once GitHub
@@ -609,7 +609,7 @@ func TestIdleRunnerKeepsItsPlaceUntilGitHubRemovesIt(t *testing.T) {
 	}
 }
 
-// Intent (DOP-200: "optionally log a refused removal for an ended place as
+// Intent (RUU-18: "optionally log a refused removal for an ended place as
 // a stranded job, so the next one is diagnosed at once"): when a runner's
 // place has ended but GitHub will not remove the runner because it gave it a
 // job, the coordinator says that job is stranded, naming the runner, and

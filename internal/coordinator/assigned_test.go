@@ -181,7 +181,7 @@ func TestRunnerThatTakesAnotherJobHandsItsOwnBack(t *testing.T) {
 	h.want(map[string]string{"proof-a": proofJob})
 }
 
-// Intent (DOP-200: "a runner whose job another took counts as free at
+// Intent (RUU-18: "a runner whose job another took counts as free at
 // hand-back so no surplus runner idles to the timeout"): the runner started
 // for verify takes PR #184's job, whose own runner is still waiting. That
 // waiting runner is free now and takes verify: no third runner starts in the
