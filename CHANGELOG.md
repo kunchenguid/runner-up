@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/kunchenguid/runner-up/compare/v0.1.3...v0.1.4) (2026-10-31)
+
+
+### Bug Fixes
+
+* **coordinator:** remove an idle runner from its scale set before stopping it ([de65e68](https://github.com/kunchenguid/runner-up/commit/de65e68d9429a34dc12fc59a0caa6d911d060848))
+
 ## [0.1.3](https://github.com/kunchenguid/runner-up/compare/v0.1.2...v0.1.3) (2026-10-31)
 
 
