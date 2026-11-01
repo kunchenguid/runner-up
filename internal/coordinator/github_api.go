@@ -158,6 +158,26 @@ func (a *GithubAPI) RunWorkflow(ctx context.Context, repo string, id int64) (str
 	return p, nil
 }
 
+// RunClosed reads whether GitHub has closed a workflow run, checking it is
+// the run asked for: a run cancelled or finished is completed, and so is
+// every job of it, until the run is run again.
+func (a *GithubAPI) RunClosed(ctx context.Context, repo string, id int64) (bool, error) {
+	var run struct {
+		ID         int64  `json:"id"`
+		Status     string `json:"status"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	}
+	if _, err := a.get(ctx, fmt.Sprintf("/repos/%s/actions/runs/%d", repo, id), &run); err != nil {
+		return false, err
+	}
+	if run.ID != id || run.Repository.FullName != repo || run.Status == "" {
+		return false, fmt.Errorf("run %d of %s has no status", id, repo)
+	}
+	return run.Status == "completed", nil
+}
+
 // SignIn reads who the token signs in as and the scopes GitHub granted it.
 func (a *GithubAPI) SignIn(ctx context.Context) (login string, scopes []string, err error) {
 	var user struct {

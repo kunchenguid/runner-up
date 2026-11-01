@@ -164,6 +164,7 @@ func serveWith(cfg *config.Config, configPath, self string, clients coordinator.
 		return 1
 	}
 	if labels, workflows := plan.Needs(svc.Rules); api != nil {
+		svc.RunReader = api.RunClosed
 		if labels {
 			svc.LabelReader = api.PullLabels
 		}
