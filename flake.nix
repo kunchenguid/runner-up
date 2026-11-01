@@ -15,7 +15,7 @@
     , ...
     }:
     let
-      version = "0.1.4"; # x-release-please-version
+      version = "0.1.5"; # x-release-please-version
       systems = [
         "aarch64-darwin"
         "aarch64-linux"

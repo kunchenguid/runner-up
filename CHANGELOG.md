@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/kunchenguid/runner-up/compare/v0.1.4...v0.1.5) (2026-11-01)
+
+
+### Bug Fixes
+
+* **coordinator:** forget waiting jobs of runs GitHub closed ([6a674bc](https://github.com/kunchenguid/runner-up/commit/6a674bc811436c093e73a3146a28403e2e58d066))
+
 ## [0.1.4](https://github.com/kunchenguid/runner-up/compare/v0.1.3...v0.1.4) (2026-10-31)
 
 
