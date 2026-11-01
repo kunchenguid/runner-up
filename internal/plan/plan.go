@@ -37,6 +37,11 @@ type Job struct {
 	// JobID names GitHub's latest offer or assignment of the job: each
 	// assignment has a new one, and a take-back names the one it takes back.
 	JobID string `json:"jobId,omitempty"`
+	// HeardAt is when GitHub last sent anything about the job: an offer, an
+	// assignment or a take-back. GitHub takes an assigned job no runner took
+	// back after five minutes, so a job GitHub has long stopped mentioning
+	// may belong to a run it has closed.
+	HeardAt time.Time `json:"heardAt,omitempty"`
 
 	// Filled in before planning, never saved.
 	// Estimate is a borrow's declared duration, or a job's last successful wall
@@ -58,6 +63,15 @@ func RequestKey(target, pool string, requestID int64) string {
 
 func RunKey(target, pool string, runID int64, name string) string {
 	return fmt.Sprintf("%s|%s|run %d|%s", target, pool, runID, name)
+}
+
+// Heard is when GitHub last sent anything about the job; a job saved before
+// HeardAt was kept counts from when it was first seen.
+func (j Job) Heard() time.Time {
+	if j.HeardAt.IsZero() {
+		return j.SeenAt
+	}
+	return j.HeardAt
 }
 
 func (j Job) Key() string {

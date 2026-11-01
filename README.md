@@ -335,6 +335,20 @@ version, which costs no call to GitHub. Once it answers, the machine's places
 take jobs again. A machine still resting when the coordinator restarts is
 asked at once. `runner-up status` shows a resting machine's places as resting.
 
+### When GitHub closes a job
+
+GitHub does not always tell the scale set that a job it assigned is gone,
+for example when a run is cancelled while one of its jobs waits for its next
+assignment, or when the cancellation is lost with a session. GitHub takes an
+assigned job back when no runner takes it in five minutes. So when GitHub has
+said nothing for ten minutes about a job it assigned, or for an hour about a
+job it took back, the coordinator reads the job's workflow run. It reads each
+such run again every fifteen minutes, or every hour, while the job stays
+quiet, and reads at most ten runs at a time and sixty an hour. If GitHub says
+the run is completed, the coordinator forgets the run's quiet waiting jobs
+and starts no runner for them. A run GitHub calls open, or a read GitHub does
+not answer, keeps them waiting. A job with a runner is never read about.
+
 ## Setup file
 
 Besides what `init` and `machine add` write, you can set:

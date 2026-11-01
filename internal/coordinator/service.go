@@ -107,10 +107,16 @@ type Service struct {
 	// The readers the order rules need, set only when the rules use them.
 	LabelReader    func(context.Context, string) (map[string]map[string]bool, error)
 	WorkflowReader func(context.Context, string, int64) (string, error)
-	readMu         sync.Mutex
-	labelsRead     map[string]time.Time
-	labels         map[string]map[string]map[string]bool
-	runWorkflows   map[workflowRun]runWorkflow
+	// RunReader, set whenever GitHub's API can be read, says whether GitHub
+	// has closed a workflow run, cancelled or finished, and every job of it
+	// with it (closedruns.go).
+	RunReader    func(context.Context, string, int64) (bool, error)
+	readMu       sync.Mutex
+	runsChecked  map[workflowRun]time.Time
+	runReads     []time.Time
+	labelsRead   map[string]time.Time
+	labels       map[string]map[string]map[string]bool
+	runWorkflows map[workflowRun]runWorkflow
 
 	// vmReader, set when a place runs in tart, reads each Mac's running macOS
 	// VMs (vmlimit.go); vms is the latest reading by machine.
@@ -170,6 +176,7 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 		labelsRead:   map[string]time.Time{},
 		labels:       map[string]map[string]map[string]bool{},
 		runWorkflows: map[workflowRun]runWorkflow{},
+		runsChecked:  map[workflowRun]time.Time{},
 		vms:          map[string][]string{},
 		vmsRead:      map[string]time.Time{},
 	}
@@ -237,11 +244,7 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 	}
 	s.mu.Lock()
 	now := s.now()
-	job := func(m scaleset.JobMessageBase, assigned bool) plan.Job {
-		return plan.Job{Target: target, Pool: pool, Repo: repoOf(target, m), RequestID: m.RunnerRequestID, QueueTime: m.QueueTime,
-			Name: m.JobDisplayName, Workflow: m.JobWorkflowRef, RunID: m.WorkflowRunID, SeenAt: now,
-			Assigned: assigned, JobID: m.JobID}
-	}
+	job := func(m scaleset.JobMessageBase, assigned bool) plan.Job { return jobOf(target, pool, m, assigned, now) }
 	for _, m := range msg.JobAvailableMessages {
 		s.waitLocked(job(m.JobMessageBase, false))
 	}
@@ -285,7 +288,7 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 			// takes the assignment back, with no finish time, and assigns the
 			// job again, a moment later or in this same message. A cancelled
 			// job has a finish time.
-			if m.RunnerName == "" && m.FinishTime.IsZero() && s.takeBackLocked(k, m.JobID) {
+			if m.RunnerName == "" && m.FinishTime.IsZero() && s.takeBackLocked(k, m.JobID, now) {
 				continue
 			}
 			if _, ok := s.acquired[k]; ok && m.RunnerName == "" {
@@ -319,6 +322,14 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 	return nil
 }
 
+// jobOf is the job a message of target's scale set for pool is about, as seen
+// at now.
+func jobOf(target, pool string, m scaleset.JobMessageBase, assigned bool, now time.Time) plan.Job {
+	return plan.Job{Target: target, Pool: pool, Repo: repoOf(target, m), RequestID: m.RunnerRequestID, QueueTime: m.QueueTime,
+		Name: m.JobDisplayName, Workflow: m.JobWorkflowRef, RunID: m.WorkflowRunID, SeenAt: now, HeardAt: now,
+		Assigned: assigned, JobID: m.JobID}
+}
+
 // waitLocked records a job GitHub offered or assigned. Offered or assigned
 // again, it keeps its place in line.
 func (s *Service) waitLocked(j plan.Job) {
@@ -336,7 +347,7 @@ func (s *Service) waitLocked(j plan.Job) {
 		// a second runner would wait for nothing. Once that runner is gone,
 		// GitHub has given the job back.
 		if s.runnerAlive(a.Place) {
-			a.Job.TakenBack, a.Job.JobID = false, j.JobID
+			a.Job.TakenBack, a.Job.JobID, a.Job.HeardAt = false, j.JobID, j.HeardAt
 			s.acquired[k] = a
 			return
 		}
@@ -355,20 +366,22 @@ func (s *Service) waitLocked(j plan.Job) {
 // assignment, whose job id is new, and a message's assignments are read before
 // its completions: a take-back of an assignment other than the job's latest
 // changes nothing.
-func (s *Service) takeBackLocked(k, jobID string) bool {
+func (s *Service) takeBackLocked(k, jobID string, now time.Time) bool {
 	latest := func(j plan.Job) bool { return j.JobID == "" || j.JobID == jobID }
 	if j, ok := s.waiting[k]; ok && j.Assigned {
 		if latest(j) {
 			j.TakenBack = true
-			s.waiting[k] = j
 		}
+		j.HeardAt = now
+		s.waiting[k] = j
 		return true
 	}
 	if a, ok := s.acquired[k]; ok && a.Job.Assigned {
 		if latest(a.Job) {
 			a.Job.TakenBack = true
-			s.acquired[k] = a
 		}
+		a.Job.HeardAt = now
+		s.acquired[k] = a
 		return true
 	}
 	return false
@@ -507,6 +520,7 @@ func (s *Service) refreshRunWorkflows(ctx context.Context) {
 func (s *Service) Place(ctx context.Context) {
 	s.refreshLabels(ctx)
 	s.refreshRunWorkflows(ctx)
+	s.forgetClosedRuns(ctx)
 	s.refreshVMs(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
