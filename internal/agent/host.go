@@ -51,7 +51,7 @@ func (p hostProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 	if err != nil {
 		return err
 	}
-	env := []string{"ACTIONS_RUNNER_INPUT_JITCONFIG=" + jit, "RUNNER_TOOL_CACHE=" + tools}
+	env := append(a.SizeEnv(), "ACTIONS_RUNNER_INPUT_JITCONFIG="+jit, "RUNNER_TOOL_CACHE="+tools)
 	if !a.AllowForks {
 		// The runner runs its job-started hook's path unquoted.
 		hook := filepath.Join(dir, "fork-guard.sh")
@@ -67,7 +67,7 @@ func (p hostProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 	cmd.Dir = runner
 	// The runner's own variables come only from this place.
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "ACTIONS_RUNNER_") && !strings.HasPrefix(kv, "RUNNER_TOOL_CACHE=") {
+		if !strings.HasPrefix(kv, "ACTIONS_RUNNER_") && !strings.HasPrefix(kv, "RUNNER_TOOL_CACHE=") && !strings.HasPrefix(kv, "RUNNER_UP_") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
@@ -81,6 +81,8 @@ func (p hostProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 		return fmt.Errorf("starting the runner: %w", err)
 	}
 	pgid := cmd.Process.Pid
+	finishUsage := measureGroup(pgid)
+	defer func() { writeUsage(out, finishUsage()) }()
 	os.WriteFile(p.pidFile(a), []byte(strconv.Itoa(pgid)+"\n"), 0o600)
 	waitOrStop(ctx, cmd, func() { syscall.Kill(-pgid, syscall.SIGTERM) }, 30*time.Second)
 	// Whatever the job left running in the group goes with it. The group's

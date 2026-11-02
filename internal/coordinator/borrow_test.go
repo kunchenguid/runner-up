@@ -104,10 +104,13 @@ func TestBorrowRanksAmongRecordedJobs(t *testing.T) {
 	}
 }
 
-// Intent (INF-1823): a borrow survives a service restart and counts its place's
-// share and named VM once, even when the agent reports that VM as running.
+// Intent (INF-1823 and RUU-28): a borrow survives a service restart and counts
+// its pool's launch-time size and named VM once, even after a size edit and
+// when the agent reports that VM as running.
 func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	cfg := oneMac(t.TempDir())
+	cfg.Pools[0].Cores, cfg.Pools[0].MemoryMB = 3, 6144
+	reservation := cfg.Pools[0].Size()
 	cfg.Machines[0].Places = cfg.Machines[0].Places[:2]
 	l := newFakeLauncher()
 	h := newHarness(t, cfg, l, map[string]*fakeSet{})
@@ -115,6 +118,7 @@ func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	enqueueBorrow(t, cfg, borrowRequest{ID: "request-check", Pool: "ru-mac", Label: "native check", Minutes: 20, Queued: h.now})
 	h.svc.Place(context.Background())
 	defer l.finish(t, "mac-1")
+	cfg.Pools[0].Cores, cfg.Pools[0].MemoryMB = 2, 4096
 	s, err := NewService(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), l)
 	if err != nil {
 		t.Fatal(err)
@@ -123,8 +127,8 @@ func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	if busy, why := s.PlaceBusy(cfg.Machines[0].Places[1]); busy {
 		t.Fatalf("second slot blocked by a double count: %s", why)
 	}
-	if used := s.inUse("mac", ""); used != (config.Share{Cores: 2, MemoryMB: 4096}) {
-		t.Fatalf("share = %+v", used)
+	if used := s.inUse("mac", ""); used != reservation {
+		t.Fatalf("share = %+v, want frozen reservation %+v", used, reservation)
 	}
 	if busy, why := s.PlaceBusy(cfg.Machines[0].Places[0]); !busy || why != "borrow" {
 		t.Fatalf("borrow status: %v %q", busy, why)
@@ -133,7 +137,7 @@ func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	if len(s.waiting) != 0 {
 		t.Fatal("granted borrow queued again after restart")
 	}
-	t.Log("restart: named VM plus held borrow reserves one share and leaves the second VM slot free")
+	t.Logf("restart after size edit: named VM plus held borrow keeps %+v once and leaves the second VM slot free", reservation)
 }
 
 // Intent (INF-1823): an abandoned waiter holds nothing and cannot later be

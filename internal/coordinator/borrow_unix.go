@@ -313,7 +313,7 @@ func (s *Service) assignBorrowLocked(p config.Place, j plan.Job, busy *os.File) 
 	if err := os.Rename(filepath.Join(dir, "request.json"), filepath.Join(dir, "granted.json")); err != nil {
 		return false
 	}
-	run := PlaceRun{BorrowID: j.BorrowID, Pool: j.Pool, JobName: j.Name, Started: true, LaunchedAt: s.now()}
+	run := PlaceRun{BorrowID: j.BorrowID, Pool: j.Pool, JobName: j.Name, Started: true, LaunchedAt: s.now(), Reservation: share(p)}
 	err = config.WriteJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), run)
 	if err == nil {
 		err = l.LaunchBorrow(p, busy, j.BorrowID)
@@ -371,6 +371,11 @@ func RunBorrow(cfg *config.Config, placeID, id string) int {
 	var r borrowRequest
 	if config.ReadJSON(filepath.Join(borrowDir(cfg, id), "granted.json"), &r) != nil {
 		return 1
+	}
+	p = cfg.SizePlace(p, r.Pool)
+	var run PlaceRun
+	if config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
+		p.Cores, p.MemoryMB = run.Reservation.Cores, run.Reservation.MemoryMB
 	}
 	conn, err := net.DialTimeout("unix", r.Socket, 10*time.Second)
 	if err != nil {

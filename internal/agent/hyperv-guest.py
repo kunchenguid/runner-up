@@ -168,6 +168,8 @@ def runner_env(jit, image=None):
         "SHELL": "/bin/bash",
         "LANG": env.get("LANG", "C.UTF-8"),
         "ACTIONS_RUNNER_INPUT_JITCONFIG": jit,
+        "RUNNER_UP_CORES": "@CORES@",
+        "RUNNER_UP_MEMORY_MB": "@MEMORY_MB@",
     })
     if not ALLOW_FORKS:
         env["ACTIONS_RUNNER_HOOK_JOB_STARTED"] = HOOK

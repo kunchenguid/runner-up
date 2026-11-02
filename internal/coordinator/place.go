@@ -177,6 +177,13 @@ func RunPlace(cfg *config.Config, placeID, pool string) int {
 		log.Error("the place does not serve the pool", "pool", pool)
 		return agent.ExitFailed
 	}
+	p = cfg.SizePlace(p, pool)
+	// The coordinator wrote this size before launch. A concurrent setup edit
+	// must not change the agent's limits after the reservation was counted.
+	var run PlaceRun
+	if config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
+		p.Cores, p.MemoryMB = run.Reservation.Cores, run.Reservation.MemoryMB
+	}
 	// fd 3 is the place's lock. Keep it open until this process ends, and out
 	// of every process started from here.
 	lock := os.NewFile(3, "busy.lock")
@@ -235,13 +242,22 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	// Wait closes the pipe once the agent has ended.
 	go io.WriteString(stdin, jit+"\n")
 	started := make(chan struct{})
+	scanned := make(chan struct{})
 	go func() {
+		defer close(scanned)
 		once := sync.Once{}
 		sc := bufio.NewScanner(pr)
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
 			fmt.Fprintln(os.Stdout, line)
+			if text, ok := strings.CutPrefix(line, agent.UsagePrefix); ok {
+				if usage, valid := agent.ParseUsage(text); valid {
+					if err := config.WriteJSON(filepath.Join(r.cfg.PlaceDir(r.p.ID), "usage.json"), usage); err != nil {
+						r.log.Warn("could not keep resource readings", "err", err)
+					}
+				}
+			}
 			if strings.Contains(line, "Running job:") {
 				once.Do(func() { r.markStarted(); close(started) })
 			}
@@ -266,6 +282,14 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	for {
 		select {
 		case err := <-done:
+			// Retain the last reading before releasing busy.lock. The agent
+			// can print its completion and exit before this select sees started.
+			<-scanned
+			select {
+			case <-started:
+				gotJob = true
+			default:
+			}
 			code := agent.ExitCode(err)
 			r.log.Info("agent ended", "exit", code, "job", gotJob)
 			if code == sshFailed && !r.cfg.Machine(r.p.Machine).Local() {

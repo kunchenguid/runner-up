@@ -44,6 +44,9 @@ func (dockerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 			"-v", hook+":/opt/runner-up/fork-guard.sh:ro",
 			"-e", "ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh")
 	}
+	for _, env := range a.SizeEnv() {
+		args = append(args, "-e", env)
+	}
 	args = append(args, "--entrypoint", "/home/runner/run.sh", image)
 	cmd := exec.Command("docker", args...)
 	cmd.Env = append(os.Environ(), "ACTIONS_RUNNER_INPUT_JITCONFIG="+jit)

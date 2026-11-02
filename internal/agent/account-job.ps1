@@ -31,6 +31,8 @@ $env:GIT_CONFIG_VALUE_0 = 'true'
 # included, as on GitHub's own Windows runners; this sets no account or
 # machine policy.
 $env:PSExecutionPolicyPreference = 'Bypass'
+$env:RUNNER_UP_CORES = '@CORES@'
+$env:RUNNER_UP_MEMORY_MB = '@MEMORY_MB@'
 @HOOK@
 $env:ACTIONS_RUNNER_INPUT_JITCONFIG = $registration
 Remove-Variable registration

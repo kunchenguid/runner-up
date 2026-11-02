@@ -204,7 +204,7 @@ func askJobHost(t *testing.T, s *Server, req JobRequest) (string, error) {
 
 func testFiles(req JobRequest) (map[string][]byte, error) {
 	return accountJobFiles(`C:\runner-up\cache\actions-runner-win-x64-2.338.1.zip`, runnerWindowsSHA256["x64"],
-		`C:\Program Files\runner-up\runner-up.exe`, req.AllowForks), nil
+		`C:\Program Files\runner-up\runner-up.exe`, req.AllowForks, req.Cores, req.MemoryMB), nil
 }
 
 func newTestServer(t *testing.T, h *fakeHost) *Server {

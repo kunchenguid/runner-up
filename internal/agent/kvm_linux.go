@@ -141,7 +141,7 @@ func (p kvmProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Wr
 	// The registration goes in on the session's input, never in a command
 	// line; the runner removes the variable from its environment before any
 	// job starts. Without ICU, .NET runs in its invariant mode.
-	script := "read -r jit; export ACTIONS_RUNNER_INPUT_JITCONFIG=\"$jit\"; unset jit; " + env +
+	script := "read -r jit; export ACTIONS_RUNNER_INPUT_JITCONFIG=\"$jit\"; unset jit; export " + strings.Join(a.SizeEnv(), " ") + "; " + env +
 		"/sbin/ldconfig -p 2>/dev/null | grep -q libicuuc || export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1; " +
 		"exec ./actions-runner/run.sh"
 	session, err := client.NewSession()
