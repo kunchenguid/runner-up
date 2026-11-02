@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/kunchenguid/runner-up/compare/v0.1.5...v0.1.6) (2026-11-02)
+
+
+### Features
+
+* **sizing:** size jobs by pool and reserve room ([b819642](https://github.com/kunchenguid/runner-up/commit/b819642338bec3231cd5cca51dd2b63d5eb0f40a))
+
 ## [0.1.5](https://github.com/kunchenguid/runner-up/compare/v0.1.4...v0.1.5) (2026-11-01)
 
 
