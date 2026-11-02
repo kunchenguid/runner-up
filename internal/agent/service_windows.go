@@ -220,7 +220,7 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 		if err != nil {
 			return nil, err
 		}
-		return accountJobFiles(zip, runnerWindowsSHA256[runnerArch()], self, req.AllowForks), nil
+		return accountJobFiles(zip, runnerWindowsSHA256[runnerArch()], self, req.AllowForks, req.Cores, req.MemoryMB), nil
 	}
 	server := NewServer(Options{Records: filepath.Join(stateDir(), "job-accounts.json"), Files: files}, host, log)
 	// After a restart or a power cut, delete whatever a cut-off job left

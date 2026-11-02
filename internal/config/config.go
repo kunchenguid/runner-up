@@ -100,10 +100,18 @@ type GitHub struct {
 	GH string `json:"gh,omitempty"`
 }
 
-// Pool is one label jobs ask for.
+// Pool is one kind of job, named by the label workflows ask for. GitHub
+// chooses which job a runner takes within a pool, so all its jobs share a size.
 type Pool struct {
 	Label string `json:"label"`
+	// Set both to give every job this size, on any place serving the pool.
+	// Leave both out to keep the place's size, for existing setups.
+	Cores    int `json:"cores,omitempty"`
+	MemoryMB int `json:"memoryMB,omitempty"`
 }
+
+// Size is the pool's configured reservation, or zero for a legacy pool.
+func (p Pool) Size() Share { return Share{Cores: p.Cores, MemoryMB: p.MemoryMB} }
 
 // Machine is one computer whose places run jobs. The coordinator reaches it
 // over SSH, or runs its agent directly when SSH is empty.
@@ -137,9 +145,9 @@ type Place struct {
 	Provider string `json:"provider"`
 	// Pools are the labels whose jobs the place takes.
 	Pools []string `json:"pools"`
-	// Cores and MemoryMB are what the place's container or VM gets, and its
-	// share of its machine's budget while it runs a job. A host place's job
-	// is not held to them: they are only its share.
+	// Cores and MemoryMB are the fallback size for pools without a size:
+	// container/VM limits and the reservation against the machine's budget.
+	// A sized pool overrides both. A host job is not held to its reservation.
 	Cores    int `json:"cores"`
 	MemoryMB int `json:"memoryMB"`
 	// Image is the runner image for a Docker place, the base disk image on
@@ -149,8 +157,8 @@ type Place struct {
 	Image string `json:"image,omitempty"`
 	// PoolImages gives some of the place's pools their own image, by pool
 	// label: a job of a named pool runs on that image, any other job on
-	// Image. The place stays one place with one share of its machine,
-	// whichever image its job uses.
+	// Image. The place stays one place; its job's pool chooses both the
+	// image and, when configured, its reservation.
 	PoolImages map[string]string `json:"poolImages,omitempty"`
 	// DiskGB is a KVM place's disk size, defaultDiskGB when zero; a tart
 	// place's clone or a Hyper-V place's disk grows to it when its image is
@@ -175,7 +183,7 @@ type Place struct {
 	Machine string `json:"-"`
 }
 
-// Share is what a place reserves of its machine while it runs.
+// Share is what a job reserves of its machine while its place runs.
 type Share struct {
 	Cores    int `json:"cores"`
 	MemoryMB int `json:"memoryMB"`
@@ -352,6 +360,9 @@ func (c *Config) Validate() error {
 		if labels[p.Label] {
 			return fmt.Errorf("pool %q is listed twice", p.Label)
 		}
+		if p.Cores < 0 || p.MemoryMB < 0 || (p.Cores == 0) != (p.MemoryMB == 0) {
+			return fmt.Errorf("pool %q: set positive cores and memoryMB together, or leave both out", p.Label)
+		}
 		labels[p.Label] = true
 	}
 	// A pool rule that names no pool would order nothing, and say nothing.
@@ -423,11 +434,14 @@ func (c *Config) Validate() error {
 			if p.Cores <= 0 || p.MemoryMB <= 0 {
 				return fmt.Errorf("place %q: it needs cores and memoryMB", p.ID)
 			}
-			if b.Cores > 0 && p.Cores > b.Cores {
-				return fmt.Errorf("place %q: its %d cores never fit its machine's %d, less the owner's room", p.ID, p.Cores, b.Cores)
-			}
-			if b.MemoryMB > 0 && p.MemoryMB > b.MemoryMB {
-				return fmt.Errorf("place %q: its %d MB never fit its machine's %d MB, less the owner's room", p.ID, p.MemoryMB, b.MemoryMB)
+			for _, label := range p.Pools {
+				sized := c.SizePlace(p, label)
+				if b.Cores > 0 && sized.Cores > b.Cores {
+					return fmt.Errorf("place %q, pool %q: its %d cores never fit its machine's %d, less the owner's room", p.ID, label, sized.Cores, b.Cores)
+				}
+				if b.MemoryMB > 0 && sized.MemoryMB > b.MemoryMB {
+					return fmt.Errorf("place %q, pool %q: its %d MB never fit its machine's %d MB, less the owner's room", p.ID, label, sized.MemoryMB, b.MemoryMB)
+				}
 			}
 			if err := checkImage(p.Provider, p.Image); err != nil {
 				return fmt.Errorf("place %q: %w", p.ID, err)
@@ -519,6 +533,25 @@ func (c *Config) Labels() []string {
 		out = append(out, p.Label)
 	}
 	return out
+}
+
+// PoolSize is the size every job in label reserves, or zero for a legacy pool.
+func (c *Config) PoolSize(label string) Share {
+	for _, p := range c.Pools {
+		if p.Label == label {
+			return p.Size()
+		}
+	}
+	return Share{}
+}
+
+// SizePlace keeps the place's identity and provider but applies the job kind's
+// size. A pool without a size retains the place's existing reservation.
+func (c *Config) SizePlace(p Place, label string) Place {
+	if sh := c.PoolSize(label); sh.Cores > 0 {
+		p.Cores, p.MemoryMB = sh.Cores, sh.MemoryMB
+	}
+	return p
 }
 
 // Places lists every machine's places, in order.

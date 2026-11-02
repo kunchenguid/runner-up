@@ -21,7 +21,8 @@ Windows, which is removed when the job ends. A place can also run its jobs on
 the machine itself.
 
 One coordinator talks to GitHub through runner scale sets and hears of every
-waiting job. Jobs wait at GitHub and hold nothing until a place is free. Then
+waiting job. Jobs wait at GitHub without a runner until a place is free. The
+first-ranked job waiting only for resources keeps room on one machine. Then
 the coordinator picks the job its order rules choose, acquires it, and starts a
 one-job runner for it. It starts the runner by running the agent on that
 place's machine over SSH.
@@ -29,7 +30,8 @@ place's machine over SSH.
 - **Places.** Each machine has places. A place runs one job at a time and
   serves one or more pools, the labels jobs ask for in `runs-on`.
 - **Budgets.** A machine's places share its cores and memory, less the room
-  kept for the machine's owner. A place takes a job only while its share fits.
+  kept for the machine's owner. A job takes a place only while its pool's
+  size fits; a pool without a size keeps the place's existing share.
   A Mac runs at most two macOS virtual machines at once, counting ones
   runner-up did not start (see [Macs](#macs)).
 - **Order.** When a place frees, the order rules pick which waiting job it
@@ -228,7 +230,9 @@ jobs:
     runs-on: my-pool
 ```
 
-`runner-up status` shows each place and the waiting work; for borrows, see
+`runner-up status` shows each place, its running reservation and the waiting
+work. `runner-up usage` shows finished jobs' resource readings beside their
+pool sizes (see [Job sizes and readings](#job-sizes-and-readings)); for borrows, see
 [Borrowing a virtual Mac](#borrowing-a-virtual-mac).
 
 ### Windows machines
@@ -364,11 +368,22 @@ Besides what `init` and `machine add` write, you can set:
 | `logKeepDays` | 30 | how long place logs are kept |
 
 Each machine's `cores`, `memoryMB`, `roomCores` and `roomMemoryMB` set its
-budget. Each place's `cores` and `memoryMB` are what its container or virtual
-machine gets, and also its share of the budget. A host place's job is not held
-to them: they are only its share. Places may share a machine
-without all fitting at once. They then take turns: `check-config` says which
-machines share this way.
+budget. Each pool may set `cores` and `memoryMB` together: every job of that
+pool reserves that size, whichever place runs it. It replaces the place's
+`cores` and `memoryMB`, including the container or VM limits. A pool without a
+size keeps the place's existing size. `check-config` rejects partial sizes
+and sizes that never fit a machine serving the pool, after its owner's room.
+
+A host job is not held to its reservation by the operating system. Jobs receive
+`RUNNER_UP_CORES` and `RUNNER_UP_MEMORY_MB`; use them to set worker counts and
+other resource controls. These variables describe reservations, not current
+free resources. A running job keeps its launch-time reservation through a
+coordinator restart or a later setup edit.
+
+Places may share a machine without all fitting at once. They then take turns:
+`check-config` shows the place defaults and each configured pool override.
+Several host places allow small jobs to run together; the machine's budget,
+not their total fallback sizes, limits the combination.
 
 Each place may also set:
 
@@ -387,8 +402,56 @@ the same Hyper-V places can run Ubuntu 24.04 and 26.04 jobs:
 ```
 
 A `linux-2604` job boots `resolute.vhdx`, and a `linux` job boots
-`noble.vhdx`. Either way it is one place, with one share of its machine's
-budget.
+`noble.vhdx`. Either way it is one place; its pool's size, or the place's
+fallback size when the pool has none, counts against its machine's budget.
+
+### Job sizes and readings
+
+A pool is a job kind. For example, this setup illustrates a large check and
+small signing job that together fit a 14-core job budget:
+
+```json
+"pools": [
+  {"label": "mac-check", "cores": 12, "memoryMB": 32768},
+  {"label": "mac-sign", "cores": 2, "memoryMB": 4096}
+]
+```
+
+These are example sizes, not measurements or recommended defaults. Choose
+separate labels for jobs with different resource needs: GitHub may give a new
+runner any job of its pool, so every job within that pool must share one size.
+Borrowed tart places take their pool's size too.
+
+When the first-ranked job has a free eligible place but waits for cores or
+memory, the planner holds its size on one eligible machine. Later work starts
+only in the remainder. It does not interrupt running jobs, reserve every
+machine, or hold room for a job whose places are unavailable for another
+reason. Once jobs already running finish, later smaller jobs cannot keep it
+waiting for room.
+
+Use `runner-up usage` after representative jobs finish. It shows each pool's
+current size, each run's original reservation, and sampled peak cores and
+resident process memory. The initial readers cover host jobs on macOS and
+Linux and tart jobs in macOS guests. Other providers, interrupted readers and
+jobs too short to measure show unavailable or incomplete readings, never
+invented zero use.
+
+Readings sample once a second over the one-job runner's lifetime, including
+its idle time and overhead. Host readings include its process group, not work
+that detaches from that group. Tart readings include all guest processes, so
+simulators started by the guest's system services count too. CPU comes from
+changes in sampled process CPU time; short-lived processes and peaks between
+samples can be missed. Memory is the sum of process RSS: it can count shared
+pages more than once and excludes kernel memory. These are observed samples,
+not hard maxima or a guarantee of available resources.
+
+Compare several representative runs on the same machine/provider, allow
+headroom, then edit the pool's size and restart the coordinator. Runner-up
+does not automatically reduce a size or treat missing readings as evidence.
+It retains one record per finished job in the coordinator's `usage` folder
+for `logKeepDays`, including across restarts. The readings travel with the
+runner's output and are advisory: a job can falsify its output, but cannot
+change its configured reservation through a reading.
 
 ## Macs
 
@@ -396,9 +459,10 @@ A Mac's places are tart places, a fresh clone of a macOS image per job, or a
 host place that runs jobs on the Mac itself.
 
 For each job, a tart place's agent clones the place's image as
-`runner-up-PLACE`, sizes the clone to the place's cores and memory, and starts
-it with no window. The clone sees one folder of the Mac, read-only: the
-runner's release archive and, with the fork guard on, runner-up itself. The
+`runner-up-PLACE`, sizes the clone to the job pool's cores and memory (or the
+place's defaults), and starts it with no window. The clone sees one folder of
+the Mac, read-only: the runner's release archive and runner-up itself, which
+collects resource readings and, unless forks are allowed, runs the fork guard. The
 agent then starts the runner through tart's guest agent (`tart exec`), handing
 it the registration on its input. When the job ends, or its place runner lets
 go, the clone is stopped and deleted.
@@ -545,8 +609,8 @@ cannot read. It allows every other job from the repository itself. Set
   network as the machine does. Use host places only for jobs you trust as
   you trust yourself, and keep the fork guard on. A machine gets one host
   place by default.
-- **A tart clone sees runner-up.** With the fork guard on, a clone's job can
-  read the runner-up program it runs as its guard. It holds no secret.
+- **A tart clone sees runner-up.** A clone's job can read the runner-up
+  program used for resource readings and its fork guard. It holds no secret.
 - **Account places share the machine.** A job account is a standard account
   with no network access to private addresses, but it runs on the machine
   itself, beside its owner. Use Hyper-V places for code you trust less.

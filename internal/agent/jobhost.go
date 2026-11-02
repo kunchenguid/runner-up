@@ -634,7 +634,7 @@ var accountJobScript string
 // accountJobFiles are a job's start script, which unpacks the runner archive
 // zip only when its SHA-256 is sum, and, unless forks are allowed, the fork
 // guard, which runs program's fork-guard command.
-func accountJobFiles(zip, sum, program string, allowForks bool) map[string][]byte {
+func accountJobFiles(zip, sum, program string, allowForks bool, cores, memoryMB int) map[string][]byte {
 	hook := "$env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $dir " + psQuote(guardFile)
 	files := map[string][]byte{}
 	if allowForks {
@@ -643,6 +643,7 @@ func accountJobFiles(zip, sum, program string, allowForks bool) map[string][]byt
 		files[guardFile] = []byte(accountGuardScript(program))
 	}
 	files[startFile] = []byte(strings.NewReplacer(
+		"@CORES@", fmt.Sprint(cores), "@MEMORY_MB@", fmt.Sprint(memoryMB),
 		"@RUNNER_ZIP@", psQuote(zip), "@RUNNER_SHA256@", psQuote(strings.ToUpper(sum)), "@HOOK@", hook,
 	).Replace(accountJobScript))
 	return files

@@ -51,6 +51,9 @@ type PlaceRun struct {
 	LaunchedAt time.Time `json:"launchedAt"`
 	Started    bool      `json:"started"`
 	PID        int       `json:"pid,omitempty"`
+	// Reservation is frozen at launch, so restarts and setup edits cannot
+	// shrink a running job's claim on the machine.
+	Reservation config.Share `json:"reservation,omitempty"`
 	// Unreachable: the place runner could not reach its machine's agent, or
 	// lost it (reach.go).
 	Unreachable bool `json:"unreachable,omitempty"`
@@ -515,8 +518,8 @@ func (s *Service) refreshRunWorkflows(ctx context.Context) {
 
 // Place gives every free place to the job the rules pick, until nothing more
 // fits. It starts a runner for a job only once its place is chosen, and
-// acquires a job GitHub offered only then, so a job no place can take holds
-// nothing.
+// acquires a job GitHub offered only then. The first-ranked job waiting only
+// for resources keeps room in the plan, without acquiring a runner or lock.
 func (s *Service) Place(ctx context.Context) {
 	s.refreshLabels(ctx)
 	s.refreshRunWorkflows(ctx)
@@ -556,6 +559,7 @@ func (s *Service) waitingLocked() []plan.Job {
 		if _, ok := s.sets[setKey(j.Target, j.Pool)]; j.BorrowID == "" && (!ok || j.TakenBack) {
 			continue
 		}
+		j.Size = s.Cfg.PoolSize(j.Pool)
 		if j.BorrowID == "" {
 			j.Estimate = s.timings[j.TimingKey()]
 		}
@@ -576,7 +580,8 @@ func (s *Service) viewsLocked() []plan.PlaceView {
 	places := s.Cfg.Places()
 	out := make([]plan.PlaceView, 0, len(places))
 	for _, p := range places {
-		busy, _ := s.PlaceBusy(p)
+		// Resource fit depends on the job, not the place's fallback size.
+		busy, _ := s.placeBusy(p, false)
 		if !busy && (now.Before(s.cooling[p.ID]) || s.restingLocked(p.Machine)) {
 			busy = true
 		}
@@ -587,15 +592,19 @@ func (s *Service) viewsLocked() []plan.PlaceView {
 
 func share(p config.Place) config.Share { return config.Share{Cores: p.Cores, MemoryMB: p.MemoryMB} }
 
-// headroomLocked is what each counted machine's places may still reserve.
+// headroomLocked is what each counted machine's jobs may still reserve.
 func (s *Service) headroomLocked() map[string]plan.Headroom {
 	out := map[string]plan.Headroom{}
 	for _, m := range s.Cfg.Machines {
-		if m.Cores == 0 {
+		if m.Cores == 0 && m.MemoryMB == 0 {
 			continue
 		}
 		b, used := m.Budget(), s.inUse(m.Name, "")
-		out[m.Name] = plan.Headroom{Cores: b.Cores - used.Cores, MemoryMB: b.MemoryMB - used.MemoryMB, Memory: b.MemoryMB > 0}
+		cores := b.Cores - used.Cores
+		if m.Cores == 0 {
+			cores = int(^uint(0) >> 1)
+		}
+		out[m.Name] = plan.Headroom{Cores: cores, MemoryMB: b.MemoryMB - used.MemoryMB, Memory: b.MemoryMB > 0}
 	}
 	return out
 }
@@ -607,21 +616,43 @@ func (s *Service) inUse(machine, except string) config.Share {
 	used := config.Share{}
 	for _, q := range s.Cfg.Places() {
 		if q.ID != except && q.Machine == machine && s.runnerAlive(q.ID) {
-			used.Cores += q.Cores
-			used.MemoryMB += q.MemoryMB
+			sh := s.Reservation(q)
+			used.Cores += sh.Cores
+			used.MemoryMB += sh.MemoryMB
 		}
 	}
 	return used
 }
 
-// PlaceBusy reads one place. Its own lock says whether its runner or borrow
-// supervisor is alive. On a machine with cores, a place is also busy while its
-// share does not fit beside the machine's other busy places, within the
+// Reservation reads the size held by the running place. Old runners without
+// a snapshot keep the legacy place size.
+func (s *Service) Reservation(p config.Place) config.Share {
+	var run PlaceRun
+	err := config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), &run)
+	if err == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
+		return run.Reservation
+	}
+	if err != nil || run.Reservation.Cores != 0 || run.Reservation.MemoryMB != 0 {
+		// An unknown live reservation must not be mistaken for a smaller
+		// place default. Hold the counted budget until it can be read.
+		b := s.Cfg.Machine(p.Machine).Budget()
+		return config.Share{Cores: max(b.Cores, p.Cores), MemoryMB: max(b.MemoryMB, p.MemoryMB)}
+	}
+	return share(p)
+}
+
+// PlaceBusy reads one place, sized for the pool when checking an assignment.
+// Its own lock says whether its runner or borrow supervisor is alive. A
+// place is also busy while its size does not fit beside the other runs, within the
 // machine's budget less the owner's room. A tart place is
 // also busy while its Mac runs as many macOS VMs as it may (vmlimit.go). A
 // lock that cannot be read counts busy, so a broken reader never starts a
 // second job in a place.
 func (s *Service) PlaceBusy(p config.Place) (bool, string) {
+	return s.placeBusy(p, true)
+}
+
+func (s *Service) placeBusy(p config.Place, resources bool) (bool, string) {
 	held, err := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(p.ID), "busy.lock"))
 	if err != nil {
 		return true, "unreadable"
@@ -633,8 +664,10 @@ func (s *Service) PlaceBusy(p config.Place) (bool, string) {
 		}
 		return true, "job"
 	}
-	if why := s.tight(p); why != "" {
-		return true, why
+	if resources {
+		if why := s.tight(p); why != "" {
+			return true, why
+		}
 	}
 	if why := s.vmLimitFull(p); why != "" {
 		return true, why
@@ -642,11 +675,11 @@ func (s *Service) PlaceBusy(p config.Place) (bool, string) {
 	return false, ""
 }
 
-// tight says why place p's share does not fit beside its machine's other
-// runs, or "" when it fits. A machine without cores always fits.
+// tight says why place p's job size does not fit beside its machine's other
+// runs, or "" when it fits. A machine without a budget always fits.
 func (s *Service) tight(p config.Place) string {
 	m := s.Cfg.Machine(p.Machine)
-	if m.Cores == 0 {
+	if m.Cores == 0 && m.MemoryMB == 0 {
 		return ""
 	}
 	b, used, sh := m.Budget(), s.inUse(p.Machine, p.ID), share(p)
@@ -656,7 +689,7 @@ func (s *Service) tight(p config.Place) string {
 		}
 		return fmt.Sprintf(", %d%s kept for the owner", n, unit)
 	}
-	if used.Cores+sh.Cores > b.Cores {
+	if b.Cores > 0 && used.Cores+sh.Cores > b.Cores {
 		return fmt.Sprintf("cores %d of %d in use%s", used.Cores, b.Cores, room(m.RoomCores, ""))
 	}
 	if b.MemoryMB > 0 && used.MemoryMB+sh.MemoryMB > b.MemoryMB {
@@ -719,8 +752,9 @@ func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 	name := fmt.Sprintf("runner-up-%s-%d", p.ID, now.Unix())
 	jit, runnerID, err := set.GenerateJIT(ctx, name, p.RunnerWorkFolder())
 	if err == nil {
+		os.Remove(filepath.Join(s.Cfg.PlaceDir(p.ID), "usage.json"))
 		run := PlaceRun{RunnerName: name, RunnerID: runnerID, Target: j.Target, Pool: j.Pool, Repo: j.Repo,
-			RequestID: j.RequestID, JobName: j.Name, LaunchedAt: now}
+			RequestID: j.RequestID, JobName: j.Name, LaunchedAt: now, Reservation: share(p)}
 		if err = config.WriteJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), run); err == nil {
 			err = s.launcher.Launch(p, j.Pool, lock, jit)
 		}
@@ -818,6 +852,7 @@ func (s *Service) Tidy(ctx context.Context) {
 	}
 	s.stopIdleLocked(ctx)
 	pruneLogs(s.Cfg.LogsDir(), s.now().Add(-time.Duration(s.Cfg.LogKeepDays)*24*time.Hour))
+	pruneLogs(usageDir(s.Cfg), s.now().Add(-time.Duration(s.Cfg.LogKeepDays)*24*time.Hour))
 }
 
 // runnerGone says a removal found no such runner at GitHub.
@@ -910,6 +945,9 @@ func (s *Service) retireLocked(p config.Place) {
 			}
 		}
 		s.saveLocked()
+	}
+	if err := s.recordUsage(p, run); err != nil {
+		s.Log.Warn("could not retain resource readings", "place", p.ID, "err", err)
 	}
 	os.Rename(path, filepath.Join(dir, "last-place.json"))
 }

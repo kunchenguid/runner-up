@@ -43,7 +43,7 @@ func hypervPipe(place string) string   { return `\\.\pipe\runner-up-` + place }
 
 // hypervSeed is the place's cloud-init seed: no secret, since the
 // registration comes later over the serial port.
-func hypervSeed(place, arch string, allowForks bool, now time.Time) (map[string][]byte, error) {
+func hypervSeed(place, arch string, allowForks bool, now time.Time, size config.Share) (map[string][]byte, error) {
 	sum, ok := runnerSHA256["linux-"+arch]
 	if !ok {
 		return nil, fmt.Errorf("no runner release for %s", arch)
@@ -52,6 +52,7 @@ func hypervSeed(place, arch string, allowForks bool, now time.Time) (map[string]
 		"@RUNNER_URL@", runnerURL(runnerTarballName(arch)),
 		"@RUNNER_SHA256@", sum,
 		"@ALLOW_FORKS@", strconv.FormatBool(allowForks),
+		"@CORES@", strconv.Itoa(size.Cores), "@MEMORY_MB@", strconv.Itoa(size.MemoryMB),
 	).Replace(hypervGuest)
 	user := "#cloud-config\n" +
 		"users:\n" +

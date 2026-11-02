@@ -3,12 +3,13 @@
 // the machine itself.
 //
 // One coordinator holds a scale set session per repository or organization
-// and pool, and hears of every waiting job. Jobs wait at GitHub and hold
-// nothing. When a place is free, the coordinator picks the job its order
+// and pool, and hears of every waiting job. Jobs wait at GitHub without a
+// runner; the first job waiting only for resources keeps room in the plan.
+// When a place is free, the coordinator picks the job its order
 // rules pick (internal/plan), and only then acquires it and starts a runner
 // for it in that place: it runs the place's machine's agent over SSH
 // (internal/coordinator), which makes the container or virtual machine, runs
-// the one job and removes it (internal/agent). A place's share of its
+// the one job and removes it (internal/agent). The job's reservation of its
 // machine's cores and memory counts while its runner lives, within the
 // machine's budget less the room kept for its owner.
 //
@@ -49,6 +50,7 @@ Setting up:
 Running:
   serve         run the coordinator
   status        show each place and the waiting jobs
+  usage         show finished jobs' sampled use beside their pool sizes
   borrow        borrow a tart place: --pool LABEL --label TEXT --minutes N -- COMMAND
 
 On each machine (run by the coordinator):
@@ -85,7 +87,7 @@ func Main() {
 	case "version":
 		fmt.Println(version.Version)
 		return
-	case "serve", "status", "check-config", "run-place", "run-borrow", "borrow", "init", "machine":
+	case "serve", "status", "usage", "check-config", "run-place", "run-borrow", "borrow", "init", "machine":
 		if err := proc.CoordinatorRuns(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -133,6 +135,8 @@ func Main() {
 		os.Exit(coordinator.RunPlace(cfg, *placeID, *pool))
 	case "status":
 		os.Exit(status(cfg, os.Stdout))
+	case "usage":
+		os.Exit(usageReport(cfg, os.Stdout))
 	case "check-config":
 		os.Exit(checkConfig(cfg, os.Stdout))
 	}
@@ -262,6 +266,17 @@ func status(cfg *config.Config, w io.Writer) int {
 	saved := config.ReadJSON(filepath.Join(cfg.StateDir, "state.json"), &st) == nil
 	for _, p := range cfg.Places() {
 		busy, why := svc.PlaceBusy(p)
+		if len(p.Pools) > 0 {
+			busy, why = svc.PlaceBusy(cfg.SizePlace(p, p.Pools[0]))
+		}
+		if busy {
+			for _, pool := range p.Pools {
+				if occupied, _ := svc.PlaceBusy(cfg.SizePlace(p, pool)); !occupied {
+					busy, why = false, ""
+					break
+				}
+			}
+		}
 		state := "free"
 		if busy {
 			state = "busy (" + why + ")"
@@ -279,6 +294,10 @@ func status(cfg *config.Config, w io.Writer) int {
 			if run.BorrowID != "" {
 				job = fmt.Sprintf(": borrow %q since %s", run.JobName, run.LaunchedAt.Local().Format(time.RFC3339))
 			}
+		}
+		if why == "job" || why == "borrow" {
+			sh := svc.Reservation(p)
+			p.Cores, p.MemoryMB = sh.Cores, sh.MemoryMB
 		}
 		fmt.Fprintf(w, "place %s on %s (%s, %d cores, %d MB) %s%s\n", p.ID, p.Machine, p.Provider, p.Cores, p.MemoryMB, state, job)
 	}
@@ -303,6 +322,50 @@ func checkConfig(cfg *config.Config, w io.Writer) int {
 	for _, m := range cfg.Machines {
 		fmt.Fprintln(w, machineLine(m))
 	}
+	for _, p := range cfg.Pools {
+		if p.Cores > 0 {
+			fmt.Fprintf(w, "pool %s: each job reserves %d cores, %d MB; overrides place sizes\n", p.Label, p.Cores, p.MemoryMB)
+		}
+	}
+	return 0
+}
+
+func usageReport(cfg *config.Config, w io.Writer) int {
+	records, err := coordinator.ReadUsage(cfg)
+	if err != nil {
+		fmt.Fprintln(w, "could not read resource readings:", err)
+		return 1
+	}
+	fmt.Fprintln(w, "Sampled peaks, not guaranteed maxima; CPU is cores, memory is summed process RSS in MB.")
+	fmt.Fprintln(w, "Host groups can miss detached work; guest readings include all guest processes. Allow headroom before changing a size.")
+	for _, p := range cfg.Pools {
+		if p.Cores > 0 {
+			fmt.Fprintf(w, "pool %s: configured %d cores, %d MB\n", p.Label, p.Cores, p.MemoryMB)
+		} else {
+			fmt.Fprintf(w, "pool %s: uses each place's size\n", p.Label)
+		}
+		n := 0
+		for _, r := range records {
+			if r.Pool != p.Label {
+				continue
+			}
+			n++
+			fmt.Fprintf(w, "  %s %s/%s reserved %d cores, %d MB: ", r.StartedAt.Local().Format(time.RFC3339), r.Machine, r.Provider, r.Reservation.Cores, r.Reservation.MemoryMB)
+			if r.Usage == nil {
+				fmt.Fprintln(w, "readings unavailable")
+				continue
+			}
+			u := r.Usage
+			fmt.Fprintf(w, "peak %.2f cores, %.1f MB (%s, %d samples, %.1fs", u.PeakCores, u.PeakMemoryMB, u.Scope, u.Samples, u.Seconds)
+			if u.Incomplete {
+				fmt.Fprint(w, ", incomplete")
+			}
+			fmt.Fprintln(w, ")")
+		}
+		if n == 0 {
+			fmt.Fprintln(w, "  no finished-job readings yet")
+		}
+	}
 	return 0
 }
 
@@ -321,21 +384,25 @@ func machineLine(m config.Machine) string {
 		total.MemoryMB += p.MemoryMB
 	}
 	line := fmt.Sprintf("%s (%s): %s", m.Name, where, strings.Join(shares, ", "))
-	if m.Cores == 0 {
+	if m.Cores == 0 && m.MemoryMB == 0 {
 		return line + "; nothing counted"
 	}
 	b := m.Budget()
 	fit := "all at once"
-	if total.Cores > b.Cores || b.MemoryMB > 0 && total.MemoryMB > b.MemoryMB {
+	if b.Cores > 0 && total.Cores > b.Cores || b.MemoryMB > 0 && total.MemoryMB > b.MemoryMB {
 		fit = "not all at once"
 	}
 	if tart := countProvider(m, config.ProviderTart); tart > agent.MacOSVMLimit {
 		fit += fmt.Sprintf("; its %d tart places take turns, since macOS runs at most %d VMs at once", tart, agent.MacOSVMLimit)
 	}
-	line += fmt.Sprintf("; places may reserve %d of %d cores", b.Cores, m.Cores)
-	if m.MemoryMB > 0 {
-		line += fmt.Sprintf(" and %d of %d MB", b.MemoryMB, m.MemoryMB)
+	var counted []string
+	if m.Cores > 0 {
+		counted = append(counted, fmt.Sprintf("%d of %d cores", b.Cores, m.Cores))
 	}
+	if m.MemoryMB > 0 {
+		counted = append(counted, fmt.Sprintf("%d of %d MB", b.MemoryMB, m.MemoryMB))
+	}
+	line += "; places may reserve " + strings.Join(counted, " and ")
 	return line + ", " + fit
 }
 

@@ -493,6 +493,9 @@ func (e *e2e) noSecrets(jits []string) {
 	}
 }
 
+// Intent (the design and RUU-28): the real coordinator/agent journey keeps
+// its runner through a restart, hands registration only on stdin, and gives
+// the job its configured size and fork guard.
 func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	e := newE2E(t)
 	job := verifyJob(t)
@@ -525,9 +528,11 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	}
 	docker := e.lines(filepath.Join(e.dir, "docker", "docker.log"))
 	hook := filepath.Join(e.dir, "machine", "runner-up", "agent", "places", "box-1", "fork-guard.sh")
+	place := e.cfg.Places()[0]
 	wantDocker := "run --rm --name runner-up-box-1 --label runner-up.place=box-1 --cpus 2 --memory 4096m" +
 		" -e ACTIONS_RUNNER_INPUT_JITCONFIG -v " + runnerUp(t) + ":/opt/runner-up/runner-up:ro -v " + hook +
 		":/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh" +
+		fmt.Sprintf(" -e RUNNER_UP_CORES=%d -e RUNNER_UP_MEMORY_MB=%d", place.Cores, place.MemoryMB) +
 		" --entrypoint /home/runner/run.sh " + agent.DefaultDockerImage
 	if !slices.Contains(docker, wantDocker) {
 		t.Errorf("docker ran %q, want %q among them", docker, wantDocker)

@@ -19,7 +19,7 @@ import (
 
 // tartProvider runs each job in a new tart clone of the place's macOS image,
 // deleted after the job. The clone sees one folder of its Mac, read-only: the
-// runner's release archive and, with the fork guard on, this program. Its
+// runner's release archive and this program for readings and the fork guard. Its
 // guest agent runs the runner with `tart exec`, which hands it the one-time
 // registration on its input, never in a command line. tart is the program its
 // makers publish; runner-up only runs it.
@@ -44,17 +44,18 @@ const (
 	tartGuestShare = "/Volumes/My Shared Files/" + tartShareName
 )
 
-// tartScript runs in the clone as its guest agent's user. Its input's first
-// line is the registration. It copies the runner, and with the fork guard on
-// this program, out of the shared folder, which macOS mounts once the clone's
-// user has signed in, and starts the runner with the guard as its
-// job-started hook. The runner runs the hook's path unquoted, so the guard
-// lives in the home folder, never under the shared folder's spaces. A second
-// argument is the place's tool cache in the clone.
+// tartScript runs in the clone as its guest agent's user. It leaves the
+// registration on stdin for the resource reader and copies the runner and
+// this program out of the shared folder, which macOS mounts once the clone's
+// user has signed in. It
+// starts the runner under the resource reader, with the fork guard as its
+// job-started hook unless forks are allowed. The runner runs that hook's path
+// unquoted, so it lives in the home folder, not under the share's spaces.
+// Arguments are the share, tool cache, cores, memory MB and allowForks.
 const tartScript = `set -eu
-IFS= read -r jit
 share=$1
 if [ -n "${2:-}" ]; then export RUNNER_TOOL_CACHE="$2"; fi
+export RUNNER_UP_CORES="$3" RUNNER_UP_MEMORY_MB="$4"
 i=0
 until [ -r "$share/runner.tar.gz" ]; do
   i=$((i+1)); [ "$i" -le 120 ] || { echo "the shared folder never appeared in the clone" >&2; exit 1; }
@@ -63,18 +64,16 @@ done
 rm -rf "$HOME/actions-runner" "$HOME/.runner-up"
 mkdir -p "$HOME/actions-runner"
 tar xzf "$share/runner.tar.gz" -C "$HOME/actions-runner"
-if [ -e "$share/runner-up" ]; then
-  mkdir -p "$HOME/.runner-up"
-  cp "$share/runner-up" "$HOME/.runner-up/runner-up"
-  chmod 0755 "$HOME/.runner-up/runner-up"
+mkdir -p "$HOME/.runner-up"
+cp "$share/runner-up" "$HOME/.runner-up/runner-up"
+chmod 0755 "$HOME/.runner-up/runner-up"
+if [ "$5" = false ]; then
   printf '#!/bin/bash\nexec %s fork-guard\n' "$HOME/.runner-up/runner-up" > "$HOME/.runner-up/fork-guard.sh"
   chmod 0755 "$HOME/.runner-up/fork-guard.sh"
   export ACTIONS_RUNNER_HOOK_JOB_STARTED="$HOME/.runner-up/fork-guard.sh"
 fi
 cd "$HOME/actions-runner"
-export ACTIONS_RUNNER_INPUT_JITCONFIG="$jit"
-unset jit
-exec ./run.sh
+exec "$HOME/.runner-up/runner-up" agent measure -- ./run.sh
 `
 
 func (tartProvider) shareDir(a *AgentRun) string { return filepath.Join(a.Dir(), "share") }
@@ -114,10 +113,9 @@ func (p tartProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 	if err := linkOrCopy(tarball, filepath.Join(share, "runner.tar.gz")); err != nil {
 		return err
 	}
-	if !a.AllowForks {
-		if err := linkOrCopy(a.Self, filepath.Join(share, "runner-up")); err != nil {
-			return err
-		}
+	// The guest uses this program for readings even when the fork guard is off.
+	if err := linkOrCopy(a.Self, filepath.Join(share, "runner-up")); err != nil {
+		return err
 	}
 	vm := CloneName(a.Place)
 	if err := waitForVMSlot(ctx, vm, a.BootTimeout, out); err != nil {
@@ -175,7 +173,7 @@ func (p tartProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 		case <-jobCtx.Done():
 		}
 	}()
-	cmd := exec.Command("tart", "exec", "-i", vm, "/bin/bash", "-c", tartScript, "runner-up", tartGuestShare, a.ToolCache)
+	cmd := exec.Command("tart", "exec", "-i", vm, "/bin/bash", "-c", tartScript, "runner-up", tartGuestShare, a.ToolCache, strconv.Itoa(a.Cores), strconv.Itoa(a.MemoryMB), strconv.FormatBool(a.AllowForks))
 	cmd.Stdin = strings.NewReader(jit + "\n")
 	cmd.Stdout, cmd.Stderr = out, out
 	// Once tart exec has ended, its output is not waited for.

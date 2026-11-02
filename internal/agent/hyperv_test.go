@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/runner-up/internal/config"
 )
 
 func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
@@ -29,7 +31,7 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 	if err != nil {
 		t.Skip("no bsdtar to read the disc with")
 	}
-	seed, err := hypervSeed("win-pc-1", "x64", false, time.Unix(1793230000, 0))
+	seed, err := hypervSeed("win-pc-1", "x64", false, time.Unix(1793230000, 0), config.Share{Cores: 4, MemoryMB: 8192})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,7 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 }
 
 func TestSeedHoldsNoSecretAndPinsTheRunner(t *testing.T) {
-	seed, err := hypervSeed("win-pc-1", "x64", false, time.Unix(1793230000, 0))
+	seed, err := hypervSeed("win-pc-1", "x64", false, time.Unix(1793230000, 0), config.Share{Cores: 4, MemoryMB: 8192})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +99,7 @@ func TestSeedHoldsNoSecretAndPinsTheRunner(t *testing.T) {
 	if !strings.Contains(string(seed["meta-data"]), "instance-id: runner-up-win-pc-1-") {
 		t.Errorf("meta-data is %q", seed["meta-data"])
 	}
-	forks, _ := hypervSeed("win-pc-1", "x64", true, time.Unix(1793230000, 0))
+	forks, _ := hypervSeed("win-pc-1", "x64", true, time.Unix(1793230000, 0), config.Share{Cores: 4, MemoryMB: 8192})
 	m = regexp.MustCompile(`(?m)^    content: (\S+)$`).FindStringSubmatch(string(forks["user-data"]))
 	if g, _ := base64.StdEncoding.DecodeString(m[1]); !bytes.Contains(g, []byte(`ALLOW_FORKS = "true" == "true"`)) {
 		t.Errorf("a place that allows forks still runs the fork guard")

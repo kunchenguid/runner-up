@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -67,6 +68,12 @@ type AgentRun struct {
 
 func (a *AgentRun) Dir() string { return filepath.Join(a.StateDir, "places", a.Place) }
 
+// SizeEnv lets jobs on uncapped host places keep their workers within their
+// reservation, and tells jobs in containers and VMs the same configured size.
+func (a *AgentRun) SizeEnv() []string {
+	return []string{"RUNNER_UP_CORES=" + strconv.Itoa(a.Cores), "RUNNER_UP_MEMORY_MB=" + strconv.Itoa(a.MemoryMB)}
+}
+
 func providerFor(name string) (provider, error) {
 	switch name {
 	case config.ProviderDocker:
@@ -91,6 +98,8 @@ func AgentMain(args []string) int {
 		return 2
 	}
 	switch args[0] {
+	case "measure":
+		return MeasureMain(args[1:])
 	case "probe":
 		b, _ := json.MarshalIndent(probe(), "", "  ")
 		fmt.Println(string(b))

@@ -44,6 +44,8 @@ type Job struct {
 	HeardAt time.Time `json:"heardAt,omitempty"`
 
 	// Filled in before planning, never saved.
+	// Size is the pool's size, or zero to use each place's legacy size.
+	Size config.Share `json:"-"`
 	// Estimate is a borrow's declared duration, or a job's last successful wall
 	// time from runner assignment to finish; zero for a job with no successful run.
 	Estimate time.Duration `json:"-"`
@@ -144,10 +146,12 @@ func fifo(a, b Job) bool {
 }
 
 // Plan gives free places to waiting jobs. Jobs are taken in rank order; each
-// takes a free place serving its pool whose share fits what its machine has
-// left, preferring the least-busy machine, then the order places are listed
-// in. No running job is interrupted, and a job no place can take holds
-// nothing, so a smaller job behind it may take a place it cannot.
+// takes a free place serving its pool whose job size fits what its machine
+// has left, preferring the least-busy machine, then the order places are
+// listed in. When a job waits only for room, it keeps its size on one eligible
+// machine. Later jobs use only the remainder; no running job is interrupted.
+// Jobs without a free eligible place (or with an unavailable VM slot) hold
+// nothing. Each machine keeps room for only its first such waiting job.
 func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules []Rule, now time.Time) []Assignment {
 	jobs := Rank(waiting, rules, now)
 	left := map[string]Headroom{}
@@ -164,13 +168,23 @@ func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules
 		}
 	}
 	var out []Assignment
+	held := map[string]bool{}
 	for _, j := range jobs {
-		best := -1
+		best, blocked := -1, -1
+		size := func(p PlaceView) config.Share {
+			if j.Size.Cores > 0 {
+				return j.Size
+			}
+			return p.share()
+		}
 		for i, p := range free {
 			if !slices.Contains(p.Pools, j.Pool) || j.BorrowID != "" && p.Provider != config.ProviderTart {
 				continue
 			}
-			if h, ok := left[p.Machine]; ok && !h.fits(p.share()) {
+			if h, ok := left[p.Machine]; ok && !h.fits(size(p)) {
+				if !held[p.Machine] && (blocked < 0 || busy[p.Machine] < busy[free[blocked].Machine]) {
+					blocked = i
+				}
 				continue
 			}
 			if best < 0 || busy[p.Machine] < busy[free[best].Machine] {
@@ -178,13 +192,20 @@ func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules
 			}
 		}
 		if best < 0 {
+			if blocked >= 0 {
+				p := free[blocked]
+				left[p.Machine] = left[p.Machine].less(size(p))
+				held[p.Machine] = true
+			}
 			continue
 		}
 		p := free[best]
+		sh := size(p)
+		p.Cores, p.MemoryMB = sh.Cores, sh.MemoryMB
 		free = append(free[:best:best], free[best+1:]...)
 		busy[p.Machine]++
 		if h, ok := left[p.Machine]; ok {
-			left[p.Machine] = h.less(p.share())
+			left[p.Machine] = h.less(sh)
 		}
 		out = append(out, Assignment{Job: j, Place: p.Place})
 	}
