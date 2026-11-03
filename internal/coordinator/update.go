@@ -322,7 +322,9 @@ mv -f runner-up.new runner-up`
 
 // windowsAgentCopy is unixAgentCopy for Windows PowerShell, in the runner
 // account's %LOCALAPPDATA%. It prints the program's path. A program of the
-// same version already there may be running jobs, and stays.
+// same version already there may be running jobs, and stays. It hashes with
+// .NET, not Get-FileHash, which Windows PowerShell fails to load when it
+// inherits PowerShell 7's module path.
 const windowsAgentCopy = `$ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:LOCALAPPDATA 'runner-up\@VERSION@'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -331,9 +333,13 @@ $exe = Join-Path $dir 'runner-up.exe'
 $in = [Console]::OpenStandardInput()
 $out = [IO.File]::Create($new)
 try { $in.CopyTo($out) } finally { $out.Close() }
-$sum = (Get-FileHash -Algorithm SHA256 -LiteralPath $new).Hash.ToLowerInvariant()
+function Get-Sum([string]$path) {
+    $f = [IO.File]::OpenRead($path)
+    try { [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($f)).Replace('-', '').ToLowerInvariant() } finally { $f.Close() }
+}
+$sum = Get-Sum $new
 if ($sum -ne '@SHA256@') { Remove-Item -LiteralPath $new; throw "the copy's SHA-256 is $sum, not the release's" }
-if ((Test-Path -LiteralPath $exe) -and (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant() -eq $sum) {
+if ((Test-Path -LiteralPath $exe) -and (Get-Sum $exe) -eq $sum) {
     Remove-Item -LiteralPath $new
 } else {
     Move-Item -Force -LiteralPath $new -Destination $exe

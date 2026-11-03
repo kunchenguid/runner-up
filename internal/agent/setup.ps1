@@ -48,13 +48,17 @@ function Set-RunnerUpAcl([string]$path, [object[]]$entries) {
 # job runs, so the service runs on until it restarts as the new one.
 $version = (& $source version | Out-String).Trim()
 if ($version -notmatch '^[0-9A-Za-z.+-]+$') { throw "$source did not say its version." }
-$sum = (Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash.ToLowerInvariant()
+function Get-RunnerUpSum([string]$path) {
+    $f = [IO.File]::OpenRead($path)
+    try { [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($f)).Replace('-', '').ToLowerInvariant() } finally { $f.Close() }
+}
+$sum = Get-RunnerUpSum $source
 New-Item -ItemType Directory -Force -Path $programDir | Out-Null
 Set-RunnerUpAcl $programDir @(@($system, 'FullControl'), @($admins, 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))
 $installDir = Join-Path $programDir ($version + '-' + $sum.Substring(0, 12))
 $program = Join-Path $installDir 'runner-up.exe'
 function Test-RunnerUpCopy([string]$path) {
-    (Test-Path -LiteralPath $path) -and (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -eq $sum
+    (Test-Path -LiteralPath $path) -and (Get-RunnerUpSum $path) -eq $sum
 }
 if (-not (Test-RunnerUpCopy $program)) {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
