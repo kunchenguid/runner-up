@@ -842,8 +842,9 @@ func TestSpareRunnerGivenAJobAsItsJobIsCancelledKeepsRunning(t *testing.T) {
 	// The second job starts on the runner and ends; the place frees.
 	e.startJob(pid)
 	e.eventually("the place runner sees the job start", func() bool { run, ok := e.placeRun(); return ok && run.Started })
-	e.actions.send(scaleset.JobStarted{RunnerID: 1, RunnerName: run.RunnerName,
-		JobMessageBase: jobMessage(other, scaleset.MessageTypeJobStarted)})
+	started := jobMessage(other, scaleset.MessageTypeJobStarted)
+	started.RunnerAssignTime = time.Now().UTC()
+	e.actions.send(scaleset.JobStarted{RunnerID: 1, RunnerName: run.RunnerName, JobMessageBase: started})
 	e.eventually("the coordinator hears the second job started", func() bool {
 		return strings.Contains(e.logs(), `msg="job started" repo=octo-org/app job=affected-journeys`)
 	})
