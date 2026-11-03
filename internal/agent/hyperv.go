@@ -44,16 +44,10 @@ func hypervPipe(place string) string   { return `\\.\pipe\runner-up-` + place }
 // hypervSeed is the place's cloud-init seed: no secret, since the
 // registration comes later over the serial port.
 func hypervSeed(place, arch string, allowForks bool, now time.Time, size config.Share) (map[string][]byte, error) {
-	sum, ok := runnerSHA256["linux-"+arch]
-	if !ok {
-		return nil, fmt.Errorf("no runner release for %s", arch)
+	guest, err := linuxGuest(arch, allowForks, size)
+	if err != nil {
+		return nil, err
 	}
-	guest := strings.NewReplacer(
-		"@RUNNER_URL@", runnerURL(runnerTarballName(arch)),
-		"@RUNNER_SHA256@", sum,
-		"@ALLOW_FORKS@", strconv.FormatBool(allowForks),
-		"@CORES@", strconv.Itoa(size.Cores), "@MEMORY_MB@", strconv.Itoa(size.MemoryMB),
-	).Replace(hypervGuest)
 	user := "#cloud-config\n" +
 		"users:\n" +
 		"  - name: runner\n" +
@@ -71,6 +65,22 @@ func hypervSeed(place, arch string, allowForks bool, now time.Time, size config.
 		"  - [/usr/bin/python3, /opt/runner-up/guest.py]\n"
 	meta := fmt.Sprintf("instance-id: runner-up-%s-%d\nlocal-hostname: runner-up-%s\n", place, now.UnixNano(), place)
 	return map[string][]byte{"user-data": []byte(user), "meta-data": []byte(meta)}, nil
+}
+
+// linuxGuest is runner-up's guest program for a Linux guest of arch, filled
+// in for one job: the pinned runner, the fork guard unless allowForks, and the
+// job's size. It holds no secret.
+func linuxGuest(arch string, allowForks bool, size config.Share) (string, error) {
+	sum, ok := runnerSHA256["linux-"+arch]
+	if !ok {
+		return "", fmt.Errorf("no runner release for %s", arch)
+	}
+	return strings.NewReplacer(
+		"@RUNNER_URL@", runnerURL(runnerTarballName(arch)),
+		"@RUNNER_SHA256@", sum,
+		"@ALLOW_FORKS@", strconv.FormatBool(allowForks),
+		"@CORES@", strconv.Itoa(size.Cores), "@MEMORY_MB@", strconv.Itoa(size.MemoryMB),
+	).Replace(hypervGuest), nil
 }
 
 // hypervCreateScript makes the place's VM in dir, whose seed disc the agent

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -224,5 +225,68 @@ func TestPullRequestLabelsComeOnlyFromTheRepository(t *testing.T) {
 		if len(got[ref]) != 0 {
 			t.Errorf("the fork's pull request labeled %s: %v", ref, got[ref])
 		}
+	}
+}
+
+// Intent (DOP-251's approved plan, direction A: "guests in the shared budget,
+// ranked last"). last:NAME puts a pool's jobs behind every other job, so Linux
+// guests sharing a Mac's budget never take the room a waiting Mac job needs:
+// that job either starts or keeps its room first, and the guests use only
+// what is left. The 14-core budget, 12-core Mac pool and 2-core guests are
+// the plan's own figures for the Mac mini.
+func TestLastPoolLeavesRoomForOtherJobsFirst(t *testing.T) {
+	mini := func(order ...string) *config.Config {
+		cfg := onePlace(t.TempDir(), order...)
+		cfg.Pools[0].Cores, cfg.Pools[0].MemoryMB = 2, 8192
+		cfg.Pools[1].Cores, cfg.Pools[1].MemoryMB = 12, 32768
+		m := &cfg.Machines[0]
+		m.Cores, m.RoomCores = 22, 8
+		m.Places = []config.Place{
+			{ID: "mac", Provider: config.ProviderTart, Image: "ci-base", Pools: []string{"ru-large"}, Cores: 12, MemoryMB: 32768},
+			{ID: "guest-1", Provider: config.ProviderContainer, Image: "runner-up-linux", Pools: []string{"ru-linux"}, Cores: 2, MemoryMB: 8192},
+			{ID: "guest-2", Provider: config.ProviderContainer, Image: "runner-up-linux", Pools: []string{"ru-linux"}, Cores: 2, MemoryMB: 8192},
+		}
+		return cfg
+	}
+	// Every job waits while the places are busy, then they free together.
+	place := func(cfg *config.Config) *harness {
+		f := loadFixture(t, "waiting-jobs.json")
+		var busy []*os.File
+		for _, id := range []string{"mac", "guest-1", "guest-2"} {
+			busy = append(busy, occupy(t, cfg, id))
+		}
+		h := newHarness(t, cfg, newFakeLauncher(), map[string]*fakeSet{})
+		h.now = f.Now
+		h.feed(f)
+		for _, b := range busy {
+			b.Close()
+		}
+		h.svc.Place(context.Background())
+		return h
+	}
+
+	// Without the rule the older Linux jobs take both guests first, and the
+	// 12-core publish no longer fits beside their 4 cores.
+	h := place(mini("waited:60m", "shortest"))
+	h.want(map[string]string{"guest-1": verify, "guest-2": pr184})
+
+	// With it publish starts first, and one guest takes the 2 cores left.
+	h = place(mini("last:ru-linux", "waited:60m", "shortest"))
+	h.want(map[string]string{"mac": publish, "guest-1": verify})
+	h.launcher.finish(t, "mac")
+	h.launcher.finish(t, "guest-1")
+}
+
+// A last rule naming a pool the setup does not have would order nothing, so
+// the setup is refused, as with pool:.
+func TestLastRuleMustNameAPoolOfTheSetup(t *testing.T) {
+	if err := onePlace(t.TempDir(), "last:ru-linux").Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := onePlace(t.TempDir(), "last:ru-linx").Validate(); err == nil || !strings.Contains(err.Error(), `"last:ru-linx"`) {
+		t.Fatalf("a last rule for a misspelled pool: %v", err)
+	}
+	if _, err := plan.ParseOrder([]string{"last:"}); err == nil {
+		t.Error("a last rule naming no pool was accepted")
 	}
 }

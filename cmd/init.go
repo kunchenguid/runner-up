@@ -113,8 +113,8 @@ func machineAddMain(args []string) int {
 	sshDest := fs.String("ssh", "", `the machine for ssh, with any options, such as "ci@box" or "-p 2222 ci@10.0.0.5"; empty is this machine`)
 	agent := fs.String("agent", "", "runner-up's path on the machine; runner-up on its PATH by default")
 	install := fs.String("install", "", "a runner-up build for the machine to copy there when it has none; this program by default when the machine matches it")
-	provider := fs.String("provider", "", "docker or kvm on Linux, tart or host on a Mac, account or hyperv on Windows; docker, tart or account by default")
-	image := fs.String("image", "", "the runner image (docker), the base cloud image's path on the machine (kvm, hyperv), or the tart image to clone (tart)")
+	provider := fs.String("provider", "", "docker or kvm on Linux, tart, host or container on a Mac, account or hyperv on Windows; docker, tart or account by default")
+	image := fs.String("image", "", "the runner image (docker), the base cloud image's path on the machine (kvm, hyperv), the tart image to clone (tart), or the Linux image guests start from (container)")
 	hvSwitch := fs.String("switch", "", "the Hyper-V switch a hyperv place joins; the Default Switch by default")
 	places := fs.Int("places", 0, "how many places; as many as the budget fits by default, at most 2 tart places and 1 host place")
 	cores := fs.Int("place-cores", 0, "cores each place gets; 4 for tart, 2 otherwise")
@@ -194,7 +194,7 @@ func addMachine(cfg *config.Config, m config.Machine, pr agent.Probe, o placeOpt
 			o.Provider = config.ProviderTart
 		}
 		if o.Provider == config.ProviderDocker || o.Provider == config.ProviderKVM {
-			return fmt.Errorf("%s runs %s; %s places run on Linux machines only: use tart or host", m.Name, pr.OS, o.Provider)
+			return fmt.Errorf("%s runs %s; %s places run on Linux machines only: use tart, host or container", m.Name, pr.OS, o.Provider)
 		}
 	case "windows":
 		m.OS = "windows"
@@ -248,6 +248,13 @@ func addMachine(cfg *config.Config, m config.Machine, pr agent.Probe, o placeOpt
 		}
 		if o.Image == "" {
 			return fmt.Errorf("a KVM place needs --image, the path of a cloud image on %s, such as Ubuntu's noble-server-cloudimg", m.Name)
+		}
+	case config.ProviderContainer:
+		if pr.OS != "darwin" {
+			return fmt.Errorf("%s runs %s; Apple container places run on Macs only", m.Name, pr.OS)
+		}
+		if o.Image == "" {
+			return fmt.Errorf("an Apple container place needs --image, a Linux image on %s with python3 and a user named runner", m.Name)
 		}
 	case config.ProviderDocker:
 		if pr.Docker != "ok" {
