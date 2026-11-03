@@ -18,7 +18,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
-// Intent (DOP-235's approved plan, piece 1): "serve watches its setup file
+// Intent (RUU-36, its approved plan): "serve watches its setup file
 // and waits about a second after a change, because a pull rewrites the file.
 // It runs check-config and applies pools, places, sizes and order in place,
 // without dropping running jobs or open sessions. It keeps the running setup
