@@ -304,7 +304,15 @@ function Expand-Archive { throw "REACHED EXTRACTION" }
 . "` + filepath.Join("docs", "install.ps1") + `"
 `
 				cmd := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", stubs)
-				cmd.Env = append(os.Environ(), "REQUEST_LOG="+log, "ASSET="+archive, "CHECKSUMS="+checksums,
+				// Each shell finds its own modules: a PSModulePath inherited from
+				// PowerShell 7 (as on a CI runner) hides Windows PowerShell's.
+				var env []string
+				for _, kv := range os.Environ() {
+					if !strings.HasPrefix(strings.ToUpper(kv), "PSMODULEPATH=") {
+						env = append(env, kv)
+					}
+				}
+				cmd.Env = append(env, "REQUEST_LOG="+log, "ASSET="+archive, "CHECKSUMS="+checksums,
 					"EFFECTIVE_URL="+tc.effectiveURL, "PROCESSOR_ARCHITECTURE=AMD64", "LOCALAPPDATA="+dir)
 				output, err := cmd.CombinedOutput()
 				if err == nil || !strings.Contains(string(output), tc.want) {
