@@ -53,11 +53,12 @@ type runnerLaunch struct {
 // fork guard's hook file, as its runner sees it, and guard that file's
 // content.
 func (a *AgentRun) launch(hook, guard string) runnerLaunch {
-	l := runnerLaunch{Env: a.SizeEnv()}
+	var l runnerLaunch
 	if !a.AllowForks {
 		l.Hook, l.Guard = hook, guard
-		l.Env = append(l.Env, hookVar+"="+hook)
+		l.Env = []string{hookVar + "=" + hook}
 	}
+	l.Env = append(l.Env, a.SizeEnv()...)
 	return l
 }
 
@@ -89,11 +90,15 @@ func (kvmProvider) launch(a *AgentRun) runnerLaunch {
 }
 
 // tartGuest is where a tart clone keeps runner-up and its hook: in its user's
-// home folder, not under the shared folder's spaces.
-const tartGuest = "$HOME/.runner-up"
+// home folder, not under the shared folder's spaces. The hook runs the
+// runner-up beside it, whatever the runner's home folder is then.
+const (
+	tartGuest = "$HOME/.runner-up"
+	tartGuard = "#!/bin/bash\nexec \"$(dirname \"$0\")/runner-up\" fork-guard\n"
+)
 
 func (tartProvider) launch(a *AgentRun) runnerLaunch {
-	return a.launch(tartGuest+"/fork-guard.sh", ForkGuardHook(tartGuest+"/runner-up"))
+	return a.launch(tartGuest+"/fork-guard.sh", tartGuard)
 }
 
 // A Linux guest - a Hyper-V VM or an Apple container guest - cannot run

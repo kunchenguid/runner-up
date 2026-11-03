@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/kunchenguid/runner-up/internal/quote"
 )
 
 // The fork guard is every runner's job-started hook, so a job from another
@@ -28,10 +30,9 @@ import (
 // repository and is allowed.
 
 // The runner runs a hook by its file extension, so the hook it is given is a
-// two-line script that runs this program's fork-guard command. agent may
-// start with $HOME/, which the hook expands.
+// two-line script that runs this program's fork-guard command.
 func ForkGuardHook(agent string) string {
-	return "#!/bin/bash\nexec " + shellWord(agent) + " fork-guard\n"
+	return "#!/bin/bash\nexec " + quote.ShQuote(agent) + " fork-guard\n"
 }
 
 // forkGuard decides on the event file at path: nil allows the job, an error
