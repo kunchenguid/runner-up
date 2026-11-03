@@ -21,7 +21,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 
 ## Invariants
 
-- A runner's one-time registration reaches it only on standard input or a VM's serial port, never in a file, a command line or an environment variable.
+- A runner's one-time registration travels to its place only on standard input or a VM's serial port, never in a file, a command line, a container's or VM's settings, or any process's environment but the runner's own, where the runner reads `ACTIONS_RUNNER_INPUT_JITCONFIG` and removes it.
 - Every runner starts with the fork guard as its job-started hook unless `allowForkPullRequests` is set.
 - A place is busy exactly while some process holds its lock; running jobs outlive a coordinator stop.
 - Resource reservations: see README.md, "Setup file" and "Borrowing a virtual Mac".

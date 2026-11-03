@@ -248,27 +248,34 @@ exec sh -c "$last"
 `
 
 // The stand-in docker's "container" for a place is the docker run process
-// itself, recorded with its agent in NAME.pid. It prints what a runner prints,
-// and its job starts once go.PID exists and ends once done.PID does; the job
-// is named build unless job.PID names it.
+// itself. What a real docker would keep in the container's settings - its
+// arguments and any runner variable in its own environment, which -e NAME
+// copies - goes to settings, and its image to images. It then runs the
+// container's entrypoint and arguments as given, on docker's own standard
+// input, with the stand-in runner run.sh in place of the image's.
 const fakeDocker = `#!/bin/bash
 d=$E2E_DIR/docker
 printf '%s\n' "$*" >> "$d/docker.log"
 name=${!#}
 case $1 in
 run)
-  for a in "$@"; do [ "$prev" = --name ] && name=$a; prev=$a; done
-  printf '%s\n' "$ACTIONS_RUNNER_INPUT_JITCONFIG" >> "$d/registrations"
-  echo "$$ $PPID" > "$d/$name.pid"
-  echo "√ Connected to GitHub"
-  echo "Listening for Jobs"
-  until [ -e "$d/go.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
-  job=build
-  [ -e "$d/job.$$" ] && job=$(cat "$d/job.$$")
-  echo "Running job: $job"
-  until [ -e "$d/done.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
-  echo "Job $job completed with result: Succeeded"
-  rm -f "$d/$name.pid"
+  printf '%s %s\n' "$*" "$(env | grep '^ACTIONS_RUNNER_')" >> "$d/settings"
+  shift
+  entry= image= args=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+    --name) name=$2; shift ;;
+    --entrypoint) entry=$2; shift ;;
+    --rm|-i) ;;
+    -*) shift ;;
+    *) image=$1; shift; break ;;
+    esac
+    shift
+  done
+  printf '%s\n' "$image" >> "$d/images"
+  for a in "$@"; do [ "$a" = /home/runner/run.sh ] && a=$d/run.sh; args+=("$a"); done
+  export d name
+  exec "$entry" "${args[@]}"
   ;;
 rm)
   if [ -e "$d/$name.pid" ]; then
@@ -282,6 +289,24 @@ rm)
   exit 1
   ;;
 esac
+`
+
+// The stand-in runner records the registration it finds in its variable,
+// then its container in NAME.pid (the docker run process it replaced, and the
+// agent), and prints what a runner prints. Its job starts once go.PID exists
+// and ends once done.PID does; the job is named build unless job.PID names it.
+const fakeRunner = `#!/bin/sh
+printf '%s\n' "$ACTIONS_RUNNER_INPUT_JITCONFIG" >> "$d/registrations"
+echo "$$ $PPID" > "$d/$name.pid"
+echo "√ Connected to GitHub"
+echo "Listening for Jobs"
+until [ -e "$d/go.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
+job=build
+[ -e "$d/job.$$" ] && job=$(cat "$d/job.$$")
+echo "Running job: $job"
+until [ -e "$d/done.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
+echo "Job $job completed with result: Succeeded"
+rm -f "$d/$name.pid"
 `
 
 // e2e is one coordinator setup: a machine reached over (stand-in) SSH with
@@ -308,6 +333,7 @@ func newE2E(t *testing.T) *e2e {
 	}
 	os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(fakeSSH), 0o755)
 	os.WriteFile(filepath.Join(dir, "bin", "docker"), []byte(fakeDocker), 0o755)
+	os.WriteFile(filepath.Join(dir, "docker", "run.sh"), []byte(fakeRunner), 0o755)
 	e.cfg = &config.Config{
 		StateDir:    filepath.Join(dir, "state"),
 		GitHub:      config.GitHub{Repos: []string{"octo-org/app"}},
@@ -564,13 +590,26 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	docker := e.lines(filepath.Join(e.dir, "docker", "docker.log"))
 	hook := filepath.Join(e.dir, "machine", "runner-up", "agent", "places", "box-1", "fork-guard.sh")
 	place := e.cfg.Places()[0]
-	wantDocker := "run --rm --name runner-up-box-1 --label runner-up.place=box-1 --cpus 2 --memory 4096m" +
-		" -e ACTIONS_RUNNER_INPUT_JITCONFIG -v " + runnerUp(t) + ":/opt/runner-up/runner-up:ro -v " + hook +
+	wantDocker := "run --rm -i --name runner-up-box-1 --label runner-up.place=box-1 --cpus 2 --memory 4096m" +
+		" -v " + runnerUp(t) + ":/opt/runner-up/runner-up:ro -v " + hook +
 		":/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh" +
 		fmt.Sprintf(" -e RUNNER_UP_CORES=%d -e RUNNER_UP_MEMORY_MB=%d", place.Cores, place.MemoryMB) +
-		" --entrypoint /home/runner/run.sh " + agent.DefaultDockerImage
+		" --entrypoint /bin/sh " + agent.DefaultDockerImage + ` -c read -r ACTIONS_RUNNER_INPUT_JITCONFIG && export ACTIONS_RUNNER_INPUT_JITCONFIG && exec "$@" runner-up /home/runner/run.sh`
 	if !slices.Contains(docker, wantDocker) {
 		t.Errorf("docker ran %q, want %q among them", docker, wantDocker)
+	}
+	// AGENTS.md: the registration reaches the runner only on standard input.
+	// The runner got it above, yet the container's settings - docker's
+	// arguments and the runner variables docker could copy from its own
+	// environment, all of which docker inspect shows - never held it.
+	settings := e.lines(filepath.Join(e.dir, "docker", "settings"))
+	if len(settings) == 0 || settings[0] == "" {
+		t.Fatal("docker recorded no container settings")
+	}
+	for _, l := range settings {
+		if strings.Contains(l, seen.jits[0]) || strings.Contains(l, "ACTIONS_RUNNER_INPUT_JITCONFIG=") {
+			t.Errorf("the container's settings held the registration: %q", l)
+		}
 	}
 	if b, _ := os.ReadFile(hook); string(b) != agent.ForkGuardHook("/opt/runner-up/runner-up") {
 		t.Errorf("the container's job-started hook is %q", b)
@@ -962,12 +1001,7 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 	if want := []string{agentRun("runner-2604:latest"), agentRun("runner-2404:latest")}; !slices.Equal(runs, want) {
 		t.Errorf("ssh ran the agent as\n%s\nwant\n%s", strings.Join(runs, "\n"), strings.Join(want, "\n"))
 	}
-	var images []string
-	for _, line := range e.lines(filepath.Join(e.dir, "docker", "docker.log")) {
-		if strings.HasPrefix(line, "run ") {
-			images = append(images, line[strings.LastIndex(line, " ")+1:])
-		}
-	}
+	images := e.lines(filepath.Join(e.dir, "docker", "images"))
 	if want := []string{"runner-2604:latest", "runner-2404:latest"}; !slices.Equal(images, want) {
 		t.Errorf("the containers ran images %v, want %v", images, want)
 	}

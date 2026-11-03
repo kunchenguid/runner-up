@@ -51,6 +51,8 @@ func (p hostProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 	if err != nil {
 		return err
 	}
+	// The registration came on the agent's standard input. Only the runner's
+	// environment holds it, in the variable the runner reads and removes.
 	env := append(a.SizeEnv(), "ACTIONS_RUNNER_INPUT_JITCONFIG="+jit, "RUNNER_TOOL_CACHE="+tools)
 	if !a.AllowForks {
 		// The runner runs its job-started hook's path unquoted.
