@@ -1,3 +1,9 @@
+//go:build !windows
+
+// Two processes write one file only on the coordinator's machine, which runs
+// Linux or macOS. Windows refuses a rename onto a file another rename is
+// replacing at that moment, so the case this test covers cannot arise there.
+
 package config
 
 import (
