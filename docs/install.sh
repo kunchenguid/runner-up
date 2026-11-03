@@ -50,6 +50,27 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Downloading runner-up ${VERSION} for ${OS}/${ARCH}..."
 curl -fsSL "$URL" -o "${TMPDIR}/${FILENAME}"
+curl -fsSL "https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt" -o "${TMPDIR}/checksums.txt"
+
+# Install only the archive the release's checksums.txt lists, byte for byte.
+EXPECTED="$(awk -v name="$FILENAME" '$2 == name || $2 == "*" name { print $1; exit }' "${TMPDIR}/checksums.txt")"
+if [ -z "$EXPECTED" ]; then
+  echo "checksums.txt does not list ${FILENAME}; not installing"
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "${TMPDIR}/${FILENAME}" | awk '{ print $1 }')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL="$(shasum -a 256 "${TMPDIR}/${FILENAME}" | awk '{ print $1 }')"
+else
+  echo "Need sha256sum or shasum to check the download; not installing"
+  exit 1
+fi
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "${FILENAME} does not match checksums.txt (got ${ACTUAL}, want ${EXPECTED}); not installing"
+  exit 1
+fi
+
 tar xzf "${TMPDIR}/${FILENAME}" -C "$TMPDIR"
 
 if [ -w "$INSTALL_DIR" ]; then

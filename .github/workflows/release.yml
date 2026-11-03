@@ -53,6 +53,9 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          # Static binaries: a cgo build links the runner's glibc and fails on
+          # older or musl-based Linux.
+          CGO_ENABLED: "0"
           VERSION: ${{ needs.release-please.outputs.version }}
         run: |
           ext=""
