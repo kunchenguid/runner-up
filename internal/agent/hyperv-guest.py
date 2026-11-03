@@ -37,9 +37,11 @@ import urllib.request
 PORT = "/dev/ttyS1"
 RUNNER_URL = "@RUNNER_URL@"
 RUNNER_SHA256 = "@RUNNER_SHA256@"
-ALLOW_FORKS = "@ALLOW_FORKS@" == "true"
+# The runner's launch, as runner-up decides it for every place (launch.go):
+# its variables, and the fork guard's hook file and content, empty when the
+# place allows forks' pull requests.
+LAUNCH = @LAUNCH@
 HOME = "/home/runner"
-HOOK = "/opt/runner-up/fork-guard.sh"
 READY = b"runner-up guest: ready\n"
 
 
@@ -142,9 +144,10 @@ def prepare():
     subprocess.run(["tar", "xzf", tarball, "-C", runner], check=True)
     os.remove(tarball)
     subprocess.run(["chown", "-R", "runner:runner", runner], check=True)
-    with open(HOOK, "w") as f:
-        f.write("#!/bin/bash\nexec /usr/bin/python3 /opt/runner-up/guest.py guard\n")
-    os.chmod(HOOK, 0o755)
+    if LAUNCH["hook"]:
+        with open(LAUNCH["hook"], "w") as f:
+            f.write(LAUNCH["guard"])
+        os.chmod(LAUNCH["hook"], 0o755)
     return runner
 
 
@@ -181,12 +184,9 @@ def runner_env(jit, image=None):
         "LOGNAME": "runner",
         "SHELL": "/bin/bash",
         "LANG": env.get("LANG", "C.UTF-8"),
-        "ACTIONS_RUNNER_INPUT_JITCONFIG": jit,
-        "RUNNER_UP_CORES": "@CORES@",
-        "RUNNER_UP_MEMORY_MB": "@MEMORY_MB@",
     })
-    if not ALLOW_FORKS:
-        env["ACTIONS_RUNNER_HOOK_JOB_STARTED"] = HOOK
+    env.update(LAUNCH["env"])
+    env["ACTIONS_RUNNER_INPUT_JITCONFIG"] = jit
     return env
 
 

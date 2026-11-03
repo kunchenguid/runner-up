@@ -47,7 +47,8 @@ const (
 	ProviderContainer = "container"
 )
 
-var providers = []string{ProviderDocker, ProviderKVM, ProviderTart, ProviderHost, ProviderAccount, ProviderHyperV, ProviderContainer}
+// Providers are every provider's name.
+var Providers = []string{ProviderDocker, ProviderKVM, ProviderTart, ProviderHost, ProviderAccount, ProviderHyperV, ProviderContainer}
 
 // WindowsProviders run on Windows machines, and only there.
 var WindowsProviders = []string{ProviderAccount, ProviderHyperV}
@@ -439,8 +440,8 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("place ids must be unique, set, plain and at most %d characters: %q", MaxPlaceID, p.ID)
 			}
 			ids[p.ID] = true
-			if !slices.Contains(providers, p.Provider) {
-				return fmt.Errorf("place %q: provider must be one of %v", p.ID, providers)
+			if !slices.Contains(Providers, p.Provider) {
+				return fmt.Errorf("place %q: provider must be one of %v", p.ID, Providers)
 			}
 			if win := slices.Contains(WindowsProviders, p.Provider); win != m.Windows() {
 				if win {

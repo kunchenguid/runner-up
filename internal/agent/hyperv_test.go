@@ -22,8 +22,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/kunchenguid/runner-up/internal/config"
 )
 
 func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
@@ -31,7 +29,7 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 	if err != nil {
 		t.Skip("no bsdtar to read the disc with")
 	}
-	seed, err := hypervSeed("win-pc-1", "x64", false, time.Unix(1793230000, 0), config.Share{Cores: 4, MemoryMB: 8192})
+	seed, err := hypervSeed("win-pc-1", "x64", hypervPlaceLaunch(), time.Unix(1793230000, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +66,7 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 }
 
 func TestSeedHoldsNoSecretAndPinsTheRunner(t *testing.T) {
-	seed, err := hypervSeed("win-pc-1", "x64", false, time.Unix(1793230000, 0), config.Share{Cores: 4, MemoryMB: 8192})
+	seed, err := hypervSeed("win-pc-1", "x64", hypervPlaceLaunch(), time.Unix(1793230000, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,23 +85,34 @@ func TestSeedHoldsNoSecretAndPinsTheRunner(t *testing.T) {
 	for _, want := range []string{
 		`RUNNER_URL = "https://github.com/actions/runner/releases/download/v` + runnerVersion + `/actions-runner-linux-x64-` + runnerVersion + `.tar.gz"`,
 		`RUNNER_SHA256 = "` + runnerSHA256["linux-x64"] + `"`,
-		`ALLOW_FORKS = "false" == "true"`,
+		`LAUNCH = ` + guestLaunch(hypervPlaceLaunch()),
 	} {
 		if !bytes.Contains(guest, []byte(want)) {
 			t.Errorf("the guest program lacks %s", want)
 		}
 	}
-	if bytes.Contains(guest, []byte("@RUNNER")) || bytes.Contains(guest, []byte("@ALLOW")) {
+	if regexp.MustCompile(`@[A-Z_0-9]+@`).Match(guest) {
 		t.Errorf("the guest program has a value left unfilled")
 	}
 	if !strings.Contains(string(seed["meta-data"]), "instance-id: runner-up-win-pc-1-") {
 		t.Errorf("meta-data is %q", seed["meta-data"])
 	}
-	forks, _ := hypervSeed("win-pc-1", "x64", true, time.Unix(1793230000, 0), config.Share{Cores: 4, MemoryMB: 8192})
-	m = regexp.MustCompile(`(?m)^    content: (\S+)$`).FindStringSubmatch(string(forks["user-data"]))
-	if g, _ := base64.StdEncoding.DecodeString(m[1]); !bytes.Contains(g, []byte(`ALLOW_FORKS = "true" == "true"`)) {
-		t.Errorf("a place that allows forks still runs the fork guard")
+}
+
+// hypervPlaceLaunch is the launch of a Hyper-V place of 4 cores and 8 GB that runs the fork guard.
+func hypervPlaceLaunch() runnerLaunch {
+	return hypervProvider{}.launch(&AgentRun{Cores: 4, MemoryMB: 8192})
+}
+
+// filledGuest is the guest program as the agent fills it in for a Hyper-V
+// place that runs the fork guard.
+func filledGuest(t *testing.T) string {
+	t.Helper()
+	g, err := linuxGuest("x64", hypervPlaceLaunch())
+	if err != nil {
+		t.Fatal(err)
 	}
+	return g
 }
 
 // fakeGuest plays the VM's side of the serial port: it says it is ready until
@@ -218,7 +227,7 @@ func python(t *testing.T) string {
 func TestGuestForkGuardDecidesLikeRunnerUps(t *testing.T) {
 	py := python(t)
 	guest := filepath.Join(t.TempDir(), "guest.py")
-	os.WriteFile(guest, []byte(hypervGuest), 0o700)
+	os.WriteFile(guest, []byte(filledGuest(t)), 0o700)
 	events, err := filepath.Glob("testdata/events/*")
 	if err != nil || len(events) < 5 {
 		t.Fatalf("events %v %v", events, err)
@@ -263,7 +272,7 @@ func TestGuestForkGuardDecidesLikeRunnerUps(t *testing.T) {
 func TestGuestWaitsForTheRegistrationOnItsSerialPort(t *testing.T) {
 	py := python(t)
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "guest.py"), []byte(hypervGuest), 0o600)
+	os.WriteFile(filepath.Join(dir, "guest.py"), []byte(filledGuest(t)), 0o600)
 	script := `
 import importlib.util, os, sys, threading, time, tty
 spec = importlib.util.spec_from_file_location("guest", sys.argv[1])
@@ -292,7 +301,7 @@ print(g.registration(port))
 func TestGuestRunnerGetsTheImagesEnvironment(t *testing.T) {
 	py := python(t)
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "guest.py"), []byte(hypervGuest), 0o600)
+	os.WriteFile(filepath.Join(dir, "guest.py"), []byte(filledGuest(t)), 0o600)
 	// Ubuntu 24.04's own line, then a job image's.
 	etc := filepath.Join(dir, "environment")
 	os.WriteFile(etc, []byte(`PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"

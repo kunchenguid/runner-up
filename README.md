@@ -324,9 +324,9 @@ machine needs one step first (see [Windows machines](#windows-machines)).
 `~/.local/bin`) when it is missing, reads the machine's cores and memory, and
 checks that its provider works: Docker by default on Linux, tart on a Mac, or
 the one `--provider` names (`docker`, `kvm`, `tart`, `host` or, on a Mac,
-`container` with `--image`). For Apple container places it checks only that
-the machine is a Mac and an image is named, not the tool, service or image's
-readiness; see [What you need](#what-you-need). It copies itself only to a
+`container` with `--image`). For Apple container places it checks that the
+container tool is installed and its service answers, but not the image; see
+[What you need](#what-you-need). It copies itself only to a
 machine of its own system and architecture; for another,
 download runner-up for it from the
 [releases](https://github.com/kunchenguid/runner-up/releases) and pass

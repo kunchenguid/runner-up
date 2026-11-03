@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
-
-	"github.com/kunchenguid/runner-up/internal/config"
 )
 
 type hypervProvider struct{}
@@ -60,7 +58,7 @@ func (p hypervProvider) run(ctx context.Context, a *AgentRun, jit string, out io
 	if err != nil {
 		return err
 	}
-	seed, err := hypervSeed(a.Place, runnerArch(), a.AllowForks, time.Now(), config.Share{Cores: a.Cores, MemoryMB: a.MemoryMB})
+	seed, err := hypervSeed(a.Place, runnerArch(), p.launch(a), time.Now())
 	if err != nil {
 		return err
 	}

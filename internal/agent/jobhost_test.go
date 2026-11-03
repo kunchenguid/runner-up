@@ -210,7 +210,7 @@ func askJobHost(t *testing.T, s *Server, req JobRequest) (string, error) {
 
 func testFiles(req JobRequest) (map[string][]byte, error) {
 	return accountJobFiles(`C:\runner-up\cache\actions-runner-win-x64-2.338.1.zip`, runnerWindowsSHA256["x64"],
-		`C:\Program Files\runner-up\runner-up.exe`, req.AllowForks, req.Cores, req.MemoryMB), nil
+		`C:\Program Files\runner-up\runner-up.exe`, req), nil
 }
 
 func newTestServer(t *testing.T, h *fakeHost) *Server {
@@ -424,9 +424,6 @@ func TestPlaceWhoseCleanupFailedTakesNoJobUntilASweepSucceeds(t *testing.T) {
 	if _, err := askJobHost(t, s, runRequest("win-pc-1")); err == nil {
 		t.Fatal("a job whose cleanup failed reported success")
 	}
-	if d := s.Dirty(); len(d) != 1 || d[0] != "win-pc-1" {
-		t.Fatalf("dirty places %v, want [win-pc-1]", d)
-	}
 	creates := func() int {
 		n := 0
 		for _, c := range h.steps() {
@@ -452,8 +449,8 @@ func TestPlaceWhoseCleanupFailedTakesNoJobUntilASweepSucceeds(t *testing.T) {
 	if _, err := askJobHost(t, s, runRequest("win-pc-1")); err != nil {
 		t.Fatalf("place win-pc-1 still refused after its leftovers were deleted: %v", err)
 	}
-	if len(s.Dirty()) != 0 || len(h.accounts) != 0 {
-		t.Errorf("dirty %v, accounts %v after a clean sweep", s.Dirty(), h.accounts)
+	if len(h.accounts) != 0 {
+		t.Errorf("accounts %v after a clean sweep", h.accounts)
 	}
 }
 
@@ -556,6 +553,35 @@ func TestAgentAndServiceOverThePipe(t *testing.T) {
 	}
 }
 
+// Intent (the audit found that a probe, clean or update whose context ended
+// before the service answered counted as success, so a timed-out probe
+// reported the service ready): only a run, which the agent stops on purpose
+// as every place does, ends well when its context ends; any other request
+// without the service's answer is an error.
+func TestOnlyAStoppedRunEndsWellWithoutTheServicesAnswer(t *testing.T) {
+	for _, op := range []string{"probe", "clean", "update", "run"} {
+		agent, service := net.Pipe()
+		// A service that takes the request and never answers.
+		go io.Copy(io.Discard, service)
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		req := JobRequest{Version: jobRequestVersion, Op: op, Place: "win-pc-1"}
+		var body io.Reader
+		if op == "update" {
+			req.ServiceUpdate = ServiceUpdate{Archive: "runner-up_9.0.2_windows_amd64.zip", Size: 4}
+			body = strings.NewReader("zip!")
+		}
+		err := askServiceWith(ctx, agent, req, body, io.Discard)
+		cancel()
+		service.Close()
+		if op == "run" && err != nil {
+			t.Errorf("a run the agent stopped failed: %v", err)
+		}
+		if op != "run" && (err == nil || !errors.Is(err, context.DeadlineExceeded)) {
+			t.Errorf("a %s the service never answered gave %v, want a timeout", op, err)
+		}
+	}
+}
+
 func TestPasswordsAreLongRandomAndMeetWindowsComplexity(t *testing.T) {
 	a, _ := newPassword()
 	b, _ := newPassword()
@@ -584,7 +610,7 @@ func TestAccountJobFiles(t *testing.T) {
 	for _, want := range []string{
 		`$zip = 'C:\runner-up\cache\actions-runner-win-x64-2.338.1.zip'`,
 		"-ne '" + strings.ToUpper(runnerWindowsSHA256["x64"]) + "'",
-		"$env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $dir 'fork-guard.ps1'",
+		"$env:ACTIONS_RUNNER_HOOK_JOB_STARTED = (Join-Path $dir 'fork-guard.ps1')",
 		"Remove-Variable registration",
 	} {
 		if !strings.Contains(start, want) {

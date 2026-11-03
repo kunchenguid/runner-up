@@ -91,6 +91,10 @@ func TestMachineAddRefusesMachinesThatCannotRunThePlaces(t *testing.T) {
 	dockerMac.Docker = "ok"
 	noDocker := limaProbe
 	noDocker.Docker = "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock"
+	// The readiness Apple container places gained with the provider's ready
+	// method: a Mac without the container tool is refused up front.
+	noContainer := macTartProbe
+	noContainer.Container = "Apple's container tool is not installed (brew install container)"
 	for _, tc := range []struct {
 		pr   agent.Probe
 		o    placeOptions
@@ -103,6 +107,8 @@ func TestMachineAddRefusesMachinesThatCannotRunThePlaces(t *testing.T) {
 		{limaProbe, placeOptions{Provider: config.ProviderTart, Image: "ghcr.io/cirruslabs/macos-sequoia-base:latest"}, "lima cannot run tart places"},
 		{noDocker, placeOptions{Cores: 2, MemoryMB: 4096}, "lima cannot run Docker places: permission denied"},
 		{limaProbe, placeOptions{Provider: config.ProviderKVM, Cores: 2, MemoryMB: 2048}, "a KVM place needs --image"},
+		{noContainer, placeOptions{Provider: config.ProviderContainer, Image: "runner-up-linux:2026-11-03"},
+			"lima cannot run Apple container places: Apple's container tool is not installed"},
 		{limaProbe, placeOptions{Cores: 4, MemoryMB: 4096, RoomCores: 1, RoomMemoryMB: 1024},
 			"lima has 3 cores and 4886 MB for places, less than one place of 4 cores and 4096 MB"},
 	} {

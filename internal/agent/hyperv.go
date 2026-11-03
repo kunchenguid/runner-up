@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -43,8 +42,8 @@ func hypervPipe(place string) string   { return `\\.\pipe\runner-up-` + place }
 
 // hypervSeed is the place's cloud-init seed: no secret, since the
 // registration comes later over the serial port.
-func hypervSeed(place, arch string, allowForks bool, now time.Time, size config.Share) (map[string][]byte, error) {
-	guest, err := linuxGuest(arch, allowForks, size)
+func hypervSeed(place, arch string, l runnerLaunch, now time.Time) (map[string][]byte, error) {
+	guest, err := linuxGuest(arch, l)
 	if err != nil {
 		return nil, err
 	}
@@ -68,9 +67,9 @@ func hypervSeed(place, arch string, allowForks bool, now time.Time, size config.
 }
 
 // linuxGuest is runner-up's guest program for a Linux guest of arch, filled
-// in for one job: the pinned runner, the fork guard unless allowForks, and the
-// job's size. It holds no secret.
-func linuxGuest(arch string, allowForks bool, size config.Share) (string, error) {
+// in for one job: the pinned runner and the runner's launch l. It holds no
+// secret.
+func linuxGuest(arch string, l runnerLaunch) (string, error) {
 	sum, ok := runnerSHA256["linux-"+arch]
 	if !ok {
 		return "", fmt.Errorf("no runner release for %s", arch)
@@ -78,8 +77,7 @@ func linuxGuest(arch string, allowForks bool, size config.Share) (string, error)
 	return strings.NewReplacer(
 		"@RUNNER_URL@", runnerURL(runnerTarballName(arch)),
 		"@RUNNER_SHA256@", sum,
-		"@ALLOW_FORKS@", strconv.FormatBool(allowForks),
-		"@CORES@", strconv.Itoa(size.Cores), "@MEMORY_MB@", strconv.Itoa(size.MemoryMB),
+		"@LAUNCH@", guestLaunch(l),
 	).Replace(hypervGuest), nil
 }
 

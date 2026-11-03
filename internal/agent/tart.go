@@ -47,34 +47,29 @@ const (
 // tartScript runs in the clone as its guest agent's user. It leaves the
 // registration on stdin for the resource reader and copies the runner and
 // this program out of the shared folder, which macOS mounts once the clone's
-// user has signed in. It
-// starts the runner under the resource reader, with the fork guard as its
-// job-started hook unless forks are allowed. The runner runs that hook's path
-// unquoted, so it lives in the home folder, not under the share's spaces.
-// Arguments are the share, tool cache, cores, memory MB and allowForks.
-const tartScript = `set -eu
+// user has signed in. It starts the runner under the resource reader, with
+// l's variables and, unless forks are allowed, the fork guard as its
+// job-started hook. The runner runs that hook's path unquoted, so it lives
+// in the home folder, not under the share's spaces. Its arguments are the
+// share and the tool cache.
+func tartScript(l runnerLaunch) string {
+	return `set -eu
 share=$1
 if [ -n "${2:-}" ]; then export RUNNER_TOOL_CACHE="$2"; fi
-export RUNNER_UP_CORES="$3" RUNNER_UP_MEMORY_MB="$4"
 i=0
 until [ -r "$share/runner.tar.gz" ]; do
   i=$((i+1)); [ "$i" -le 120 ] || { echo "the shared folder never appeared in the clone" >&2; exit 1; }
   sleep 1
 done
-rm -rf "$HOME/actions-runner" "$HOME/.runner-up"
-mkdir -p "$HOME/actions-runner"
+rm -rf "$HOME/actions-runner" ` + shellWord(tartGuest) + `
+mkdir -p "$HOME/actions-runner" ` + shellWord(tartGuest) + `
 tar xzf "$share/runner.tar.gz" -C "$HOME/actions-runner"
-mkdir -p "$HOME/.runner-up"
-cp "$share/runner-up" "$HOME/.runner-up/runner-up"
-chmod 0755 "$HOME/.runner-up/runner-up"
-if [ "$5" = false ]; then
-  printf '#!/bin/bash\nexec %s fork-guard\n' "$HOME/.runner-up/runner-up" > "$HOME/.runner-up/fork-guard.sh"
-  chmod 0755 "$HOME/.runner-up/fork-guard.sh"
-  export ACTIONS_RUNNER_HOOK_JOB_STARTED="$HOME/.runner-up/fork-guard.sh"
-fi
-cd "$HOME/actions-runner"
-exec "$HOME/.runner-up/runner-up" agent measure -- ./run.sh
+cp "$share/runner-up" ` + shellWord(tartGuest+"/runner-up") + `
+chmod 0755 ` + shellWord(tartGuest+"/runner-up") + `
+` + shellLaunch(l) + `cd "$HOME/actions-runner"
+exec ` + shellWord(tartGuest+"/runner-up") + ` agent measure -- ./run.sh
 `
+}
 
 func (tartProvider) shareDir(a *AgentRun) string { return filepath.Join(a.Dir(), "share") }
 
@@ -173,7 +168,7 @@ func (p tartProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 		case <-jobCtx.Done():
 		}
 	}()
-	cmd := exec.Command("tart", "exec", "-i", vm, "/bin/bash", "-c", tartScript, "runner-up", tartGuestShare, a.ToolCache, strconv.Itoa(a.Cores), strconv.Itoa(a.MemoryMB), strconv.FormatBool(a.AllowForks))
+	cmd := exec.Command("tart", "exec", "-i", vm, "/bin/bash", "-c", tartScript(p.launch(a)), "runner-up", tartGuestShare, a.ToolCache)
 	cmd.Stdin = strings.NewReader(jit + "\n")
 	cmd.Stdout, cmd.Stderr = out, out
 	// Once tart exec has ended, its output is not waited for.
