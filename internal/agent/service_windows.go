@@ -275,10 +275,15 @@ func openLog(ok bool) (*slog.Logger, func()) {
 }
 
 type listener struct {
-	sa      *windows.SecurityAttributes
-	mu      sync.Mutex
-	closed  bool
-	pending windows.Handle
+	path string
+	sa   *windows.SecurityAttributes
+	// connecting is the wait for the next client. The pipe is overlapped,
+	// so Windows holds this until a client comes: it lives here, never on a
+	// stack Go may move.
+	connecting windows.Overlapped
+	mu         sync.Mutex
+	closed     bool
+	pending    windows.Handle
 }
 
 // listen makes the pipe, which only SYSTEM, Administrators and the
@@ -296,10 +301,21 @@ func listen(runner string) (*listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &listener{sa: sa}
+	return listenAt(pipeName, sa)
+}
+
+// listenAt makes the pipe at path with the access sa gives.
+func listenAt(path string, sa *windows.SecurityAttributes) (*listener, error) {
+	l := &listener{path: path, sa: sa}
+	ev, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	l.connecting.HEvent = ev
 	// The first instance proves no one else holds the name.
 	h, err := l.instance(true)
 	if err != nil {
+		windows.CloseHandle(ev)
 		return nil, err
 	}
 	l.pending = h
@@ -313,9 +329,13 @@ func pipeSDDL(runner string) string {
 	return fmt.Sprintf("O:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;%#x;;;%s)", clientAccess, runner)
 }
 
+// instance makes one pipe instance for the next client. It is overlapped: a
+// run request keeps a read waiting, to hear the agent leave, while it writes
+// the job's output. Windows runs one call at a time on a handle made without
+// FILE_FLAG_OVERLAPPED, so every write would wait until the agent left.
 func (l *listener) instance(first bool) (windows.Handle, error) {
-	name, _ := windows.UTF16PtrFromString(pipeName)
-	mode := uint32(windows.PIPE_ACCESS_DUPLEX)
+	name, _ := windows.UTF16PtrFromString(l.path)
+	mode := uint32(windows.PIPE_ACCESS_DUPLEX | windows.FILE_FLAG_OVERLAPPED)
 	if first {
 		mode |= windows.FILE_FLAG_FIRST_PIPE_INSTANCE
 	}
@@ -325,11 +345,12 @@ func (l *listener) instance(first bool) (windows.Handle, error) {
 }
 
 func (l *listener) serve(ctx context.Context, server *Server, log *slog.Logger, jobs *sync.WaitGroup) {
+	defer windows.CloseHandle(l.connecting.HEvent)
 	for {
 		l.mu.Lock()
 		h := l.pending
 		l.mu.Unlock()
-		err := windows.ConnectNamedPipe(h, nil)
+		err := l.connect(h)
 		l.mu.Lock()
 		closed := l.closed
 		l.mu.Unlock()
@@ -377,13 +398,28 @@ func (l *listener) serve(ctx context.Context, server *Server, log *slog.Logger, 
 	}
 }
 
+// connect waits until a client opens h, the pending instance.
+func (l *listener) connect(h windows.Handle) error {
+	ev := l.connecting.HEvent
+	if err := windows.ResetEvent(ev); err != nil {
+		return err
+	}
+	l.connecting = windows.Overlapped{HEvent: ev}
+	err := windows.ConnectNamedPipe(h, &l.connecting)
+	if errors.Is(err, windows.ERROR_IO_PENDING) {
+		var n uint32
+		err = windows.GetOverlappedResult(h, &l.connecting, &n, true)
+	}
+	return err
+}
+
 // close stops taking clients: it wakes the waiting ConnectNamedPipe by
 // connecting to it.
 func (l *listener) close() {
 	l.mu.Lock()
 	l.closed = true
 	l.mu.Unlock()
-	name, _ := windows.UTF16PtrFromString(pipeName)
+	name, _ := windows.UTF16PtrFromString(l.path)
 	if h, err := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, 0, 0); err == nil {
 		windows.CloseHandle(h)
 	}
@@ -391,7 +427,8 @@ func (l *listener) close() {
 
 // handle serves one agent. The agent's end of the pipe closing is how the
 // service learns it has gone: it stopped the job, or it or its connection
-// went.
+// went. The instance is overlapped, so the file os.NewFile makes of it reads
+// and writes at the same time.
 func handle(ctx context.Context, h windows.Handle, server *Server, log *slog.Logger) {
 	pipe := os.NewFile(uintptr(h), "runner-up pipe")
 	defer func() {
