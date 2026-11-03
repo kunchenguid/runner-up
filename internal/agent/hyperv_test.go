@@ -140,6 +140,10 @@ func filledGuest(t *testing.T) string {
 	return g
 }
 
+// guestEnded is the guest program's last line after a job its runner ran to
+// the end; TestContainerGuestRunsThePinnedRunnerWithTheForkGuard owns its words.
+const guestEnded = "runner-up guest: the runner ended with 0\n"
+
 // fakeGuest plays the VM's side of the serial port: it says it is ready until
 // it reads the registration, then prints the runner's output and turns off.
 func fakeGuest(t *testing.T, conn net.Conn, got chan<- string) {
@@ -173,7 +177,7 @@ func fakeGuest(t *testing.T, conn net.Conn, got chan<- string) {
 				// One more ready line was already on its way.
 				io.WriteString(conn, guestReady+"\n")
 				io.WriteString(conn, "runner-up guest: starting the runner\n√ Connected to GitHub\nRunning job: build\n")
-				io.WriteString(conn, "runner-up guest: the runner ended with 0\n")
+				io.WriteString(conn, guestEnded)
 				return
 			case <-time.After(20 * time.Millisecond):
 			}
@@ -195,7 +199,7 @@ func TestRegistrationGoesToTheVMOverItsSerialPortOnce(t *testing.T) {
 	if strings.Contains(out.String(), guestReady) || strings.Contains(out.String(), registration) {
 		t.Errorf("the agent's output holds the handshake or the registration:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "Running job: build\nrunner-up guest: the runner ended with 0\n") {
+	if !strings.Contains(out.String(), "Running job: build\n"+guestEnded) {
 		t.Errorf("the runner's output did not reach the agent:\n%s", out.String())
 	}
 }

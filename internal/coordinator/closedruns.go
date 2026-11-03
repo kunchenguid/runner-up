@@ -23,7 +23,7 @@ import (
 // for its next assignment for as long as the queue is long, and no runner
 // starts for it meanwhile, so it is asked about only after quietTakenBack,
 // and again every recheckTakenBack. However many runs are quiet, at most
-// runReadsPerPass are read in one pass and runReadsPerHour in an hour.
+// runReadsPerPass are read in one pass and runReadsPerHour in runReadsWindow.
 const (
 	quietAssigned    = 10 * time.Minute
 	recheckAssigned  = 15 * time.Minute
@@ -31,6 +31,7 @@ const (
 	recheckTakenBack = time.Hour
 	runReadsPerPass  = 10
 	runReadsPerHour  = 60
+	runReadsWindow   = time.Hour
 )
 
 // quietFor is how long GitHub must have said nothing about a waiting job
@@ -85,7 +86,7 @@ func (s *Service) forgetClosedRuns(ctx context.Context) {
 			delete(s.runsChecked, key)
 		}
 	}
-	s.runReads = slices.DeleteFunc(s.runReads, func(t time.Time) bool { return now.Sub(t) >= time.Hour })
+	s.runReads = slices.DeleteFunc(s.runReads, func(t time.Time) bool { return now.Sub(t) >= runReadsWindow })
 	var reads []workflowRun
 	for key, every := range recheck {
 		if last, ok := s.runsChecked[key]; !ok || now.Sub(last) >= every {

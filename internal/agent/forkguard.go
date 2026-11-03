@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,6 +36,9 @@ func ForkGuardHook(agent string) string {
 	return "#!/bin/bash\nexec " + quote.ShQuote(agent) + " fork-guard\n"
 }
 
+// errUnreadableEvent refuses an event file that is not one JSON object alone.
+var errUnreadableEvent = errors.New("unreadable event file")
+
 // forkGuard decides on the event file at path: nil allows the job, an error
 // refuses it and says why.
 func forkGuard(path string) error {
@@ -49,11 +53,11 @@ func forkGuard(path string) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	if err := dec.Decode(&event); err != nil || event == nil {
-		return fmt.Errorf("unreadable event file")
+		return errUnreadableEvent
 	}
 	// One JSON object, alone.
 	if _, err := dec.Token(); err != io.EOF {
-		return fmt.Errorf("unreadable event file")
+		return errUnreadableEvent
 	}
 	if pr, ok := event["pull_request"]; ok && pr != nil {
 		if !sameRepo(lookup(pr, "head", "repo", "id"), lookup(pr, "base", "repo", "id")) {

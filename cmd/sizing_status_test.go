@@ -40,7 +40,7 @@ func TestStatusUsesPoolSizesAndRunningReservations(t *testing.T) {
 	}
 	var out bytes.Buffer
 	status(cfg, &out)
-	if !strings.Contains(out.String(), fmt.Sprintf("place busy on mac (host, %d cores, %d MB) busy (job)", reservation.Cores, reservation.MemoryMB)) ||
+	if !strings.Contains(out.String(), fmt.Sprintf("place busy on mac (host, %d cores, %d MB) busy (%s)", reservation.Cores, reservation.MemoryMB, coordinator.BusyJob)) ||
 		!strings.Contains(out.String(), fmt.Sprintf("place idle on mac (host, 2 cores, 4096 MB) busy (cores %d of %d in use", reservation.Cores, cfg.Machines[0].Budget().Cores)) {
 		t.Fatalf("status used fallback sizes:\n%s", out.String())
 	}
@@ -48,7 +48,7 @@ func TestStatusUsesPoolSizesAndRunningReservations(t *testing.T) {
 	out.Reset()
 	status(cfg, &out)
 	if !strings.Contains(out.String(), "place idle on mac (host, 2 cores, 4096 MB) free") ||
-		!strings.Contains(out.String(), fmt.Sprintf("place busy on mac (host, %d cores, %d MB) busy (job)", reservation.Cores, reservation.MemoryMB)) {
+		!strings.Contains(out.String(), fmt.Sprintf("place busy on mac (host, %d cores, %d MB) busy (%s)", reservation.Cores, reservation.MemoryMB, coordinator.BusyJob)) {
 		t.Fatalf("status lost a running reservation or hid a fitting pool:\n%s", out.String())
 	}
 	t.Logf("$ runner-up status (after reducing the next job's pool size)\n%s", out.String())

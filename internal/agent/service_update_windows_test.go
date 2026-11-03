@@ -144,11 +144,16 @@ func TestTheServiceSetsUpOnceAndUpdatesItselfFromASignedRelease(t *testing.T) {
 		return run(append(append(head, '\n'), archive.Bytes()...), older, "agent", "update-service")
 	}
 	_, other, _ := ed25519.GenerateKey(nil)
-	if out, err := hand(ed25519.Sign(other, []byte(checksums))); err == nil || !strings.Contains(out, "did not sign these checksums") {
+	// TestTheServiceInstallsOnlyANewerReleaseTheSigningKeySigned owns the refusal's words;
+	// here the service refuses and keeps its program.
+	if out, err := hand(ed25519.Sign(other, []byte(checksums))); err == nil {
 		t.Fatalf("the service took a release another key signed: %v\n%s", err, out)
 	}
 	answers("v9.0.1")
-	if out, err := hand(ed25519.Sign(private, []byte(checksums))); err != nil || !strings.Contains(out, "updating to v9.0.2") {
+	if again, _ := service(); again != bin {
+		t.Fatalf("after a release another key signed the service runs %s, want %s", again, bin)
+	}
+	if out, err := hand(ed25519.Sign(private, []byte(checksums))); err != nil || !strings.Contains(out, serviceUpdatingTo+"v9.0.2") {
 		t.Fatalf("the service did not take the signed release: %v\n%s", err, out)
 	}
 	answers("v9.0.2")
@@ -157,8 +162,11 @@ func TestTheServiceSetsUpOnceAndUpdatesItselfFromASignedRelease(t *testing.T) {
 	}
 
 	// An administrator installs any version.
-	if out, err := run(nil, older, "setup", "--user", user); err != nil || !strings.Contains(out, "runner-up service running v9.0.1.") {
+	if out, err := run(nil, older, "setup", "--user", user); err != nil {
 		t.Fatalf("setup with the version before failed: %v\n%s", err, out)
 	}
 	answers("v9.0.1")
+	if again, _ := service(); again != bin {
+		t.Fatalf("after setup with the version before the service runs %s, want %s", again, bin)
+	}
 }

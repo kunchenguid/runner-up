@@ -273,11 +273,13 @@ func TestTakeBackOfAnEarlierAssignmentLeavesTheNewOne(t *testing.T) {
 func TestJobWhoseRunnerNeverStartedWaitsAgain(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		lives time.Duration
+		lives func(cfg *config.Config) time.Duration
 		tidy  bool
 	}{
-		{"place gave up, Tidy first", 5 * time.Minute, true},
-		{"runner outlives the allowance, placement first", 16 * time.Minute, false},
+		{"place gave up, Tidy first", func(cfg *config.Config) time.Duration { return cfg.Seconds(cfg.BootTimeoutSeconds) }, true},
+		{"runner outlives the allowance, placement first", func(cfg *config.Config) time.Duration {
+			return cfg.Seconds(cfg.StartTimeoutSeconds+cfg.BootTimeoutSeconds) + time.Minute
+		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := loadFixture(t, "assigned-takebacks.json")
@@ -292,7 +294,7 @@ func TestJobWhoseRunnerNeverStartedWaitsAgain(t *testing.T) {
 			}
 
 			// The runner ends without a job; GitHub sends nothing more.
-			h.now = h.now.Add(tc.lives)
+			h.now = h.now.Add(tc.lives(cfg))
 			if !tc.tidy {
 				// Its allowance passes while it still lives.
 				h.svc.Place(context.Background())

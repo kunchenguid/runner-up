@@ -120,7 +120,8 @@ func TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet(t *testing.T) {
 	d := e.drain("--place", "box-1", "--place", "box-2", "--repo", "octo-org/app",
 		"--job", "verify / linux", "--job", "affected-journeys", "--label", "release check", "--minutes", "5")
 	e.eventually("the drain waits for box-1's job", func() bool {
-		return strings.Contains(d.said(), `drain: draining: box-1 runs octo-org/app "affected-journeys"`)
+		ds := coordinator.Drains(e.cfg)
+		return len(ds) == 1 && ds[0].Phase == coordinator.DrainDraining && strings.Contains(d.said(), "drain: "+string(coordinator.DrainDraining)+": ")
 	})
 
 	// The pair arrives with the dry-run publish, which only box-3 takes:
@@ -131,15 +132,16 @@ func TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet(t *testing.T) {
 		scaleset.JobAvailable{JobMessageBase: jobMessage(journeysJob(t), scaleset.MessageTypeJobAvailable)})
 	e.eventually("box-3 takes the publish", func() bool { pid, _ := e.containerIn("box-3"); return pid > 0 })
 	e.eventually("the pair waits", func() bool {
-		return strings.Contains(e.status(), `waiting octo-org/app ru-linux "affected-journeys"`)
+		return slices.Contains(e.waiting(), "verify / linux") && slices.Contains(e.waiting(), "affected-journeys")
 	})
+	if run, _ := e.runIn("box-1"); !run.Started || run.JobName != "affected-journeys" || e.heldBy("box-3") != coordinator.BusyJob {
+		t.Errorf("box-1 runs %+v and box-3 is held for %q, want box-1 running affected-journeys and box-3 a job", run, e.heldBy("box-3"))
+	}
+	// This test owns status's drain lines; TestStatusSaysEachPlaceAndJobInOneLine
+	// owns the rest.
 	t.Logf("runner-up status while draining:\n%s", e.statusSays(
-		`place box-1 on box (docker, 2 cores, 4096 MB) busy (job): octo-org/app "affected-journeys" running`,
 		`place box-2 on box (docker, 2 cores, 4096 MB) drained (for "release check")`,
-		`place box-3 on box (docker, 2 cores, 4096 MB) busy (job): octo-org/app "Build and publish (a dry run publishes nothing)"`,
-		`drain "release check" of box-1, box-2 for octo-org/app "verify / linux", "affected-journeys" since `,
-		`waiting octo-org/app ru-linux "verify / linux"`,
-		`waiting octo-org/app ru-linux "affected-journeys"`))
+		`drain "release check" of box-1, box-2 for octo-org/app "verify / linux", "affected-journeys" since `))
 	if pid, _ := e.containerIn("box-2"); pid > 0 {
 		t.Fatal("the drained box-2 took a job before box-1's job finished")
 	}
@@ -164,7 +166,7 @@ func TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet(t *testing.T) {
 	for name, pid := range pair {
 		e.startJobNamed(pid, name)
 	}
-	e.eventually("the drain sees the pair run", func() bool { return strings.Contains(d.said(), "drain: running: ") })
+	e.eventually("the drain sees the pair run", func() bool { return strings.Contains(d.said(), "drain: "+string(coordinator.DrainRunning)+": ") })
 	t.Logf("runner-up status while the pair runs:\n%s", e.statusSays(
 		`drain "release check" of box-1, box-2 for octo-org/app "verify / linux", "affected-journeys" since `))
 
@@ -176,14 +178,14 @@ func TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet(t *testing.T) {
 	}
 	said := d.said()
 	t.Logf("runner-up drain said:\n%s", said)
-	if !strings.Contains(said, `"verify / linux" ran in box-`) || !strings.Contains(said, `"affected-journeys" ran in box-`) ||
-		!strings.HasSuffix(said, "; placement resumed\n") {
-		t.Errorf("the drain said:\n%s\nwant both jobs ran and placement resumed", said)
+	// The drain's detail words are internal/coordinator's drain tests'.
+	lines := strings.Split(strings.TrimSpace(said), "\n")
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "drain: "+string(coordinator.DrainDone)+": ") ||
+		!strings.Contains(last, `"verify / linux"`) || !strings.Contains(last, `"affected-journeys"`) {
+		t.Errorf("the drain said:\n%s\nwant it done last, with both jobs", said)
 	}
 	e.eventually("box-1 and box-2 are free, no longer drained", func() bool {
-		out := e.status()
-		return strings.Contains(out, "place box-1 on box (docker, 2 cores, 4096 MB) free\n") &&
-			strings.Contains(out, "place box-2 on box (docker, 2 cores, 4096 MB) free\n") && !strings.Contains(out, "drain ")
+		return e.heldBy("box-1") == "" && e.heldBy("box-2") == "" && len(coordinator.Drains(e.cfg)) == 0
 	})
 	t.Logf("runner-up status after the drain:\n%s", e.status())
 	if pid, _ := e.containerIn("box-3"); !alive(pid) {
@@ -205,7 +207,7 @@ func TestStoppingTheDrainResumesPlacementAndKeepsRunningJobs(t *testing.T) {
 
 	d := e.drain("--place", "box-1", "--place", "box-2", "--place", "box-3", "--job", "affected-journeys",
 		"--label", "release check", "--minutes", "5")
-	e.eventually("the drain waits for box-1's job", func() bool { return strings.Contains(d.said(), "drain: draining: ") })
+	e.eventually("the drain waits for box-1's job", func() bool { return strings.Contains(d.said(), "drain: "+string(coordinator.DrainDraining)+": ") })
 	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(journeysJob(t), scaleset.MessageTypeJobAvailable)})
 	e.eventually("the named job waits", func() bool {
 		return strings.Contains(e.status(), `waiting octo-org/app ru-linux "affected-journeys"`)

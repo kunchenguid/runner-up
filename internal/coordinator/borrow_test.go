@@ -131,7 +131,7 @@ func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	if used := s.inUse("mac", ""); used != reservation {
 		t.Fatalf("share = %+v, want frozen reservation %+v", used, reservation)
 	}
-	if busy, why := s.PlaceBusy(cfg.Machines[0].Places[0]); !busy || why != "borrow" {
+	if busy, why := s.PlaceBusy(cfg.Machines[0].Places[0]); !busy || why != BusyBorrow {
 		t.Fatalf("borrow status: %v %q", busy, why)
 	}
 	s.refreshBorrowsLocked()

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
@@ -228,7 +230,7 @@ func TestBorrowCLILiveTwoSlotAccounting(t *testing.T) {
 		return strings.Contains(readBorrowOutput(threeOutput), "macOS VM limit")
 	})
 	status := borrowStatus(t, e)
-	if strings.Count(status, "busy (borrow)") != 2 {
+	if borrows := slices.DeleteFunc(e.cfg.Places(), func(p config.Place) bool { return e.heldBy(p.ID) != coordinator.BusyBorrow }); len(borrows) != 2 {
 		t.Fatalf("expected two active borrows: %s", status)
 	}
 	if _, err := os.Stat(filepath.Join(e.dir, "three-started")); !os.IsNotExist(err) {

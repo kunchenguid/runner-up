@@ -89,10 +89,10 @@ func TestUnreachableMachineRestsUntilItsAgentAnswers(t *testing.T) {
 		t.Fatalf("while far rests the coordinator acquired %v and made %d registrations, want 2 of each\n%s",
 			seen.acquired, len(seen.jits), e.logs())
 	}
-	out, err := exec.Command(runnerUp(t), "status", "--config", e.config).Output()
-	if err != nil || !strings.Contains(string(out), "place far-1 on far (docker, 2 cores, 4096 MB) resting (agent unreachable since ") {
-		t.Errorf("status said %q (%v)", out, err)
+	if _, ok := e.saved().Unreachable["far"]; !ok {
+		t.Errorf("the coordinator saved no rest for far\n%s", e.logs())
 	}
+	e.statusAsRead()
 
 	// The coordinator stops while far rests, and far comes back. The
 	// coordinator starts again still resting far, asks its agent at once,
