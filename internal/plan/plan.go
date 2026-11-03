@@ -53,6 +53,9 @@ type Job struct {
 	RunWorkflow string `json:"-"`
 	// Labels are the labels of the open pull request the job's ref belongs to.
 	Labels map[string]bool `json:"-"`
+	// Drain is the drain whose places the job may take, or "" for places no
+	// drain holds (internal/coordinator, drain.go).
+	Drain string `json:"-"`
 }
 
 // A job GitHub offers (JobAvailable) is named by its runner request. A job it
@@ -103,6 +106,9 @@ func (j Job) TimingKey() string {
 type PlaceView struct {
 	config.Place
 	Busy bool
+	// Drain is the drain holding the place: it takes only the jobs whose
+	// Drain matches.
+	Drain string
 }
 
 func (v PlaceView) share() config.Share { return config.Share{Cores: v.Cores, MemoryMB: v.MemoryMB} }
@@ -152,8 +158,11 @@ func fifo(a, b Job) bool {
 // machine. Later jobs use only the remainder; no running job is interrupted.
 // Jobs without a free eligible place (or with an unavailable VM slot) hold
 // nothing. Each machine keeps room for only its first such waiting job.
+// A place a drain holds takes only the jobs that drain admits, and those jobs
+// go first, so on a machine shared with other places they keep its room.
 func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules []Rule, now time.Time) []Assignment {
 	jobs := Rank(waiting, rules, now)
+	sort.SliceStable(jobs, func(a, b int) bool { return jobs[a].Drain != "" && jobs[b].Drain == "" })
 	left := map[string]Headroom{}
 	for m, h := range headroom {
 		left[m] = h
@@ -178,7 +187,7 @@ func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules
 			return p.share()
 		}
 		for i, p := range free {
-			if !slices.Contains(p.Pools, j.Pool) || j.BorrowID != "" && p.Provider != config.ProviderTart {
+			if p.Drain != j.Drain || !slices.Contains(p.Pools, j.Pool) || j.BorrowID != "" && p.Provider != config.ProviderTart {
 				continue
 			}
 			if h, ok := left[p.Machine]; ok && !h.fits(size(p)) {

@@ -246,7 +246,8 @@ jobs:
 `runner-up status` shows each place, its running reservation and the waiting
 work. `runner-up usage` shows finished jobs' resource readings beside their
 pool sizes (see [Job sizes and readings](#job-sizes-and-readings)); for borrows, see
-[Borrowing a virtual Mac](#borrowing-a-virtual-mac).
+[Borrowing a virtual Mac](#borrowing-a-virtual-mac); to let some jobs run on
+places with nothing else running, see [Draining places](#draining-places).
 
 ### Windows machines
 
@@ -608,6 +609,42 @@ command starts it under `BORROWED_VM`, the name runner-up reserves and cleans.
   active borrows and their labels. Separate `borrow placed` and
   `borrow completed` log entries include wait time and borrowed minutes;
   borrowed time is not recorded as a job runtime estimate.
+
+## Draining places
+
+When some jobs must run on places with nothing else running there, drain the
+places for them while the coordinator keeps running, instead of stopping it
+or waiting for a quiet hour:
+
+```sh
+runner-up drain --place mac-1 --place mac-2 \
+    --repo you/app --job "verify / mac" --job "verify / phone" \
+    --label "release check" --minutes 90
+```
+
+- **Draining.** The places take no new job or borrow. Jobs and borrows
+  already running there carry on; a drain never stops one.
+- **Admitting.** Once all the places are free at the same time, they take only
+  the named jobs, one job for each `--job`, by the job's name as GitHub shows
+  it. `--repo` limits the names to one repository. Start the jobs at any
+  time: a named job waits for the drained places while the drain lasts,
+  rather than start elsewhere.
+- **Done.** When each named job has run and its runner has ended, the places
+  take any job again at once, and the command exits 0.
+- Places the drain does not name go on as before. To keep a whole machine
+  quiet, name all its places. On a machine whose places share its cores and
+  memory, the named jobs keep room ahead of other work.
+- The drain ends early, and placement resumes, when its command is stopped
+  (exit `130`) or after `--minutes` (exit `124`). Running jobs, including the
+  named ones, carry on.
+- GitHub picks which of a scale set's jobs a runner takes. A runner started
+  for a named job may take another job of the same pool and repository; the
+  named job is then admitted again once a place frees. A named job GitHub
+  gives a runner outside the drain counts as gone: the drain stops waiting
+  for it.
+- The command prints where the drain stands as it moves on. A coordinator
+  restart keeps the drain. `status` shows drained places and each drain. A
+  place belongs to one drain at a time.
 
 ## Order rules
 

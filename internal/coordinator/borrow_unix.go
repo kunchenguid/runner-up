@@ -274,7 +274,9 @@ func (s *Service) refreshBorrowsLocked() {
 		r.Reason = "waiting behind higher-ranked work"
 		for _, p := range s.Cfg.Places() {
 			if p.Provider == config.ProviderTart && slices.Contains(p.Pools, j.Pool) {
-				if busy, why := s.PlaceBusy(p); busy {
+				if d := s.drainOf(p.ID); d != nil {
+					r.Reason = p.ID + ": drained for " + strconv.Quote(d.Label)
+				} else if busy, why := s.PlaceBusy(p); busy {
 					r.Reason = p.ID + ": " + why
 				} else {
 					r.Reason = "waiting for placement"
