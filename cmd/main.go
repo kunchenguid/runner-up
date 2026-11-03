@@ -26,6 +26,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,6 +54,8 @@ Running:
   status        show each place and the waiting jobs
   usage         show finished jobs' sampled use beside their pool sizes
   borrow        borrow a tart place: --pool LABEL --label TEXT --minutes N -- COMMAND
+  drain         pause places until named jobs ran there:
+                --place ID --job NAME [--repo OWNER/NAME] --label TEXT --minutes N
 
 On each machine (run by the coordinator):
   agent probe|vms|run|clean
@@ -87,7 +91,7 @@ func Main() {
 	case "version":
 		fmt.Println(version.Version)
 		return
-	case "serve", "status", "usage", "check-config", "run-place", "run-borrow", "borrow", "init", "machine":
+	case "serve", "status", "usage", "check-config", "run-place", "run-borrow", "borrow", "drain", "init", "machine":
 		if err := proc.CoordinatorRuns(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -103,6 +107,8 @@ func Main() {
 	switch os.Args[1] {
 	case "borrow":
 		os.Exit(coordinator.BorrowMain(os.Args[2:]))
+	case "drain":
+		os.Exit(coordinator.DrainMain(os.Args[2:]))
 	case "init":
 		os.Exit(initMain(os.Args[2:]))
 	case "machine":
@@ -259,11 +265,21 @@ func cleanLeftovers(ctx context.Context, cfg *config.Config, log *slog.Logger) {
 	wg.Wait()
 }
 
-// status prints each place and the waiting jobs, for a person or a check.
+// status prints each place, the drains and the waiting jobs, for a person or
+// a check.
 func status(cfg *config.Config, w io.Writer) int {
 	svc := &coordinator.Service{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	var st coordinator.SavedState
 	saved := config.ReadJSON(filepath.Join(cfg.StateDir, "state.json"), &st) == nil
+	drains := coordinator.Drains(cfg)
+	drainedFor := map[string]string{}
+	for _, d := range slices.Backward(drains) {
+		if d.Phase != "done" {
+			for _, id := range d.Places {
+				drainedFor[id] = d.Label
+			}
+		}
+	}
 	for _, p := range cfg.Places() {
 		busy, why := svc.PlaceBusy(p)
 		if len(p.Pools) > 0 {
@@ -282,6 +298,8 @@ func status(cfg *config.Config, w io.Writer) int {
 			state = "busy (" + why + ")"
 		} else if since, ok := st.Unreachable[p.Machine]; ok {
 			state = "resting (agent unreachable since " + since.Local().Format(time.RFC3339) + ")"
+		} else if label, ok := drainedFor[p.ID]; ok {
+			state = fmt.Sprintf("drained (for %q)", label)
 		}
 		job := ""
 		var run coordinator.PlaceRun
@@ -300,6 +318,24 @@ func status(cfg *config.Config, w io.Writer) int {
 			p.Cores, p.MemoryMB = sh.Cores, sh.MemoryMB
 		}
 		fmt.Fprintf(w, "place %s on %s (%s, %d cores, %d MB) %s%s\n", p.ID, p.Machine, p.Provider, p.Cores, p.MemoryMB, state, job)
+	}
+	for _, d := range drains {
+		jobs := make([]string, len(d.Jobs))
+		for i, name := range d.Jobs {
+			jobs[i] = strconv.Quote(name)
+		}
+		if d.Repo != "" {
+			jobs[0] = d.Repo + " " + jobs[0]
+		}
+		phase := "waiting for the coordinator"
+		if d.Phase != "" {
+			phase = d.Phase
+			if d.Detail != "" {
+				phase += ": " + d.Detail
+			}
+		}
+		fmt.Fprintf(w, "drain %q of %s for %s since %s: %s\n", d.Label, strings.Join(d.Places, ", "), strings.Join(jobs, ", "),
+			d.Queued.Local().Format(time.RFC3339), phase)
 	}
 	if saved {
 		for _, j := range st.Waiting {

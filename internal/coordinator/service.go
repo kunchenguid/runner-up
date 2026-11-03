@@ -50,7 +50,11 @@ type PlaceRun struct {
 	JobName    string    `json:"jobName"`
 	LaunchedAt time.Time `json:"launchedAt"`
 	Started    bool      `json:"started"`
-	PID        int       `json:"pid,omitempty"`
+	// RanJob is the display name of the job that reached the runner, as the
+	// runner printed it. GitHub may give a scale set's runner another of the
+	// set's jobs than JobName, the one it was started for.
+	RanJob string `json:"ranJob,omitempty"`
+	PID    int    `json:"pid,omitempty"`
 	// Reservation is frozen at launch, so restarts and setup edits cannot
 	// shrink a running job's claim on the machine.
 	Reservation config.Share `json:"reservation,omitempty"`
@@ -130,6 +134,9 @@ type Service struct {
 	VmReader vmReader
 	vms      map[string][]string
 	vmsRead  map[string]time.Time
+
+	// drains are the live drains, reread on every placement (drain.go).
+	drains []*drain
 }
 
 type workflowRun struct {
@@ -267,6 +274,7 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 	for _, m := range msg.JobStartedMessages {
 		keys := keysOf(target, pool, m.JobMessageBase)
 		s.handBackLocked(target, pool, m.RunnerName, keys)
+		s.drainStartedLocked(target, pool, m)
 		// An assigned job carries no queue time: it is in line from when the
 		// coordinator first saw it, or else from its assignment.
 		queued := m.QueueTime
@@ -538,6 +546,7 @@ func (s *Service) Place(ctx context.Context) {
 	defer s.mu.Unlock()
 	s.askRestingLocked(ctx)
 	s.expireLocked()
+	s.refreshDrainsLocked()
 	s.refreshBorrowsLocked()
 	for range len(s.Cfg.Places()) + 1 {
 		assignments := plan.Plan(s.waitingLocked(), s.viewsLocked(), s.headroomLocked(), s.Rules, s.now())
@@ -554,6 +563,7 @@ func (s *Service) Place(ctx context.Context) {
 			break
 		}
 	}
+	s.advanceDrainsLocked()
 	s.noteWasteLocked()
 	s.saveLocked()
 }
@@ -561,7 +571,7 @@ func (s *Service) Place(ctx context.Context) {
 // waitingLocked is the jobs a place could take now, with what the rules read
 // filled in. A job whose scale set has no live session cannot be acquired
 // now, and a job GitHub took back is assigned to nothing until it is assigned
-// again.
+// again. A job a drain names may take only that drain's places.
 func (s *Service) waitingLocked() []plan.Job {
 	out := make([]plan.Job, 0, len(s.waiting))
 	for _, j := range s.waiting {
@@ -576,6 +586,7 @@ func (s *Service) waitingLocked() []plan.Job {
 		if ref := j.LabelRef(); ref != "" {
 			j.Labels = s.labels[j.Repo][ref]
 		}
+		j.Drain = s.drainFor(j)
 		out = append(out, j)
 	}
 	return out
@@ -583,7 +594,9 @@ func (s *Service) waitingLocked() []plan.Job {
 
 // viewsLocked reads every place's state from its lock. A place cooling down
 // after a failed launch reads as busy for a minute, and a place on a resting
-// machine until the machine's agent answers (reach.go).
+// machine until the machine's agent answers (reach.go). A place a drain
+// holds reads as busy until all the drain's places are free, then takes
+// only the jobs the drain admits (drain.go).
 func (s *Service) viewsLocked() []plan.PlaceView {
 	now := s.now()
 	places := s.Cfg.Places()
@@ -594,7 +607,12 @@ func (s *Service) viewsLocked() []plan.PlaceView {
 		if !busy && (now.Before(s.cooling[p.ID]) || s.restingLocked(p.Machine)) {
 			busy = true
 		}
-		out = append(out, plan.PlaceView{Place: p, Busy: busy})
+		view := plan.PlaceView{Place: p, Busy: busy}
+		if d := s.drainOf(p.ID); d != nil {
+			view.Drain = d.ID
+			view.Busy = busy || d.Drained.IsZero()
+		}
+		out = append(out, view)
 	}
 	return out
 }

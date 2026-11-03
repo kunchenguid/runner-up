@@ -258,8 +258,8 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 					}
 				}
 			}
-			if strings.Contains(line, "Running job:") {
-				once.Do(func() { r.markStarted(); close(started) })
+			if _, job, ok := strings.Cut(line, "Running job:"); ok {
+				once.Do(func() { r.markStarted(strings.TrimSpace(job)); close(started) })
 			}
 		}
 		io.Copy(io.Discard, pr)
@@ -315,9 +315,11 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	}
 }
 
-func (r *placeRunner) markStarted() {
-	r.update(func(run *PlaceRun) { run.Started = true })
-	r.log.Info("job reached the runner")
+// markStarted records that a job reached the runner, and which: the runner
+// prints the job's display name.
+func (r *placeRunner) markStarted(job string) {
+	r.update(func(run *PlaceRun) { run.Started, run.RanJob = true, job })
+	r.log.Info("job reached the runner", "job", job)
 }
 
 // markUnreachable records, before this process ends and lets go of the place,

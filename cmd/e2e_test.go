@@ -247,7 +247,8 @@ exec sh -c "$last"
 
 // The stand-in docker's "container" for a place is the docker run process
 // itself, recorded with its agent in NAME.pid. It prints what a runner prints,
-// and its job starts once go.PID exists and ends once done.PID does.
+// and its job starts once go.PID exists and ends once done.PID does; the job
+// is named build unless job.PID names it.
 const fakeDocker = `#!/bin/bash
 d=$E2E_DIR/docker
 printf '%s\n' "$*" >> "$d/docker.log"
@@ -260,9 +261,11 @@ run)
   echo "√ Connected to GitHub"
   echo "Listening for Jobs"
   until [ -e "$d/go.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
-  echo "Running job: build"
+  job=build
+  [ -e "$d/job.$$" ] && job=$(cat "$d/job.$$")
+  echo "Running job: $job"
   until [ -e "$d/done.$$" ] || [ -e "$d/stop" ]; do sleep 0.05; done
-  echo "Job build completed with result: Succeeded"
+  echo "Job $job completed with result: Succeeded"
   rm -f "$d/$name.pid"
   ;;
 rm)
@@ -411,10 +414,13 @@ func (e *e2e) logs() string {
 	return b.String()
 }
 
-// container is the place's running stand-in container: its pid and its
-// agent's, or zeros when none runs.
-func (e *e2e) container() (pid, agentPID int) {
-	data, err := os.ReadFile(filepath.Join(e.dir, "docker", "runner-up-box-1.pid"))
+// container is box-1's running stand-in container: its pid and its agent's,
+// or zeros when none runs.
+func (e *e2e) container() (pid, agentPID int) { return e.containerIn("box-1") }
+
+// containerIn is place id's running stand-in container.
+func (e *e2e) containerIn(id string) (pid, agentPID int) {
+	data, err := os.ReadFile(filepath.Join(e.dir, "docker", "runner-up-"+id+".pid"))
 	if err != nil {
 		return 0, 0
 	}
@@ -430,6 +436,13 @@ func (e *e2e) registrations() []string {
 
 func (e *e2e) startJob(pid int) {
 	os.WriteFile(filepath.Join(e.dir, "docker", fmt.Sprintf("go.%d", pid)), nil, 0o600)
+}
+
+// startJobNamed starts the job a container's runner took, named name as
+// GitHub names it.
+func (e *e2e) startJobNamed(pid int, name string) {
+	os.WriteFile(filepath.Join(e.dir, "docker", fmt.Sprintf("job.%d", pid)), []byte(name), 0o600)
+	e.startJob(pid)
 }
 
 func (e *e2e) endJob(pid int) {
@@ -465,9 +478,13 @@ func verifyJob(t *testing.T) scaleset.JobMessageBase { return waitingJob(t, 0) }
 // "affected-journeys" in the ru-linux pool, request 9102, queued a minute ago.
 func journeysJob(t *testing.T) scaleset.JobMessageBase { return waitingJob(t, 1) }
 
-// waitingJob is job i of the recorded waiting-jobs message, queued a minute
-// ago.
-func waitingJob(t *testing.T, i int) scaleset.JobMessageBase {
+// waitingJob is job i of the first recorded waiting-jobs message, queued a
+// minute ago.
+func waitingJob(t *testing.T, i int) scaleset.JobMessageBase { return recordedJob(t, 0, i) }
+
+// recordedJob is job n of message m of the recorded waiting-jobs messages,
+// queued a minute ago.
+func recordedJob(t *testing.T, m, n int) scaleset.JobMessageBase {
 	var f struct {
 		Messages []struct {
 			Message scaleset.RunnerScaleSetMessage `json:"message"`
@@ -480,7 +497,7 @@ func waitingJob(t *testing.T, i int) scaleset.JobMessageBase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := f.Messages[0].Message.JobAvailableMessages[i].JobMessageBase
+	job := f.Messages[m].Message.JobAvailableMessages[n].JobMessageBase
 	job.QueueTime = time.Now().Add(-time.Minute).UTC()
 	return job
 }
