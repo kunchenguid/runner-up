@@ -161,8 +161,12 @@ func machineAddMain(args []string) int {
 	if pr.OS == "windows" {
 		fmt.Printf("%s: %s/%s, %d cores, %d MB, account: %s, hyperv: %s\n", name, pr.OS, pr.Arch, pr.Cores, pr.MemoryMB, pr.Account, pr.HyperV)
 	} else {
-		fmt.Printf("%s: %s/%s, %d cores, %d MB, docker: %s, kvm: %s, tart: %s, host: %s\n",
+		fmt.Printf("%s: %s/%s, %d cores, %d MB, docker: %s, kvm: %s, tart: %s, host: %s",
 			name, pr.OS, pr.Arch, pr.Cores, pr.MemoryMB, pr.Docker, pr.KVM, pr.Tart, pr.Host)
+		if pr.OS == "darwin" && pr.Container != "" {
+			fmt.Printf(", container: %s", pr.Container)
+		}
+		fmt.Println()
 	}
 	opts := placeOptions{Provider: *provider, Image: *image, Switch: *hvSwitch, Places: *places, Cores: *cores, MemoryMB: *memory,
 		DiskGB: *diskGB, RoomCores: *roomCores, RoomMemoryMB: *roomMemory, Pools: pools}
@@ -191,6 +195,12 @@ type placeOptions struct {
 }
 
 // addMachine adds machine m, as probed, to cfg with its places.
+// placeKind names each provider's places in messages.
+var placeKind = map[string]string{
+	config.ProviderDocker: "Docker", config.ProviderKVM: "KVM", config.ProviderTart: "tart", config.ProviderHost: "host",
+	config.ProviderAccount: "account", config.ProviderHyperV: "Hyper-V", config.ProviderContainer: "Apple container",
+}
+
 func addMachine(cfg *config.Config, m config.Machine, pr agent.Probe, o placeOptions) error {
 	if slices.ContainsFunc(cfg.Machines, func(x config.Machine) bool { return x.Name == m.Name }) {
 		return fmt.Errorf("machine %q is already in the setup", m.Name)
@@ -230,33 +240,22 @@ func addMachine(cfg *config.Config, m config.Machine, pr agent.Probe, o placeOpt
 			o.MemoryMB = 8192
 		}
 	}
+	// An agent older than its container reading gives none for container.
+	if kind, known := placeKind[o.Provider]; known {
+		if r := pr.Ready(o.Provider); r != "ok" && (r != "" || o.Provider != config.ProviderContainer) {
+			return fmt.Errorf("%s cannot run %s places: %s", m.Name, kind, r)
+		}
+	}
 	switch o.Provider {
 	case config.ProviderTart:
-		if pr.Tart != "ok" {
-			return fmt.Errorf("%s cannot run tart places: %s", m.Name, pr.Tart)
-		}
 		if o.Image == "" {
 			return fmt.Errorf("a tart place needs --image, a macOS tart image pulled on %s, such as ghcr.io/cirruslabs/macos-sequoia-base:latest", m.Name)
 		}
-	case config.ProviderHost:
-		if pr.Host != "ok" {
-			return fmt.Errorf("%s cannot run host places: %s", m.Name, pr.Host)
-		}
-	case config.ProviderAccount:
-		if pr.Account != "ok" {
-			return fmt.Errorf("%s cannot run account places: %s", m.Name, pr.Account)
-		}
 	case config.ProviderHyperV:
-		if pr.HyperV != "ok" {
-			return fmt.Errorf("%s cannot run Hyper-V places: %s", m.Name, pr.HyperV)
-		}
 		if o.Image == "" {
 			return fmt.Errorf(`a Hyper-V place needs --image, the full path of a VHDX base disk on %s, such as C:\runner-up\noble.vhdx`, m.Name)
 		}
 	case config.ProviderKVM:
-		if pr.KVM != "ok" {
-			return fmt.Errorf("%s cannot run KVM places: %s", m.Name, pr.KVM)
-		}
 		if o.Image == "" {
 			return fmt.Errorf("a KVM place needs --image, the path of a cloud image on %s, such as Ubuntu's noble-server-cloudimg", m.Name)
 		}
@@ -266,10 +265,6 @@ func addMachine(cfg *config.Config, m config.Machine, pr agent.Probe, o placeOpt
 		}
 		if o.Image == "" {
 			return fmt.Errorf("an Apple container place needs --image, a Linux image on %s with python3 and a user named runner", m.Name)
-		}
-	case config.ProviderDocker:
-		if pr.Docker != "ok" {
-			return fmt.Errorf("%s cannot run Docker places: %s", m.Name, pr.Docker)
 		}
 	}
 	m.Cores, m.MemoryMB = pr.Cores, pr.MemoryMB

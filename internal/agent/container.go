@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/kunchenguid/runner-up/internal/config"
 )
 
 // An Apple container place runs its job in a fresh Linux guest on a Mac, made
@@ -64,11 +63,11 @@ func appleContainerArgs(a *AgentRun) []string {
 
 type appleContainerProvider struct{}
 
-func (appleContainerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Writer) error {
+func (p appleContainerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Writer) error {
 	if a.Image == "" {
 		return errors.New("an Apple container place needs --image, the image its guests start from")
 	}
-	guest, err := linuxGuest(runnerArch(), a.AllowForks, config.Share{Cores: a.Cores, MemoryMB: a.MemoryMB})
+	guest, err := linuxGuest(runnerArch(), p.launch(a))
 	if err != nil {
 		return err
 	}
@@ -94,6 +93,27 @@ func (appleContainerProvider) run(ctx context.Context, a *AgentRun, jit string, 
 		return fmt.Errorf("the guest ran no runner (exit status %d)", ExitCode(err))
 	}
 	return nil
+}
+
+// containerReady says "ok" when this Mac can run Apple container places: the
+// container tool is installed and its service answers, and GitHub publishes
+// a Linux runner for its guests' architecture.
+func containerReady() string {
+	if runtime.GOOS != "darwin" {
+		return "Apple's container tool runs only on macOS"
+	}
+	if _, ok := runnerSHA256["linux-"+runnerArch()]; !ok {
+		return "no Linux runner release for " + runtime.GOARCH
+	}
+	if _, err := exec.LookPath("container"); err != nil {
+		return "Apple's container tool is not installed (brew install container)"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "container", "system", "status").CombinedOutput(); err != nil {
+		return "Apple's container service is not running (container system start): " + FirstLine(string(out), err)
+	}
+	return "ok"
 }
 
 func (appleContainerProvider) clean(ctx context.Context, a *AgentRun) error {

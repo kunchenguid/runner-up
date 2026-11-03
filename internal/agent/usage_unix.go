@@ -211,7 +211,7 @@ func MeasureMain(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	cmd := exec.Command(fs.Args()[0], fs.Args()[1:]...)
-	cmd.Env = append(os.Environ(), "ACTIONS_RUNNER_INPUT_JITCONFIG="+registration)
+	cmd.Env = append(os.Environ(), registrationVar+"="+registration)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

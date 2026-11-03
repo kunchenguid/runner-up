@@ -375,7 +375,7 @@ print(sys.argv[1:], line.decode().strip())
 	}
 
 	guest := filepath.Join(dir, "guest.py")
-	os.WriteFile(guest, []byte(hypervGuest), 0o600)
+	os.WriteFile(guest, []byte(filledGuest(t)), 0o600)
 	script := `
 import importlib.util, os, sys
 spec = importlib.util.spec_from_file_location("guest", sys.argv[1])

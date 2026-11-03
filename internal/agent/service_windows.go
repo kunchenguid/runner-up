@@ -232,7 +232,7 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 		if err != nil {
 			return nil, err
 		}
-		return accountJobFiles(zip, runnerWindowsSHA256[runnerArch()], self, req.AllowForks, req.Cores, req.MemoryMB), nil
+		return accountJobFiles(zip, runnerWindowsSHA256[runnerArch()], self, req), nil
 	}
 	restart := make(chan string, 1)
 	update := func(v string, archive []byte) error { return installService(log, self, v, archive, restart) }

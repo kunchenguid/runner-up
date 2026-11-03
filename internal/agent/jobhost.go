@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -236,12 +235,11 @@ type Options struct {
 
 // Server runs jobs, one per place at a time.
 type Server struct {
-	opts  Options
-	host  Host
-	log   *slog.Logger
-	mu    sync.Mutex
-	held  map[string]chan struct{}
-	dirty map[string]bool
+	opts Options
+	host Host
+	log  *slog.Logger
+	mu   sync.Mutex
+	held map[string]chan struct{}
 	// updating: the service is replacing itself and takes no job.
 	updating bool
 }
@@ -256,7 +254,7 @@ func NewServer(opts Options, host Host, log *slog.Logger) *Server {
 	if opts.CleanWait == 0 {
 		opts.CleanWait = 3 * time.Minute
 	}
-	return &Server{opts: opts, host: host, log: log, held: map[string]chan struct{}{}, dirty: map[string]bool{}}
+	return &Server{opts: opts, host: host, log: log, held: map[string]chan struct{}{}}
 }
 
 // hold takes place's turn, waiting up to wait for a job still running or
@@ -421,47 +419,27 @@ func (s *Server) record(a Account, drop bool) error {
 }
 
 // Sweep deletes every recorded account of place, or of every place when
-// place is empty. A place whose sweep fails stays dirty and takes no job
-// until a later sweep succeeds. Accounts the service did not record are
-// never touched.
+// place is empty, and fails if anything of place is left. Every job request
+// sweeps its place first, so a place whose cleanup failed takes no job until
+// a later sweep succeeds. Accounts the service did not record are never
+// touched.
 func (s *Server) Sweep(place string) error {
 	s.mu.Lock()
 	as, err := s.load()
 	s.mu.Unlock()
 	if err != nil {
-		s.mu.Lock()
-		if place != "" {
-			s.dirty[place] = true
-		}
-		s.mu.Unlock()
 		return err
 	}
-	failed := map[string]error{}
+	var failed error
 	for _, a := range as {
 		if place != "" && a.Place != place {
 			continue
 		}
-		if err := s.clean(a); err != nil && failed[a.Place] == nil {
-			failed[a.Place] = err
+		if err := s.clean(a); err != nil && failed == nil {
+			failed = err
 		}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if place == "" {
-		clear(s.dirty)
-	} else {
-		delete(s.dirty, place)
-	}
-	for p := range failed {
-		s.dirty[p] = true
-	}
-	if err := failed[place]; place != "" {
-		return err
-	}
-	for _, err := range failed {
-		return err
-	}
-	return nil
+	return failed
 }
 
 // clean runs every cleanup step in order, each even after an earlier one
@@ -628,15 +606,14 @@ func (s *Server) run(ctx context.Context, req JobRequest, out io.Writer, gone <-
 	}
 	if err != nil {
 		// It may exist all the same; the record stays for the next sweep.
-		s.markDirty(req.Place, true)
 		return 0, fmt.Errorf("could not make %s: %w", name, err)
 	}
 	if err := s.record(a, false); err != nil {
-		s.cleanAfter(a)
+		s.clean(a)
 		return 0, err
 	}
 	defer func() {
-		if cerr := s.cleanAfter(a); cerr != nil && err == nil {
+		if cerr := s.clean(a); cerr != nil && err == nil {
 			err = cerr
 		}
 	}()
@@ -694,36 +671,6 @@ func (s *Server) run(ctx context.Context, req JobRequest, out io.Writer, gone <-
 	return code, err
 }
 
-// cleanAfter deletes the job's account once its job has ended, and marks the
-// place dirty if anything is left.
-func (s *Server) cleanAfter(a Account) error {
-	err := s.clean(a)
-	s.markDirty(a.Place, err != nil)
-	return err
-}
-
-func (s *Server) markDirty(place string, dirty bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if dirty {
-		s.dirty[place] = true
-	} else {
-		delete(s.dirty, place)
-	}
-}
-
-// Dirty reports the places whose last cleanup failed.
-func (s *Server) Dirty() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []string
-	for p := range s.dirty {
-		out = append(out, p)
-	}
-	slices.Sort(out)
-	return out
-}
-
 // jobCommandLine is the start script's command line: Windows PowerShell,
 // which every Windows has, running the script in the job's folder. It is made
 // from the folder alone, so no request field can reach it.
@@ -736,19 +683,16 @@ func jobCommandLine(powershell, folder string) string {
 var accountJobScript string
 
 // accountJobFiles are a job's start script, which unpacks the runner archive
-// zip only when its SHA-256 is sum, and, unless forks are allowed, the fork
+// zip only when its SHA-256 is sum, and, unless req allows forks, the fork
 // guard, which runs program's fork-guard command.
-func accountJobFiles(zip, sum, program string, allowForks bool, cores, memoryMB int) map[string][]byte {
-	hook := "$env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $dir " + psQuote(guardFile)
+func accountJobFiles(zip, sum, program string, req JobRequest) map[string][]byte {
+	l := accountProvider{}.launch(&AgentRun{Cores: req.Cores, MemoryMB: req.MemoryMB, AllowForks: req.AllowForks, Self: program})
 	files := map[string][]byte{}
-	if allowForks {
-		hook = "# Jobs from forks' pull requests may run: no fork guard."
-	} else {
-		files[guardFile] = []byte(accountGuardScript(program))
+	if l.Hook != "" {
+		files[guardFile] = []byte(l.Guard)
 	}
 	files[startFile] = []byte(strings.NewReplacer(
-		"@CORES@", fmt.Sprint(cores), "@MEMORY_MB@", fmt.Sprint(memoryMB),
-		"@RUNNER_ZIP@", psQuote(zip), "@RUNNER_SHA256@", psQuote(strings.ToUpper(sum)), "@HOOK@", hook,
+		"@RUNNER_ZIP@", psQuote(zip), "@RUNNER_SHA256@", psQuote(strings.ToUpper(sum)), "@LAUNCH@", psLaunch(l),
 	).Replace(accountJobScript))
 	return files
 }
@@ -772,8 +716,9 @@ var errServiceDone = errors.New("done")
 // askService sends req on conn and copies the service's answer to out until
 // the service ends it. It closes conn when ctx is done, which is how the
 // service learns the agent has gone and stops the job. It returns nil once
-// the service said the request was done; a refusal or any other end is an
-// error.
+// the service said the request was done, or when ctx stopped a run - the
+// agent's own choice, as with every other place. A refusal, any other end,
+// or ctx ending a probe, clean or update before its answer is an error.
 func askService(ctx context.Context, conn io.ReadWriteCloser, req JobRequest, out io.Writer) error {
 	return askServiceWith(ctx, conn, req, nil, out)
 }
@@ -815,11 +760,13 @@ func askServiceWith(ctx context.Context, conn io.ReadWriteCloser, req JobRequest
 			break
 		}
 	}
-	if ctx.Err() != nil {
+	switch {
+	case errors.Is(result, errServiceDone):
 		return nil
-	}
-	if errors.Is(result, errServiceDone) {
+	case ctx.Err() != nil && req.Op == "run":
 		return nil
+	case ctx.Err() != nil:
+		return fmt.Errorf("runner-up's service gave no answer to %s: %w", req.Op, context.Cause(ctx))
 	}
 	return result
 }

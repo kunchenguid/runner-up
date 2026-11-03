@@ -45,6 +45,12 @@ type provider interface {
 	run(ctx context.Context, a *AgentRun, jit string, out io.Writer) error
 	// clean removes everything left of the place, running or not.
 	clean(ctx context.Context, a *AgentRun) error
+	// launch is what the place's runner gets besides its registration: the
+	// fork guard unless forks are allowed, and the place's size (launch.go).
+	launch(a *AgentRun) runnerLaunch
+	// ready says "ok" when this machine can make the provider's places, or
+	// why not. `agent probe` reports it for `machine add`.
+	ready() string
 }
 
 type AgentRun struct {
@@ -348,7 +354,8 @@ func waitOrStop(ctx context.Context, cmd *exec.Cmd, stop func(), grace time.Dura
 	}
 }
 
-// Probe is what `agent probe` reports about its machine, for `machine add`.
+// Probe is what `agent probe` reports about its machine, for `machine add`:
+// for each provider, "ok" when it can run here, or why not.
 type Probe struct {
 	Version  string `json:"version"`
 	OS       string `json:"os"`
@@ -362,30 +369,72 @@ type Probe struct {
 	// Account and HyperV are for Windows machines.
 	Account string `json:"account,omitempty"`
 	HyperV  string `json:"hyperv,omitempty"`
+	// Container is empty from an agent older than its reading.
+	Container string `json:"container,omitempty"`
 }
 
-// probe reads the machine: "ok" for each provider that can run here, or why
-// not.
+// reading is where p keeps provider's answer.
+func (p *Probe) reading(provider string) *string {
+	switch provider {
+	case config.ProviderDocker:
+		return &p.Docker
+	case config.ProviderKVM:
+		return &p.KVM
+	case config.ProviderTart:
+		return &p.Tart
+	case config.ProviderHost:
+		return &p.Host
+	case config.ProviderAccount:
+		return &p.Account
+	case config.ProviderHyperV:
+		return &p.HyperV
+	case config.ProviderContainer:
+		return &p.Container
+	}
+	return nil
+}
+
+// Ready is p's answer for provider: "ok", why not, or empty when the agent
+// gave none.
+func (p Probe) Ready(provider string) string {
+	if r := p.reading(provider); r != nil {
+		return *r
+	}
+	return ""
+}
+
+// probe reads the machine. A Windows machine answers only for its own
+// providers, and other machines leave those out.
 func probe() Probe {
 	p := Probe{Version: version.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, Cores: runtime.NumCPU(), MemoryMB: memoryMB()}
-	if runtime.GOOS == "windows" {
-		p.Account = accountReady()
-		p.HyperV = hypervReady()
-		p.Docker = "Windows machines run account and hyperv places"
-		p.KVM, p.Tart, p.Host = p.Docker, p.Docker, p.Docker
-		return p
+	windows := runtime.GOOS == "windows"
+	for _, name := range config.Providers {
+		pr, _ := providerFor(name)
+		switch {
+		case slices.Contains(config.WindowsProviders, name) == windows:
+			*p.reading(name) = pr.ready()
+		case windows:
+			*p.reading(name) = "Windows machines run account and hyperv places"
+		}
 	}
-	p.Docker = "ok"
+	return p
+}
+
+func (dockerProvider) ready() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.ServerVersion}}").CombinedOutput(); err != nil {
-		p.Docker = FirstLine(string(out), err)
+		return FirstLine(string(out), err)
 	}
-	p.KVM = kvmReady()
-	p.Tart = tartReady()
-	p.Host = hostReady()
-	return p
+	return "ok"
 }
+
+func (kvmProvider) ready() string            { return kvmReady() }
+func (tartProvider) ready() string           { return tartReady() }
+func (hostProvider) ready() string           { return hostReady() }
+func (accountProvider) ready() string        { return accountReady() }
+func (hypervProvider) ready() string         { return hypervReady() }
+func (appleContainerProvider) ready() string { return containerReady() }
 
 func FirstLine(out string, err error) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")

@@ -45,8 +45,8 @@ printf 'job-size=%%s,%%s\n' "$RUNNER_UP_CORES" "$RUNNER_UP_MEMORY_MB"
 			if err := linkOrCopy(binary, filepath.Join(share, "runner-up")); err != nil {
 				t.Fatal(err)
 			}
-			a := AgentRun{Cores: 4, MemoryMB: 16384}
-			cmd := exec.Command("bash", "-c", tartScript, "runner-up", share, "", strconv.Itoa(a.Cores), strconv.Itoa(a.MemoryMB), strconv.FormatBool(allow))
+			a := AgentRun{Cores: 4, MemoryMB: 16384, AllowForks: allow}
+			cmd := exec.Command("bash", "-c", tartScript(tartProvider{}.launch(&a)), "runner-up", share, "")
 			// Only disposable environment values can enter the process reading.
 			cmd.Env = []string{"HOME=" + dir, "PATH=" + os.Getenv("PATH"), "LANG=C", "ACTIONS_RUNNER_HOOK_JOB_STARTED="}
 			cmd.Stdin = strings.NewReader(registration + "\n")

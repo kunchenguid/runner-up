@@ -24,7 +24,6 @@ import (
 // jobs, so a tool an action downloads is downloaded once.
 type hostProvider struct{}
 
-func (hostProvider) jobDir(a *AgentRun) string  { return filepath.Join(a.Dir(), "host") }
 func (hostProvider) pidFile(a *AgentRun) string { return filepath.Join(a.Dir(), "host.pid") }
 
 func (hostProvider) toolCache(a *AgentRun) string {
@@ -51,29 +50,19 @@ func (p hostProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 	if err != nil {
 		return err
 	}
-	// The registration came on the agent's standard input. Only the runner's
-	// environment holds it, in the variable the runner reads and removes.
-	env := append(a.SizeEnv(), "ACTIONS_RUNNER_INPUT_JITCONFIG="+jit, "RUNNER_TOOL_CACHE="+tools)
-	if !a.AllowForks {
+	l := p.launch(a)
+	if l.Hook != "" {
 		// The runner runs its job-started hook's path unquoted.
-		hook := filepath.Join(dir, "fork-guard.sh")
-		if strings.ContainsAny(hook, " \t\n") {
-			return fmt.Errorf("the fork guard's path %q has a space, which the runner cannot run: pass the agent a --state-dir without one", hook)
+		if strings.ContainsAny(l.Hook, " \t\n") {
+			return fmt.Errorf("the fork guard's path %q has a space, which the runner cannot run: pass the agent a --state-dir without one", l.Hook)
 		}
-		if err := os.WriteFile(hook, []byte(ForkGuardHook(a.Self)), 0o755); err != nil {
+		if err := os.WriteFile(l.Hook, []byte(l.Guard), 0o755); err != nil {
 			return err
 		}
-		env = append(env, "ACTIONS_RUNNER_HOOK_JOB_STARTED="+hook)
 	}
 	cmd := exec.Command(filepath.Join(runner, "run.sh"))
 	cmd.Dir = runner
-	// The runner's own variables come only from this place.
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "ACTIONS_RUNNER_") && !strings.HasPrefix(kv, "RUNNER_TOOL_CACHE=") && !strings.HasPrefix(kv, "RUNNER_UP_") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = hostEnv(os.Environ(), l, jit, tools)
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// A process the job leaves running keeps the runner's output open; once

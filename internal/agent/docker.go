@@ -26,33 +26,17 @@ func containerName(place string) string { return "runner-up-" + place }
 // registration from standard input and gives it only to the runner, in the
 // one variable the runner reads it from. The runner removes it from its
 // environment before any job starts.
-const dockerEntry = `read -r ACTIONS_RUNNER_INPUT_JITCONFIG && export ACTIONS_RUNNER_INPUT_JITCONFIG && exec "$@"`
+const dockerEntry = `read -r ` + registrationVar + ` && export ` + registrationVar + ` && exec "$@"`
 
-func (dockerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Writer) error {
-	image := a.Image
-	if image == "" {
-		image = DefaultDockerImage
-	}
-	// -i keeps the container's standard input open: the registration
-	// arrives there, never in docker's arguments or environment, so the
-	// container's settings (docker inspect) never hold it.
-	args := []string{"run", "--rm", "-i", "--name", containerName(a.Place), "--label", "runner-up.place=" + a.Place,
-		"--cpus", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB) + "m"}
-	if !a.AllowForks {
-		hook := filepath.Join(a.Dir(), "fork-guard.sh")
-		if err := os.WriteFile(hook, []byte(ForkGuardHook("/opt/runner-up/runner-up")), 0o755); err != nil {
+func (p dockerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Writer) error {
+	l := p.launch(a)
+	hook := filepath.Join(a.Dir(), "fork-guard.sh")
+	if l.Hook != "" {
+		if err := os.WriteFile(hook, []byte(l.Guard), 0o755); err != nil {
 			return err
 		}
-		args = append(args,
-			"-v", a.Self+":/opt/runner-up/runner-up:ro",
-			"-v", hook+":/opt/runner-up/fork-guard.sh:ro",
-			"-e", "ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh")
 	}
-	for _, env := range a.SizeEnv() {
-		args = append(args, "-e", env)
-	}
-	args = append(args, "--entrypoint", "/bin/sh", image, "-c", dockerEntry, "runner-up", "/home/runner/run.sh")
-	cmd := exec.Command("docker", args...)
+	cmd := exec.Command("docker", dockerArgs(a, l, hook)...)
 	cmd.Stdin = strings.NewReader(jit + "\n")
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Start(); err != nil {
@@ -72,6 +56,27 @@ func (dockerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 		return fmt.Errorf("docker could not start the container")
 	}
 	return nil
+}
+
+// dockerArgs run the place's container, with the fork guard's hook file,
+// written on the machine at hook, mounted where l names it. -i keeps the
+// container's standard input open: the registration arrives there, never in
+// docker's arguments or environment, so the container's settings (docker
+// inspect) never hold it.
+func dockerArgs(a *AgentRun, l runnerLaunch, hook string) []string {
+	image := a.Image
+	if image == "" {
+		image = DefaultDockerImage
+	}
+	args := []string{"run", "--rm", "-i", "--name", containerName(a.Place), "--label", "runner-up.place=" + a.Place,
+		"--cpus", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB) + "m"}
+	if l.Hook != "" {
+		args = append(args, "-v", a.Self+":"+dockerGuest+"/runner-up:ro", "-v", hook+":"+l.Hook+":ro")
+	}
+	for _, env := range l.Env {
+		args = append(args, "-e", env)
+	}
+	return append(args, "--entrypoint", "/bin/sh", image, "-c", dockerEntry, "runner-up", "/home/runner/run.sh")
 }
 
 func (dockerProvider) clean(ctx context.Context, a *AgentRun) error {

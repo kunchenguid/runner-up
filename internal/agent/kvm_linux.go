@@ -121,29 +121,18 @@ func (p kvmProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Wr
 	if err != nil {
 		return fmt.Errorf("copying the runner in: %w", err)
 	}
-	env := ""
-	if !a.AllowForks {
+	l := p.launch(a)
+	if l.Hook != "" {
 		self, err := os.Open(a.Self)
 		if err != nil {
 			return err
 		}
-		err = runSession(client, self, nil, "mkdir -p .runner-up && cat > .runner-up/runner-up && chmod 0755 .runner-up/runner-up")
+		err = runSession(client, self, nil, "mkdir -p "+kvmGuest+" && cat > "+kvmGuest+"/runner-up && chmod 0755 "+kvmGuest+"/runner-up")
 		self.Close()
-		if err == nil {
-			err = runSession(client, strings.NewReader(ForkGuardHook("/home/runner/.runner-up/runner-up")), nil,
-				"cat > .runner-up/fork-guard.sh && chmod 0755 .runner-up/fork-guard.sh")
-		}
 		if err != nil {
 			return fmt.Errorf("copying the fork guard in: %w", err)
 		}
-		env = "export ACTIONS_RUNNER_HOOK_JOB_STARTED=/home/runner/.runner-up/fork-guard.sh; "
 	}
-	// The registration goes in on the session's input, never in a command
-	// line; the runner removes the variable from its environment before any
-	// job starts. Without ICU, .NET runs in its invariant mode.
-	script := "read -r jit; export ACTIONS_RUNNER_INPUT_JITCONFIG=\"$jit\"; unset jit; export " + strings.Join(a.SizeEnv(), " ") + "; " + env +
-		"/sbin/ldconfig -p 2>/dev/null | grep -q libicuuc || export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1; " +
-		"exec ./actions-runner/run.sh"
 	session, err := client.NewSession()
 	if err != nil {
 		return err
@@ -151,7 +140,7 @@ func (p kvmProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Wr
 	defer session.Close()
 	session.Stdin = strings.NewReader(jit + "\n")
 	session.Stdout, session.Stderr = out, out
-	if err := session.Start(script); err != nil {
+	if err := session.Start(kvmScript(l)); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
