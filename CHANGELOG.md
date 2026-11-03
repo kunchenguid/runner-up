@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/kunchenguid/runner-up/compare/v0.1.8...v0.1.9) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** read tart guests from the guest kernel, within their size ([a44c2b8](https://github.com/kunchenguid/runner-up/commit/a44c2b849cc77b5c011d0272b0f6076f3e06f63b))
+
 ## [0.1.8](https://github.com/kunchenguid/runner-up/compare/v0.1.7...v0.1.8) (2026-11-03)
 
 
