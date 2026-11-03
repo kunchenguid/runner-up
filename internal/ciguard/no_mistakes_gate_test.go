@@ -1,4 +1,4 @@
-package main_test
+package ciguard
 
 import (
 	"errors"
@@ -545,7 +545,7 @@ func loadReleaseGateStatusStep(t *testing.T) gateStep {
 	hasCheckout := false
 	var publishStep *gateStep
 	for _, step := range job.Steps {
-		if step.Uses == "actions/checkout@v4" {
+		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			hasCheckout = true
 		}
 		if step.Name == "Publish the required statuses on the release PR" {

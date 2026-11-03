@@ -9,6 +9,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 - `internal/coordinator/` - scale set sessions, the planner, place runners, the macOS VM count, updating to the setup's release (`program.go`, `update.go`)
 - `internal/agent/` - the agent and its providers (`docker.go`, `kvm_linux.go`, `tart.go`, `container.go`, `host.go`, `hyperv*.go`, `account_*.go`), the fork guard, and the Windows service and job host
 - `internal/cli/` (how every command reads its flags), `internal/config/` (the setup file), `internal/plan/` (order rules), `internal/release/` (release archives and their signature), `internal/lock/`, `internal/proc/`, `internal/quote/`, `internal/version/`
+- `internal/ciguard/` - tests that guard the CI, release and install files
 - `internal/testbin/` builds runner-up once per test binary for tests that run it as a program
 
 ## Commands
@@ -37,7 +38,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 ## Contribution gate
 
 - PRs to `main` must be raised through no-mistakes and pass CI (required checks `PR must be raised via no-mistakes` and `CI passed`); see [CONTRIBUTING.md](CONTRIBUTING.md). Release PRs get both stamped by `release.yml`.
-- A workflow backing a required check must never use `paths`/`paths-ignore`. The gate action pin and `.github/scripts/no-mistakes-gate.sh` are load-bearing, and `no_mistakes_gate_test.go` and `release_ci_exclusions_test.go` guard them.
+- A workflow backing a required check must never use `paths`/`paths-ignore`. The gate action pin and `.github/scripts/no-mistakes-gate.sh` are load-bearing, and the tests in `internal/ciguard` guard them.
 
 ## Maintaining this file
 
