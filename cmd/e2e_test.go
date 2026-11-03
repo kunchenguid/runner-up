@@ -584,8 +584,8 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	// The agent ran over SSH with every word quoted, and gave the container
 	// the place's share and the fork guard as its job-started hook.
 	ssh := e.lines(filepath.Join(e.dir, "ssh.log"))
-	wantRun := "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '" + runnerUp(t) +
-		"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300'"
+	wantRun := sshTo(e.cfg.Machines[0]) + " '" + runnerUp(t) +
+		"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '" + strconv.Itoa(e.cfg.BootTimeoutSeconds) + "'"
 	if !slices.Contains(ssh, wantRun) {
 		t.Errorf("ssh ran %q, want %q among them", ssh, wantRun)
 	}
@@ -990,8 +990,8 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 
 	// Each job's agent and container got its pool's image, in the one place.
 	agentRun := func(image string) string {
-		return "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '" + runnerUp(t) +
-			"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300' '--image' '" + image + "'"
+		return sshTo(e.cfg.Machines[0]) + " '" + runnerUp(t) +
+			"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '" + strconv.Itoa(e.cfg.BootTimeoutSeconds) + "' '--image' '" + image + "'"
 	}
 	var runs []string
 	for _, line := range e.lines(filepath.Join(e.dir, "ssh.log")) {

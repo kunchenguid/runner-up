@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -33,12 +35,13 @@ func TestWindowsCommandLineReadsTheSameInCmdAndPowerShell(t *testing.T) {
 	line := argv[len(argv)-1]
 	// Plain words pass as they are; the one with a space is in double
 	// quotes, which cmd and PowerShell both take as one argument.
-	want := `runner-up agent run --provider hyperv --place win-pc-1 --cores 4 --memory 8192 --boot-timeout 300 --image C:\runner-up\noble.vhdx --disk-gb 64 --switch "Default Switch"`
+	want := `runner-up agent run --provider hyperv --place win-pc-1 --cores 4 --memory 8192 --boot-timeout ` + strconv.Itoa(cfg.BootTimeoutSeconds) +
+		` --image C:\runner-up\noble.vhdx --disk-gb 64 --switch "Default Switch"`
 	if line != want {
 		t.Errorf("the command line for win-pc is\n%s\nwant\n%s", line, want)
 	}
-	if got := strings.Join(argv[:len(argv)-1], " "); got != "ssh -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 runner@win-pc" {
-		t.Errorf("ssh runs as %q", got)
+	if got := argv[:len(argv)-1]; !slices.Equal(got, coordinator.SshArgs(winPC)) {
+		t.Errorf("ssh runs as %q, want %q", got, coordinator.SshArgs(winPC))
 	}
 }
 
@@ -49,7 +52,7 @@ func TestHyperVPlaceBootsThePoolsBaseDisk(t *testing.T) {
 	cfg := initialSetup(t)
 	p := config.Place{ID: "win-pc-1", Provider: config.ProviderHyperV, Pools: []string{"ru-linux", "ru-linux-gate", "ru-linux-2604"},
 		Cores: 4, MemoryMB: 8192, Image: `C:\runner-up\job.vhdx`, PoolImages: map[string]string{"ru-linux-2604": `C:\runner-up\job-2604.vhdx`}}
-	const head = `runner-up agent run --provider hyperv --place win-pc-1 --cores 4 --memory 8192 --boot-timeout 300 --image `
+	head := `runner-up agent run --provider hyperv --place win-pc-1 --cores 4 --memory 8192 --boot-timeout ` + strconv.Itoa(cfg.BootTimeoutSeconds) + ` --image `
 	for pool, image := range map[string]string{"ru-linux": `C:\runner-up\job.vhdx`, "ru-linux-gate": `C:\runner-up\job.vhdx`,
 		"ru-linux-2604": `C:\runner-up\job-2604.vhdx`} {
 		argv := coordinator.AgentCommand(winPC, coordinator.RunArgs(cfg, p, pool)...)

@@ -73,7 +73,7 @@ func TestUnreachableMachineRestsUntilItsAgentAnswers(t *testing.T) {
 	}
 	var refused bool
 	for _, line := range e.lines(filepath.Join(e.dir, "ssh.log")) {
-		if strings.Contains(line, "-o ConnectTimeout=10 -F /dev/null") && strings.Contains(line, "'agent' 'run'") &&
+		if strings.HasPrefix(line, sshTo(far)+" ") && strings.Contains(line, "'agent' 'run'") &&
 			strings.Contains(line, "'far-1'") {
 			refused = true
 		}
