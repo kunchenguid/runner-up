@@ -71,7 +71,8 @@ func TestPoolSizesKeepRoomForTheFirstJob(t *testing.T) {
 }
 
 // Intent (README, "Setup file"): a job waits only when its cores OR memory do
-// not fit. Pool sizes reach VM launch arguments, not just planner accounting.
+// not fit. Pool sizes reach VM launch arguments, not just planner accounting:
+// the size the coordinator wrote at launch is the size the agent is given.
 func TestPoolSizeFitsMemoryAndSizesTheAgent(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
 	cfg := onePlace(t.TempDir(), "pool:ru-large")
@@ -103,7 +104,16 @@ func TestPoolSizeFitsMemoryAndSizesTheAgent(t *testing.T) {
 	busy.Close()
 	h.svc.Place(context.Background())
 	h.want(map[string]string{"box-1": publish})
-	args := RunArgs(cfg, cfg.SizePlace(first, "ru-large"), "ru-large")
+	// The coordinator reserved the pool's size, not the place's own, and the
+	// place runner gives the agent what the coordinator reserved.
+	var run PlaceRun
+	if err := config.ReadJSON(filepath.Join(cfg.PlaceDir("box-1"), "place.json"), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Reservation != cfg.Pools[1].Size() {
+		t.Fatalf("box-1 holds %+v, want the ru-large pool's %+v", run.Reservation, cfg.Pools[1].Size())
+	}
+	args := RunArgs(cfg, reservedPlace(cfg, first, "ru-large"), "ru-large")
 	values := map[string]string{}
 	for i := 0; i+1 < len(args); i++ {
 		values[args[i]] = args[i+1]

@@ -227,6 +227,19 @@ func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	return args
 }
 
+// reservedPlace is place p sized for a job of pool as the coordinator
+// reserved it: the size it wrote into place.json before launch, or the pool's
+// size when it wrote none. A concurrent setup edit must not change the
+// agent's limits after the reservation was counted.
+func reservedPlace(cfg *config.Config, p config.Place, pool string) config.Place {
+	p = cfg.SizePlace(p, pool)
+	var run PlaceRun
+	if config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
+		p.Cores, p.MemoryMB = run.Reservation.Cores, run.Reservation.MemoryMB
+	}
+	return p
+}
+
 // RunPlace is the place runner's main, for a job of pool.
 func RunPlace(cfg *config.Config, placeID, pool string) int {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil)).With("place", placeID)
@@ -241,13 +254,7 @@ func RunPlace(cfg *config.Config, placeID, pool string) int {
 		log.Error("the place does not serve the pool", "pool", pool)
 		return agent.ExitFailed
 	}
-	p = cfg.SizePlace(p, pool)
-	// The coordinator wrote this size before launch. A concurrent setup edit
-	// must not change the agent's limits after the reservation was counted.
-	var run PlaceRun
-	if config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
-		p.Cores, p.MemoryMB = run.Reservation.Cores, run.Reservation.MemoryMB
-	}
+	p = reservedPlace(cfg, p, pool)
 	// fd 3 is the place's lock. Keep it open until this process ends, and out
 	// of every process started from here.
 	lock := os.NewFile(3, "busy.lock")

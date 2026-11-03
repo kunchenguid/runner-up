@@ -50,7 +50,16 @@ exit 23`
 	}
 	e.serve()
 	e.eventually("new service sees borrow", func() bool { return e.heldBy("box-1") == coordinator.BusyBorrow })
+	// The command ends; while the VM's clean runs, the place stays held, so
+	// no job or borrow can take it before the VM is gone.
+	os.WriteFile(filepath.Join(e.dir, "hold-clean"), nil, 0600)
+	t.Cleanup(func() { os.WriteFile(filepath.Join(e.dir, "clean-go"), nil, 0600) })
 	os.WriteFile(filepath.Join(e.dir, "borrow-done"), nil, 0600)
+	e.eventually("the borrowed VM's clean starts", func() bool { _, err := os.Stat(filepath.Join(e.dir, "cleaning")); return err == nil })
+	if held, _ := lock.HeldBy(filepath.Join(e.cfg.PlaceDir("box-1"), "busy.lock")); !held {
+		t.Fatal("the borrow released its place before its VM was cleaned")
+	}
+	os.WriteFile(filepath.Join(e.dir, "clean-go"), nil, 0600)
 	if err := client.Wait(); err == nil || client.ProcessState.ExitCode() != 23 {
 		t.Fatalf("exit=%v output=%s", err, readBorrowOutput(output))
 	}
@@ -103,11 +112,18 @@ func TestBorrowCLICancellation(t *testing.T) {
 				t.Fatal("cancelled borrow left a VM")
 			}
 			// Queue directories are collected on the next scheduling pass,
-			// after the caller releases its live lock. They are never granted.
+			// after the caller releases its live lock. Once collected, no
+			// later pass can grant the request; until then the place was free
+			// for it. A grant starts a borrow supervisor, which keeps a log:
+			// the queued request, cancelled before any grant, has none.
 			e.eventually("coordinator collects the abandoned request", func() bool {
 				entries, err := os.ReadDir(filepath.Join(e.cfg.StateDir, "borrows"))
 				return err == nil && len(entries) == 0
 			})
+			grants, _ := filepath.Glob(filepath.Join(e.cfg.LogsDir(), "borrow-*.log"))
+			if want := map[bool]int{true: 0, false: 1}[queued]; len(grants) != want {
+				t.Fatalf("the coordinator granted the borrow %d times, want %d: %v\n%s", len(grants), want, grants, e.logs())
+			}
 
 			t.Logf("cancellation exit=130; no VM or request remains\n%s", readBorrowOutput(output))
 		})
@@ -137,10 +153,18 @@ func borrowE2E(t *testing.T) *e2e {
 	agent := filepath.Join(e.dir, "bin", "borrow-agent")
 	// The fake agent owns only the test's VM marker, exactly where the command
 	// makes its stand-in VM. This exercises real agent dispatch and cleanup.
+	// While hold-clean exists, a clean says so in cleaning and waits for
+	// clean-go, so a test can see what holds the place during the clean.
 	script := `#!/bin/sh
 case "$2" in
 vms) if [ -e "$E2E_DIR/vm-live" ]; then echo '["runner-up-box-1"]'; else echo '[]'; fi ;;
-clean) echo clean >> "$E2E_DIR/borrow-clean.log"; rm -f "$E2E_DIR/vm-live" ;;
+clean)
+  echo clean >> "$E2E_DIR/borrow-clean.log"
+  if [ -e "$E2E_DIR/hold-clean" ]; then
+    : > "$E2E_DIR/cleaning"
+    until [ -e "$E2E_DIR/clean-go" ]; do sleep 0.05; done
+  fi
+  rm -f "$E2E_DIR/vm-live" ;;
 *) exit 1 ;;
 esac
 `
@@ -197,20 +221,29 @@ func borrowStatus(t *testing.T, e *e2e) string {
 
 // Intent (README, "Borrowing a virtual Mac"): borrowing requires an explicit
 // label, declared positive minutes and a tart pool, rather than silently taking
-// a non-VM place.
+// a non-VM place. Every case reads a valid setup file, so each refusal is its
+// own and no request reaches the coordinator's queue.
 func TestBorrowCLIRejectsInvalidInputs(t *testing.T) {
 	e := newE2E(t) // Its pool has only a Docker place.
-	for _, args := range [][]string{
-		{"--pool", "ru-linux", "--label", "check", "--minutes", "0", "--", "true"},
-		{"--pool", "ru-linux", "--minutes", "20", "--", "true"},
-		{"--pool", "ru-linux", "--label", "check", "--minutes", "20"},
-		{"--config", e.config, "--pool", "ru-linux", "--label", "check", "--minutes", "20", "--", "true"},
+	usage := "borrow needs --pool LABEL --label TEXT --minutes N -- COMMAND"
+	for _, tc := range []struct {
+		args []string
+		why  string
+	}{
+		{[]string{"--pool", "ru-linux", "--label", "check", "--minutes", "0", "--", "true"}, usage},
+		{[]string{"--pool", "ru-linux", "--minutes", "20", "--", "true"}, usage},
+		{[]string{"--pool", "ru-linux", "--label", "check", "--minutes", "20"}, usage},
+		{[]string{"--pool", "ru-linux", "--label", "check", "--minutes", "20", "--", "true"}, "pool has no tart place"},
 	} {
-		cmd := exec.Command(runnerUp(t), append([]string{"borrow"}, args...)...)
+		args := append([]string{"borrow", "--config", e.config}, tc.args...)
+		cmd := exec.Command(runnerUp(t), args...)
 		b, err := cmd.CombinedOutput()
-		if err == nil || cmd.ProcessState.ExitCode() != 2 {
-			t.Fatalf("borrow %v: %v %s", args, err, b)
+		if err == nil || cmd.ProcessState.ExitCode() != 2 || strings.TrimSpace(string(b)) != tc.why {
+			t.Fatalf("borrow %v: %v %q, want exit 2 and %q", tc.args, err, b, tc.why)
 		}
-		t.Logf("borrow %v: exit=2, %s", args, b)
+		t.Logf("borrow %v: exit=2, %s", tc.args, b)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(e.cfg.StateDir, "borrows")); len(entries) != 0 {
+		t.Fatalf("a refused borrow left requests %v", entries)
 	}
 }

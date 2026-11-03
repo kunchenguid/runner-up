@@ -8,13 +8,19 @@ package agent
 // runner-up's fork-guard command does.
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,7 +97,14 @@ func discReader(t *testing.T) string {
 	return ""
 }
 
-func TestSeedHoldsNoSecretAndPinsTheRunner(t *testing.T) {
+// Intent (README, "Windows machines"): the seed's guest program
+// runs GitHub's runner only when its download matches the published sum it is
+// pinned to. The guest's own download check runs here against a stand-in
+// download: bytes that do not match the pin are refused before anything is
+// unpacked, and bytes that match are unpacked. (The seed holds no
+// registration: hypervSeed takes none, and the registration's own way in is
+// TestRegistrationGoesToTheVMOverItsSerialPortOnce.)
+func TestSeedPinsTheRunnerAndTheGuestRefusesAnyOther(t *testing.T) {
 	seed, err := hypervSeed("win-pc-1", "x64", hypervPlaceLaunch(), time.Unix(1793230000, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +136,60 @@ func TestSeedHoldsNoSecretAndPinsTheRunner(t *testing.T) {
 	if !strings.Contains(string(seed["meta-data"]), "instance-id: runner-up-win-pc-1-") {
 		t.Errorf("meta-data is %q", seed["meta-data"])
 	}
+
+	// The guest's download check, run on the guest program the seed holds,
+	// with only the download's address and the runner's home moved here.
+	py := python(t)
+	dir := t.TempDir()
+	program := filepath.Join(dir, "guest.py")
+	os.WriteFile(program, guest, 0o600)
+	var tarball bytes.Buffer
+	gz := gzip.NewWriter(&tarball)
+	tw := tar.NewWriter(gz)
+	runSH := "#!/bin/sh\necho stand-in runner\n"
+	tw.WriteHeader(&tar.Header{Name: "run.sh", Mode: 0o755, Size: int64(len(runSH))})
+	io.WriteString(tw, runSH)
+	tw.Close()
+	gz.Close()
+	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(tarball.Bytes()) }))
+	defer download.Close()
+	const driver = `import sys
+g = {"__name__": "guest"}
+exec(compile(open(sys.argv[1]).read(), sys.argv[1], "exec"), g)
+g["RUNNER_URL"], g["HOME"] = sys.argv[2], sys.argv[3]
+if len(sys.argv) > 4:
+    g["RUNNER_SHA256"] = sys.argv[4]
+try:
+    g["prepare"]()
+except Exception as e:
+    print("failed:", e)
+`
+	prepare := func(home string, pin ...string) string {
+		os.MkdirAll(home, 0o700)
+		out, err := exec.Command(py, append([]string{"-I", "-c", driver, program, download.URL, home}, pin...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("the guest's download check did not run: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	pinned := filepath.Join(dir, "pinned")
+	if out := prepare(pinned); !strings.Contains(out, "failed: the runner's download does not match its pin") {
+		t.Errorf("the guest took a download its pin does not name: %q", out)
+	}
+	if exists(filepath.Join(pinned, "actions-runner")) {
+		t.Error("the guest unpacked a download its pin does not name")
+	}
+	// The same check takes bytes that match: the refusal above is the pin's.
+	sum := sha256.Sum256(tarball.Bytes())
+	matching := filepath.Join(dir, "matching")
+	out := prepare(matching, hex.EncodeToString(sum[:]))
+	if strings.Contains(out, "does not match its pin") || !exists(filepath.Join(matching, "actions-runner", "run.sh")) {
+		t.Errorf("the guest did not unpack a download that matches its pin: %q", out)
+	}
 }
+
+// exists reports whether path is there.
+func exists(path string) bool { _, err := os.Stat(path); return err == nil }
 
 // hypervPlaceLaunch is the launch of a Hyper-V place of 4 cores and 8 GB that runs the fork guard.
 func hypervPlaceLaunch() runnerLaunch {

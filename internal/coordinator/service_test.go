@@ -727,38 +727,58 @@ func markStarted(t *testing.T, cfg *config.Config, id string) {
 	config.WriteJSON(path, run)
 }
 
-// twoBoxes adds a second machine with the same places.
-func twoBoxes(dir string) *config.Config {
-	cfg := oneBox(dir)
-	second := config.Machine{Name: "spare", SSH: []string{"ci@spare"}}
-	for _, p := range cfg.Machines[0].Places {
-		p.ID = strings.Replace(p.ID, "box", "spare", 1)
-		second.Places = append(second.Places, p)
-	}
-	cfg.Machines = append(cfg.Machines, second)
-	return cfg
-}
-
+// Intent (README, "How it works" and "Order rules"): a second machine shares
+// the one line of waiting jobs rather than keeping its own: whichever
+// machine's place frees takes the next job in line. Two machines, each with
+// one place, take the recorded jobs in the very order one place on one
+// machine takes them (takeOrder), alternating.
 func TestSecondMachineSharesOneLine(t *testing.T) {
+	want := takeOrder(t, onePlace(t.TempDir()), nil)
+	cfg := onePlace(t.TempDir())
+	spare := cfg.Machines[0]
+	spare.Name, spare.SSH = "spare", []string{"ci@spare"}
+	spare.Places = []config.Place{spare.Places[0]}
+	spare.Places[0].ID = "spare-1"
+	cfg.Machines = append(cfg.Machines, spare)
 	f := loadFixture(t, "waiting-jobs.json")
-	h := newHarness(t, twoBoxes(t.TempDir()), newFakeLauncher(), map[string]*fakeSet{})
+	busy := map[string]*os.File{"box-1": occupy(t, cfg, "box-1"), "spare-1": occupy(t, cfg, "spare-1")}
+	h := newHarness(t, cfg, newFakeLauncher(), map[string]*fakeSet{})
 	h.now = f.Now
 	h.feed(f)
-	// Six places on two machines, six jobs: every one runs. The two large
-	// jobs take the two large places; the four others fill the small places,
-	// spread so each machine carries three.
-	got := h.placed()
-	if len(got) != 6 {
-		t.Fatalf("%d places busy, want all 6: %v", len(got), got)
+	var got []string
+	took := map[string]int{}
+	// took records the job place id runs now, if any.
+	record := func(id string) bool {
+		job, ok := h.placed()[id]
+		if !ok {
+			return false
+		}
+		var run PlaceRun
+		config.ReadJSON(filepath.Join(cfg.PlaceDir(id), "place.json"), &run)
+		got = append(got, job+" "+requestName(run.RequestID))
+		took[id]++
+		return true
 	}
-	if !slices.Contains([]string{publish, release}, got["box-large"]) || !slices.Contains([]string{publish, release}, got["spare-large"]) {
-		t.Fatalf("large places run %q and %q, want the two large jobs", got["box-large"], got["spare-large"])
+	for _, id := range []string{"box-1", "spare-1"} {
+		busy[id].Close()
+		h.svc.Place(context.Background())
+		record(id)
 	}
-	perMachine := map[string]int{}
-	for id := range got {
-		perMachine[strings.SplitN(id, "-", 2)[0]]++
+	for running := true; running; {
+		running = false
+		for _, id := range []string{"box-1", "spare-1"} {
+			if _, ok := h.placed()[id]; ok {
+				h.finishAndPlace(id)
+				running = record(id) || running
+			}
+		}
 	}
-	if perMachine["box"] != 3 || perMachine["spare"] != 3 {
-		t.Fatalf("machines carry %v, want three each", perMachine)
+	wantOrder(t, got, want)
+	t.Logf("the two machines took, alternating:\n  %s", strings.Join(got, "\n  "))
+	if took["box-1"] < 2 || took["spare-1"] < 2 {
+		t.Fatalf("the machines took %v jobs, want both to take several", took)
+	}
+	if len(h.svc.waiting) != 0 {
+		t.Fatalf("jobs still waiting: %v", h.svc.waiting)
 	}
 }

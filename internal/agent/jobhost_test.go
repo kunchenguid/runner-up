@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/version"
@@ -582,14 +583,45 @@ func TestOnlyAStoppedRunEndsWellWithoutTheServicesAnswer(t *testing.T) {
 	}
 }
 
+// Intent (README, "Windows machines"): a job account's password is long,
+// never repeats, fits LogonUser and meets Windows's complexity rule. Windows
+// asks for characters from three of the classes upper case, lower case, digit
+// and symbol; a random draw can miss a class, so every password must carry
+// all four.
 func TestPasswordsAreLongRandomAndMeetWindowsComplexity(t *testing.T) {
-	a, _ := newPassword()
-	b, _ := newPassword()
-	if len(a) < 64 || utf16ToString(a) == utf16ToString(b) {
-		t.Fatalf("passwords %d long, equal %v", len(a), utf16ToString(a) == utf16ToString(b))
-	}
-	if len(a) > 127 {
-		t.Fatalf("password %d long; LogonUser takes at most 127", len(a))
+	seen := map[string]bool{}
+	for range 2000 {
+		p, err := newPassword()
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := utf16ToString(p)
+		if len(p) < 64 || len(p) > 127 {
+			t.Fatalf("password %d long; want at least 64, and LogonUser takes at most 127", len(p))
+		}
+		if seen[s] {
+			t.Fatalf("a password repeated after %d", len(seen))
+		}
+		seen[s] = true
+		var upper, lower, digit, symbol bool
+		for _, r := range s {
+			if r <= ' ' || r > '~' {
+				t.Fatalf("password holds %q, which is not printable ASCII", r)
+			}
+			switch {
+			case unicode.IsUpper(r):
+				upper = true
+			case unicode.IsLower(r):
+				lower = true
+			case unicode.IsDigit(r):
+				digit = true
+			default:
+				symbol = true
+			}
+		}
+		if !upper || !lower || !digit || !symbol {
+			t.Fatalf("password lacks a class: upper %v, lower %v, digit %v, symbol %v", upper, lower, digit, symbol)
+		}
 	}
 }
 
@@ -601,22 +633,13 @@ func utf16ToString(p []uint16) string {
 	return string(r)
 }
 
-// The start script checks the runner archive against its pin before
-// unpacking it, and the fork guard is the job-started hook unless the place
-// allows forks.
+// A job's files fill every value of the start script, and the fork guard
+// runs runner-up's own fork-guard command. What the start script does when
+// it runs - the pin, the registration and the hook - is
+// TestAccountJobStartScriptRunsOnlyThePinnedRunner's, on Windows.
 func TestAccountJobFiles(t *testing.T) {
 	files, _ := testFiles(JobRequest{})
 	start := string(files[startFile])
-	for _, want := range []string{
-		`$zip = 'C:\runner-up\cache\actions-runner-win-x64-2.338.1.zip'`,
-		"-ne '" + strings.ToUpper(runnerWindowsSHA256["x64"]) + "'",
-		"$env:ACTIONS_RUNNER_HOOK_JOB_STARTED = (Join-Path $dir 'fork-guard.ps1')",
-		"Remove-Variable registration",
-	} {
-		if !strings.Contains(start, want) {
-			t.Errorf("the start script lacks %q:\n%s", want, start)
-		}
-	}
 	if regexp.MustCompile(`@[A-Z_0-9]+@`).MatchString(start) {
 		t.Errorf("the start script has a value left unfilled:\n%s", start)
 	}

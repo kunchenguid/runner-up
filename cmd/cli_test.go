@@ -77,6 +77,17 @@ func usageCommands(t *testing.T) []string {
 			names = append(names, words[0])
 		}
 	}
+	// The help must list the commands runner-up runs, the agent's among
+	// them; reading none would let every test over them pass having run
+	// nothing.
+	for _, sub := range agent.AgentCommands {
+		if !slices.Contains(names, "agent "+sub) {
+			t.Fatalf("read commands %v from runner-up help, which lacks agent %s:\n%s", names, sub, help)
+		}
+	}
+	if len(names) <= len(agent.AgentCommands) {
+		t.Fatalf("read only %v from runner-up help:\n%s", names, help)
+	}
 	return names
 }
 
@@ -101,9 +112,9 @@ func TestEveryCommandsHelpExitsZero(t *testing.T) {
 		if runtime.GOOS == "windows" && coordinatorOnly(name) {
 			continue
 		}
-		_, stderr, code := cliRun(t, append(strings.Fields(name), "-h")...)
-		if code != 0 {
-			t.Errorf("runner-up %s -h exited %d: %s", name, code, stderr)
+		stdout, stderr, code := cliRun(t, append(strings.Fields(name), "-h")...)
+		if code != 0 || strings.TrimSpace(stdout+stderr) == "" {
+			t.Errorf("runner-up %s -h exited %d and said %q %q", name, code, stdout, stderr)
 		}
 	}
 }
