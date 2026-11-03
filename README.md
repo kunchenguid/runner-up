@@ -525,8 +525,8 @@ only when the release signing key signed its `checksums.txt`. Whoever holds
 that key's private half controls every Windows machine running the service:
 it is kept as a secret of this repository's `release` environment, which only
 `main` may use, and the release workflow signs each release with it into
-`checksums.txt.sig`. A runner-up built without the key's public half refuses
-every release. To update a machine's service, the coordinator holds its
+`checksums.txt.sig`, after checking the signature against the public half
+built into runner-up (`internal/release/key.go`). To update a machine's service, the coordinator holds its
 account places from new jobs, waits for their jobs to end, and has the
 machine's agent hand the service the Windows archive, `checksums.txt` and its
 signature. The service checks the signature, the archive's SHA-256 and that
