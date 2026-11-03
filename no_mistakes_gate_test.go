@@ -18,6 +18,13 @@ import (
 // ruleset waits forever on a check nothing ever reports.
 const requiredCheckContext = "PR must be raised via no-mistakes"
 
+// ciCheckContext is the second required context on main: ci.yml's job that
+// gathers lint and the test matrix into one stable name.
+const ciCheckContext = "CI passed"
+
+// requiredCheckContexts lists every context main's ruleset requires.
+var requiredCheckContexts = []string{requiredCheckContext, ciCheckContext}
+
 const (
 	gateWorkflowPath    = ".github/workflows/no-mistakes-required.yml"
 	releaseWorkflowPath = ".github/workflows/release.yml"
@@ -541,7 +548,7 @@ func loadReleaseGateStatusStep(t *testing.T) gateStep {
 		if step.Uses == "actions/checkout@v4" {
 			hasCheckout = true
 		}
-		if step.Name == "Publish the no-mistakes gate status on the release PR" {
+		if step.Name == "Publish the required statuses on the release PR" {
 			if strings.TrimSpace(step.Run) == "" {
 				t.Fatal("release gate status step has no executable run block")
 			}
@@ -654,17 +661,25 @@ func TestReleaseWorkflowGateStatusWiring(t *testing.T) {
 	}
 	step := loadReleaseGateStatusStep(t)
 
-	t.Run("structural release PR stamps required context", func(t *testing.T) {
+	// GitHub runs no workflow on a release-please PR, so every required
+	// context must be stamped there or the release PR can never merge.
+	t.Run("structural release PR stamps every required context", func(t *testing.T) {
 		output, posts := runReleaseGateStatusStep(t, step, releaseBody)
-		for _, want := range []string{
-			"ARG=--method\nARG=POST",
-			"ARG=repos/" + repo + "/statuses/" + attestationHeadSHA,
-			"ARG=state=success",
-			"ARG=context=" + requiredCheckContext,
-			"ARG=target_url=https://example.invalid/actions/runs/123",
-		} {
-			if !strings.Contains(posts, want) {
-				t.Fatalf("status write missing %q\noutput:\n%s\nrecorded calls:\n%s", want, output, posts)
+		calls := strings.Split(strings.TrimPrefix(posts, "CALL\n"), "CALL\n")
+		if len(calls) != len(requiredCheckContexts) {
+			t.Fatalf("got %d status writes, want one per required context %v\nrecorded calls:\n%s", len(calls), requiredCheckContexts, posts)
+		}
+		for i, context := range requiredCheckContexts {
+			for _, want := range []string{
+				"ARG=--method\nARG=POST",
+				"ARG=repos/" + repo + "/statuses/" + attestationHeadSHA,
+				"ARG=state=success",
+				"ARG=context=" + context + "\n",
+				"ARG=target_url=https://example.invalid/actions/runs/123",
+			} {
+				if !strings.Contains(calls[i], want) {
+					t.Fatalf("status write %d missing %q\noutput:\n%s\nrecorded calls:\n%s", i, want, output, posts)
+				}
 			}
 		}
 	})

@@ -36,7 +36,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 
 ## Contribution gate
 
-- PRs to `main` must be raised through no-mistakes (required check `PR must be raised via no-mistakes`); see [CONTRIBUTING.md](CONTRIBUTING.md).
+- PRs to `main` must be raised through no-mistakes and pass CI (required checks `PR must be raised via no-mistakes` and `CI passed`); see [CONTRIBUTING.md](CONTRIBUTING.md). Release PRs get both stamped by `release.yml`.
 - A workflow backing a required check must never use `paths`/`paths-ignore`. The gate action pin and `.github/scripts/no-mistakes-gate.sh` are load-bearing, and `no_mistakes_gate_test.go` and `release_ci_exclusions_test.go` guard them.
 
 ## Maintaining this file

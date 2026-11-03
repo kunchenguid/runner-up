@@ -1,19 +1,16 @@
 name: CI
 
+# No paths / paths-ignore filter here, deliberately. The "CI passed" job backs
+# a required status check on main, and a path-filtered required check never
+# reports, leaving the pull request blocked on a status that can never arrive.
+# release-please opens its release PR with GITHUB_TOKEN, so GitHub runs no
+# workflow there; release.yml's release-pr-gate-status job stamps "CI passed"
+# on that PR's head instead, after main's own CI has tested the code.
 on:
   push:
     branches: [main]
-  # release-please opens its release PR with GITHUB_TOKEN, which creates a
-  # pull_request run that can only sit in action_required. Its output set is
-  # exactly these files, so excluding them means no run is ever created.
   pull_request:
     branches: [main]
-    paths-ignore:
-      - .release-please-manifest.json
-      - CHANGELOG.md
-      - default.nix
-      - flake.nix
-      - package.nix
 
 jobs:
   check:
@@ -54,3 +51,25 @@ jobs:
 
       - name: Build
         run: go build -o runner-up${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
+
+  # The one required context for CI. Branch rules match a check by its exact
+  # name, and the matrix names its jobs per OS, so this job gathers them into a
+  # single stable name. It runs even when a job it needs failed or was
+  # cancelled, so it always reports, and fails unless every needed job passed.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "CI job results: ${RESULTS}"
+          for result in ${RESULTS}; do
+            if [ "${result}" != "success" ]; then
+              echo "A CI job did not pass."
+              exit 1
+            fi
+          done
