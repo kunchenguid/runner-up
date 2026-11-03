@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.10](https://github.com/kunchenguid/runner-up/compare/v0.1.9...v0.1.10) (2026-11-03)
+
+
+### Features
+
+* **coordinator:** apply a changed setup file in place ([dfcc0b3](https://github.com/kunchenguid/runner-up/commit/dfcc0b34cf4f8dbcd846909e5974fa9cea8dcf41))
+* **drain:** pause named places until a named pair of jobs ran there ([1fc1804](https://github.com/kunchenguid/runner-up/commit/1fc1804e5123e06a32c4d11d2a8b36f111b04575))
+
 ## [0.1.9](https://github.com/kunchenguid/runner-up/compare/v0.1.8...v0.1.9) (2026-11-03)
 
 
