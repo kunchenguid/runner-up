@@ -940,7 +940,7 @@ cannot read. It allows every other job from the repository itself. Set
   lifecycle, resource limits and network exposure, see
   [Linux guests on a Mac](#linux-guests-on-a-mac).
 - **The coordinator does not run on Windows.** Run it on Linux or macOS
-  (see [why](#how-it-is-built)). Agents run on Windows.
+  (see [why](#how-it-works)). Agents run on Windows.
 - **One coordinator per pool.** A second coordinator for the same pool waits
   until the first lets go of the scale set session.
 
