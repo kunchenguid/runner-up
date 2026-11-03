@@ -50,6 +50,59 @@ place's machine over SSH.
 - **Sign-in.** The coordinator uses the GitHub command line's sign-in. It
   stores no token: it asks `gh auth token` each time it opens a session.
 
+## How it is built
+
+<p align="center">
+  <img src="docs/architecture.svg" width="750" alt="GitHub's job queue and runner scale sets talk to one coordinator on Linux or macOS. The coordinator reads the setup file and the GitHub sign-in, and holds scale set sessions, the planner, place runners and the updater. Over SSH, with the registration on standard input, it reaches an agent on each Linux machine (Docker, KVM or host places), Mac (tart, Apple container or host places) and Windows machine (account or Hyper-V places, through the Windows service). Each one-job runner then works with GitHub directly." />
+</p>
+
+runner-up is one program. On the coordinator's machine it holds a scale set
+session for each repository and pool, plans which waiting job goes to which
+free place, and starts a place runner for each job. The place runner reaches
+the place's machine over SSH and runs runner-up there as the agent, which
+makes the fresh container, virtual machine or account and starts GitHub's
+runner in it. From then on the runner works with GitHub directly. On Windows
+the agent asks runner-up's Windows service, which runs as SYSTEM, to make job
+accounts and Hyper-V virtual machines.
+
+**Why the coordinator runs only on Linux and macOS.** It relies on Unix
+process features that Windows does not offer in the same form:
+
+- It hands each place's lock to that place's runner process as an open file.
+  A place is busy exactly while some process holds its lock, so a running job
+  keeps its place through a coordinator restart.
+- It updates by replacing itself in the same process, so launchd or systemd
+  keeps supervising it.
+- It stops place runners with a stop signal, and stops a borrow's command
+  with its process group.
+- A borrow passes your terminal to the coordinator over a Unix socket.
+
+The agent needs none of these, so machines may run Windows.
+
+### Compared with other ways to run your own runners
+
+- **A plain self-hosted runner** stays registered and runs job after job in
+  the same place, keeping each job's leftovers. runner-up starts a one-job
+  runner in a fresh place for every job, and spreads jobs over several
+  machines by their free cores and memory.
+- **Kubernetes-based autoscaling**, such as GitHub's Actions Runner
+  Controller, uses the same runner scale sets but needs a Kubernetes cluster
+  and runs jobs in containers on its nodes. runner-up needs only SSH to each
+  machine, and also runs jobs in virtual machines, in macOS virtual machines
+  on a Mac, and on Windows.
+
+## Words used here
+
+| Word | Meaning |
+| --- | --- |
+| **setup** | the setup file: a JSON file naming the repositories, pools, machines and places to serve. `init` and `machine add` write it, and you may edit it (see [Setup file](#setup-file)) |
+| **place** | where one job runs at a time on a machine: a Docker container, a KVM, tart or Hyper-V virtual machine, an Apple container guest, a Windows account, or the machine itself (a host place). Each job gets a fresh one, except on a host place |
+| **pool** | a label jobs ask for in `runs-on`. Each place serves one or more pools, and a pool may set the cores and memory each of its jobs reserves |
+| **room** | cores and memory set aside. A machine keeps room for its owner (1 core and 1024 MB by default), and the first-ranked job waiting only for cores or memory keeps room on one machine until it fits |
+| **rest** | a machine whose agent cannot be reached rests: its places take no job until the agent answers again (see [When a machine is down](#when-a-machine-is-down)) |
+| **borrow** | reserving a tart place on a Mac for a command of your own for a while, instead of a job (see [Borrowing a virtual Mac](#borrowing-a-virtual-mac)) |
+| **drain** | pausing named places until named jobs have run there with nothing else running (see [Draining places](#draining-places)) |
+
 ## Status
 
 runner-up is young. Read this before you trust it with your jobs.
@@ -70,26 +123,10 @@ runner-up is young. Read this before you trust it with your jobs.
 - **Order rules** are proven by tests that replay GitHub's recorded scale set
   messages. Within one pool of one repository GitHub picks which job a runner
   takes, so the order there is only close (see [Order rules](#order-rules)).
-
-## Quick Start
-
-```sh
-# What to serve, and the label jobs ask for.
-runner-up init --repo you/app --pool my-pool
-
-# Add a machine over SSH; it gets as many places as its cores and memory fit.
-runner-up machine add box --ssh ci@box
-
-runner-up serve
-```
-
-Then ask for the pool in a workflow:
-
-```yaml
-jobs:
-  build:
-    runs-on: my-pool
-```
+- **Experimental:** Hyper-V places, Apple container places, Windows account
+  places, [borrowing a virtual Mac](#borrowing-a-virtual-mac) and
+  [draining places](#draining-places). They may still change between
+  releases.
 
 ## Install
 
@@ -173,7 +210,7 @@ places use:
   its makers (`brew install cirruslabs/cli/tart`), and a macOS image pulled on
   the Mac (see [macOS images](#macos-images)). runner-up runs the tart you
   install and never bundles it; tart's license is its makers' (FSL-1.1).
-- **Apple container places** (a Mac with Apple silicon): Apple's
+- **Apple container places** (experimental; a Mac with Apple silicon): Apple's
   [container](https://github.com/apple/container) tool with its service
   started (`container system start`), and a Linux image built or pulled on the
   Mac with `/usr/bin/python3`, Bash, tar, the Linux libraries GitHub's runner
@@ -187,10 +224,10 @@ places use:
 
 On each Windows machine (Windows 10, 11 or Server 2019 and later, x86-64):
 
-- **Account places:** nothing more. Each job runs as a fresh standard account
+- **Account places** (experimental): nothing more. Each job runs as a fresh standard account
   that runner-up's Windows service makes, contains to the place's cores and
   memory, and deletes afterwards.
-- **Hyper-V places:** Hyper-V, and a base disk for the job VMs: an Ubuntu cloud
+- **Hyper-V places** (experimental): Hyper-V, and a base disk for the job VMs: an Ubuntu cloud
   image converted to VHDX, such as with `qemu-img` on any machine:
 
   ```sh
@@ -207,7 +244,7 @@ On each Windows machine (Windows 10, 11 or Server 2019 and later, x86-64):
 runner-up installs itself on each Linux machine and Mac when you add it. A Windows
 machine needs one step first (see [Windows machines](#windows-machines)).
 
-## Setting up
+## Quick start
 
 ```sh
 # What to serve, and the label jobs ask for.
@@ -225,6 +262,16 @@ runner-up check-config
 runner-up serve
 ```
 
+Then ask for the pool in a workflow:
+
+```yaml
+jobs:
+  build:
+    runs-on: my-pool
+```
+
+## Setting up
+
 `init` checks that your sign-in can create runners for each repository.
 `machine add` reaches the machine over SSH. It copies runner-up there (to
 `~/.local/bin`) when it is missing, reads the machine's cores and memory, and
@@ -236,18 +283,13 @@ readiness; see [What you need](#what-you-need). It copies itself only to a
 machine of its own system and architecture; for another,
 download runner-up for it from the
 [releases](https://github.com/kunchenguid/runner-up/releases) and pass
-`--install FILE`. Both commands write the setup file,
-`~/.config/runner-up/config.json` by default. You can edit that file by hand,
-and it never holds a token. A running `runner-up serve` applies your edits
-(see [Changing the setup](#changing-the-setup)).
-
-Then ask for the pool in a workflow:
-
-```yaml
-jobs:
-  build:
-    runs-on: my-pool
-```
+`--install FILE`. Both commands write the setup file. By default it is
+`~/.config/runner-up/config.json` on Linux and
+`~/Library/Application Support/runner-up/config.json` on a Mac, or
+`runner-up/config.json` under `$XDG_CONFIG_HOME` when that is set; `--config
+FILE` names another. You can edit that file by hand, and it never holds a
+token. A running `runner-up serve` applies your edits (see
+[Changing the setup](#changing-the-setup)).
 
 `runner-up status` shows each place, its running reservation and the waiting
 work. `runner-up usage` shows finished jobs' resource readings beside their
@@ -256,6 +298,9 @@ pool sizes (see [Job sizes and readings](#job-sizes-and-readings)); for borrows,
 places with nothing else running, see [Draining places](#draining-places).
 
 ### Windows machines
+
+> **Experimental.** Account and Hyper-V places have not yet run anyone's daily
+> work (see [Status](#status)).
 
 On the Windows machine, in a terminal opened with **Run as administrator**, run
 runner-up's Windows build (see [Install](#install)) once:
@@ -624,6 +669,9 @@ go, the clone is stopped and deleted.
 
 ### Linux guests on a Mac
 
+> **Experimental.** Apple container places have not yet run a real job (see
+> [Status](#status)).
+
 For each job, an Apple container place's agent starts a guest from the
 place's image as `runner-up-PLACE`, with the job pool's cores and memory (or
 the place's defaults), and `--rm`, so the guest is removed when it stops.
@@ -675,6 +723,9 @@ starts from the image as it is: nothing a job changes is kept.
 
 ## Borrowing a virtual Mac
 
+> **Experimental.** Borrowing may change between releases (see
+> [Status](#status)).
+
 While the coordinator is running, borrow a tart place from a pool instead of
 holding a place by hand:
 
@@ -721,6 +772,9 @@ command starts it under `BORROWED_VM`, the name runner-up reserves and cleans.
   borrowed time is not recorded as a job runtime estimate.
 
 ## Draining places
+
+> **Experimental.** Draining may change between releases (see
+> [Status](#status)).
 
 When some jobs must run on places with nothing else running there, drain the
 places for them while the coordinator keeps running, instead of stopping it
@@ -836,7 +890,8 @@ cannot read. It allows every other job from the repository itself. Set
 - **Apple container guests are lightweight virtual machines.** For their
   lifecycle, resource limits and network exposure, see
   [Linux guests on a Mac](#linux-guests-on-a-mac).
-- **The coordinator does not run on Windows.** Run it on Linux or macOS.
+- **The coordinator does not run on Windows.** Run it on Linux or macOS
+  (see [why](#how-it-is-built)). Agents run on Windows.
 - **One coordinator per pool.** A second coordinator for the same pool waits
   until the first lets go of the scale set session.
 
