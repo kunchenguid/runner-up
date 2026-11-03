@@ -165,9 +165,7 @@ func TestShortestLearnedJobGoesFirstUnlessAnotherWaitedAnHour(t *testing.T) {
 				JobWorkflowRef:   "octo-org/app/.github/workflows/verify.yml@refs/heads/main",
 				RunnerAssignTime: at.Add(-time.Minute), FinishTime: at}},
 		}}
-		if err := h.svc.Handle(context.Background(), "octo-user/tool", "ru-linux", msg); err != nil {
-			h.t.Fatal(err)
-		}
+		h.handle("octo-user/tool", "ru-linux", msg)
 	}
 	// With shortest alone the suite, known to take 4 minutes, goes ahead of
 	// every job of unknown length.

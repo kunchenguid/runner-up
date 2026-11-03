@@ -46,10 +46,16 @@ func ReadVMs(ctx context.Context, m config.Machine) ([]string, error) {
 	return vms, nil
 }
 
+// vmReadBudget is how long one placement pass waits for the Macs it reads.
+// A Mac that has not answered by then counts as a failed reading.
+var vmReadBudget = 30 * time.Second
+
 // refreshVMs reads the running macOS VMs of every Mac with a free tart place,
-// at most every vmReadEvery each, outside the queue lock. A Mac whose reading
-// fails counts no VM beyond its places' own until a reading succeeds. A
-// resting Mac is not read: its places take no job (reach.go).
+// at most every vmReadEvery each, outside the queue lock. It reads the Macs
+// at once, within vmReadBudget for them all, so one Mac slow to answer never
+// delays placement by more than that. A Mac whose reading fails counts no VM
+// beyond its places' own until a reading succeeds. A resting Mac is not read:
+// its places take no job (reach.go).
 func (s *Service) refreshVMs(ctx context.Context) {
 	if s.VmReader == nil {
 		return
@@ -69,30 +75,61 @@ func (s *Service) refreshVMs(ctx context.Context) {
 		}
 	}
 	s.mu.Unlock()
+	if len(due) == 0 {
+		return
+	}
+	type reading struct {
+		machine string
+		vms     []string
+		err     error
+	}
+	ctx, cancel := context.WithTimeout(ctx, vmReadBudget)
+	defer cancel()
+	// Buffered for every reader, so one that answers after the budget never
+	// blocks.
+	readings := make(chan reading, len(due))
 	for _, m := range due {
-		vms, err := s.VmReader(ctx, m)
-		s.mu.Lock()
-		s.vmsRead[m.Name] = now
-		if err != nil {
-			delete(s.vms, m.Name)
-			s.Log.Warn("could not read the Mac's running macOS VMs; counting only its places' clones", "machine", m.Name, "err", err)
-		} else {
-			s.vms[m.Name] = vms
+		go func() {
+			vms, err := s.VmReader(ctx, m)
+			readings <- reading{m.Name, vms, err}
+		}()
+	}
+	got := map[string]reading{}
+	for len(got) < len(due) && ctx.Err() == nil {
+		select {
+		case r := <-readings:
+			got[r.machine] = r
+		case <-ctx.Done():
 		}
-		s.mu.Unlock()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range due {
+		s.vmsRead[m.Name] = now
+		r, ok := got[m.Name]
+		if !ok {
+			r.err = fmt.Errorf("no answer within %s", vmReadBudget)
+		}
+		if r.err != nil {
+			delete(s.vms, m.Name)
+			s.Log.Warn("could not read the Mac's running macOS VMs; counting only its places' clones", "machine", m.Name, "err", r.err)
+		} else {
+			s.vms[m.Name] = r.vms
+		}
 	}
 }
 
 // vmLimitFull says why tart place p cannot start a clone now, or "" when it
 // can.
-func (s *Service) vmLimitFull(p config.Place) string {
+func (v *snapshot) vmLimitFull(p config.Place) string {
+	s := v.s
 	if p.Provider != config.ProviderTart {
 		return ""
 	}
 	own := map[string]bool{agent.CloneName(p.ID): true}
 	clones := 0
 	for _, q := range s.Cfg.Machine(p.Machine).Places {
-		if q.Provider != config.ProviderTart || q.ID == p.ID || !s.runnerAlive(q.ID) {
+		if q.Provider != config.ProviderTart || q.ID == p.ID || !v.place(q.ID).alive {
 			continue
 		}
 		own[agent.CloneName(q.ID)] = true

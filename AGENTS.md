@@ -5,8 +5,8 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 
 ## Layout
 
-- `main.go` calls `cmd.Main`; `cmd/` parses the command line, `init` and `machine add`, and holds the end-to-end tests
-- `internal/coordinator/` - scale set sessions, the planner, place runners, the macOS VM count, updating to the setup's release (`program.go`, `update.go`)
+- `main.go` calls `cmd.Main`; `cmd/` parses the command line, `init` and `machine add`, and holds the end-to-end tests; `serve` hands off to `coordinator.Serve`
+- `internal/coordinator/` - the serve loop (`serve.go`), scale set sessions, placement and the `Service` state split by part (see its doc comment), place runners, the macOS VM count, updating to the setup's release (`program.go`, `update.go`)
 - `internal/agent/` - the agent and its providers (`docker.go`, `kvm_linux.go`, `tart.go`, `container.go`, `host.go`, `hyperv*.go`, `account_*.go`), the fork guard, and the Windows service and job host
 - `internal/cli/` (how every command reads its flags), `internal/config/` (the setup file), `internal/plan/` (order rules), `internal/release/` (release archives and their signature), `internal/lock/`, `internal/proc/`, `internal/quote/`, `internal/version/`
 - `internal/testbin/` builds runner-up once per test binary for tests that run it as a program

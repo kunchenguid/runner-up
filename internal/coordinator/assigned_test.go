@@ -206,10 +206,8 @@ func TestRunnerWhoseJobAnotherTookServesTheJobHandedBack(t *testing.T) {
 		base := jobs[job].JobMessageBase
 		base.MessageType = scaleset.MessageTypeJobStarted
 		h.now = h.now.Add(time.Second)
-		if err := h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{
-			JobStartedMessages: []*scaleset.JobStarted{{RunnerName: runner(place), JobMessageBase: base}}}); err != nil {
-			t.Fatal(err)
-		}
+		h.handle("octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{
+			JobStartedMessages: []*scaleset.JobStarted{{RunnerName: runner(place), JobMessageBase: base}}})
 		markStarted(t, cfg, place)
 	}
 

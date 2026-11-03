@@ -209,8 +209,8 @@ func TestDrainAdmitsOneJobPerNameAndCountsGitHubsPick(t *testing.T) {
 	// #184's job.
 	jobs := loadFixture(t, "waiting-jobs.json").Messages[0].Message.JobAvailableMessages
 	box1, box2 := runnerOf(t, h.cfg, "box-1"), runnerOf(t, h.cfg, "box-2")
-	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", started(box2.RunnerName, jobs[0].JobMessageBase))
-	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", started(box1.RunnerName, jobs[1].JobMessageBase))
+	h.handle("octo-org/app", "ru-linux", started(box2.RunnerName, jobs[0].JobMessageBase))
+	h.handle("octo-org/app", "ru-linux", started(box1.RunnerName, jobs[1].JobMessageBase))
 	h.wantDrain("release", "running", `"verify / linux" runs in box-2, "affected-journeys" runs in box-1`)
 
 	// PR #186's job, named the same, waits for the drain to end.
@@ -238,7 +238,7 @@ func TestDrainStopsWaitingForANamedJobThatStartedElsewhere(t *testing.T) {
 
 	// GitHub gives the large place's runner PR #184's job.
 	jobs := f.Messages[0].Message.JobAvailableMessages
-	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", started(runnerOf(t, h.cfg, "box-large").RunnerName, jobs[1].JobMessageBase))
+	h.handle("octo-org/app", "ru-linux", started(runnerOf(t, h.cfg, "box-large").RunnerName, jobs[1].JobMessageBase))
 	h.wantDrain("release", "draining", `box-1 runs octo-org/app "verify / linux"`)
 	h.finishAndPlace("box-1")
 	h.wantDrain("release", "done", `"affected-journeys" started in box-large, outside the drain; placement resumed`)

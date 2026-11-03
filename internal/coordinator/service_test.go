@@ -219,7 +219,7 @@ func newHarness(t *testing.T, cfg *config.Config, launcher *fakeLauncher, sets m
 	}
 	h := &harness{t: t, cfg: cfg, svc: svc, launcher: launcher, sets: sets}
 	svc.now = func() time.Time { return h.now }
-	// The scale sets the coordinator opens (cmd/main.go).
+	// The scale sets the coordinator opens (Sessions.Match).
 	for _, target := range cfg.Targets() {
 		for _, label := range cfg.Labels() {
 			k := setKey(target, label)
@@ -246,10 +246,19 @@ func (h *harness) feedRange(f fixture, from, to int) {
 			h.now = m.At
 		}
 		msg := m.Message
-		if err := h.svc.Handle(context.Background(), m.Repo, m.Label, &msg); err != nil {
-			h.t.Fatal(err)
-		}
+		h.handle(m.Repo, m.Label, &msg)
 	}
+}
+
+// handle hands the service one message from a scale set's session, then
+// gives up on the spare runners a cancellation left and places what now
+// fits, as the serve loop does when Handle wakes it.
+func (h *harness) handle(target, pool string, msg *scaleset.RunnerScaleSetMessage) {
+	h.svc.Handle(target, pool, msg)
+	h.svc.pass.Lock()
+	h.svc.giveUpIdle(context.Background(), true)
+	h.svc.pass.Unlock()
+	h.svc.Place(context.Background())
 }
 
 // placed returns which job each busy place runs, by place.json.
@@ -392,7 +401,7 @@ func TestLargeJobNeverStartsInASmallPlace(t *testing.T) {
 	for _, m := range f.Messages {
 		if m.Label == "ru-large" {
 			msg := m.Message
-			h.svc.Handle(context.Background(), m.Repo, m.Label, &msg)
+			h.handle(m.Repo, m.Label, &msg)
 		}
 	}
 	if len(h.launcher.held) != 0 {
@@ -685,7 +694,7 @@ func spareRunner(h *harness) PlaceRun {
 	if err := config.ReadJSON(filepath.Join(h.cfg.PlaceDir("box-2"), "place.json"), &spare); err != nil {
 		h.t.Fatal(err)
 	}
-	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 2,
+	h.handle("octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 2,
 		JobStartedMessages: []*scaleset.JobStarted{{RunnerName: first.RunnerName, JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 9101}}}})
 	markStarted(h.t, h.cfg, "box-1")
 	return spare
@@ -695,7 +704,7 @@ func spareRunner(h *harness) PlaceRun {
 // in box-2 took it.
 func cancelBeforeRunner(h *harness) {
 	h.t.Helper()
-	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 3,
+	h.handle("octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 3,
 		JobCompletedMessages: []*scaleset.JobCompleted{{Result: "canceled", JobMessageBase: scaleset.JobMessageBase{
 			RunnerRequestID: 9102, JobDisplayName: "affected-journeys", FinishTime: h.now,
 			JobMessageType: scaleset.JobMessageType{MessageType: scaleset.MessageTypeJobCompleted}}}}})
@@ -708,9 +717,7 @@ func takeFreedPlaceBeforeTidy(h *harness) {
 	h.t.Helper()
 	h.launcher.giveUp(h.t, "box-2")
 	h.now = h.now.Add(5 * time.Second)
-	if err := h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", nil); err != nil {
-		h.t.Fatal(err)
-	}
+	h.svc.Place(context.Background())
 	h.want(map[string]string{"box-1": verify, "box-2": suite, "box-large": publish})
 }
 

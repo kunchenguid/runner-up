@@ -168,9 +168,10 @@ func (ss *Sessions) Done() <-chan struct{} {
 }
 
 // RunSet keeps one scale set's session open and feeds its messages to the
-// service, until ctx ends. It never acquires a job itself: the service does,
-// once a place is chosen. Errors restart the session after a pause; the
-// session's messages stay queued at GitHub until acknowledged.
+// service, until ctx ends. It never acquires a job itself: the serve loop's
+// placement pass does, once a place is chosen, with the serving context.
+// Errors restart the session after a pause; the session's messages stay
+// queued at GitHub until acknowledged.
 func RunSet(ctx context.Context, svc *Service, log *slog.Logger, target, label string, clients ClientFactory) {
 	log = log.With("target", target, "pool", label)
 	for ctx.Err() == nil {
@@ -220,18 +221,14 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 	defer svc.RemoveSet(target, label, sc)
 
 	first := &scaleset.RunnerScaleSetMessage{MessageID: 0, Statistics: session.Session().Statistics}
-	if err := svc.Handle(ctx, target, label, first); err != nil {
-		return err
-	}
+	svc.Handle(target, label, first)
 	last := 0
 	for ctx.Err() == nil {
 		msg, err := session.GetMessage(ctx, last, svc.Setup().AnnounceCapacity)
 		if err != nil {
 			return fmt.Errorf("get message: %w", err)
 		}
-		if err := svc.Handle(ctx, target, label, msg); err != nil {
-			return err
-		}
+		svc.Handle(target, label, msg)
 		if msg != nil {
 			last = msg.MessageID
 			ackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionCleanupTimeout)
