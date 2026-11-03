@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,7 @@ func TestUsageWithholdsGuestReadingsAboveTheGuestsSize(t *testing.T) {
 		cfg.Pools = append(cfg.Pools, config.Pool{Label: r.Pool, Cores: r.Reservation.Cores, MemoryMB: r.Reservation.MemoryMB})
 	}
 	var out bytes.Buffer
-	if usageReport(cfg, &out) != 0 {
+	if usageReport(cfg, &out, io.Discard) != 0 {
 		t.Fatal(out.String())
 	}
 	lines := strings.Split(out.String(), "\n")

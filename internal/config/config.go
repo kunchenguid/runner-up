@@ -3,7 +3,9 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -302,6 +304,9 @@ func DefaultStateDir() string {
 
 func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("no setup file at %s; start one with runner-up init, or name another with --config", path)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -15,11 +15,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/kunchenguid/runner-up/internal/cli"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/lock"
 	"github.com/kunchenguid/runner-up/internal/version"
@@ -94,10 +96,31 @@ func providerFor(name string) (provider, error) {
 	return nil, fmt.Errorf("unknown provider %q", name)
 }
 
+// AgentCommands are the agent's commands, the ones AgentMain takes.
+var AgentCommands = []string{"probe", "vms", "run", "clean", "measure", "service-version", "update-service"}
+
+// AgentMain is `runner-up agent`.
 func AgentMain(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: runner-up agent probe|vms|run|clean|service-version|update-service")
+	usage := "usage: runner-up agent " + strings.Join(AgentCommands, "|")
+	switch {
+	case cli.Help(args):
+		fmt.Println(usage)
+		return 0
+	case len(args) == 0:
+		fmt.Fprintln(os.Stderr, usage)
 		return 2
+	case !slices.Contains(AgentCommands, args[0]):
+		fmt.Fprintln(os.Stderr, "unknown agent command", args[0])
+		fmt.Fprintln(os.Stderr, usage)
+		return 2
+	}
+	// Only run, clean and measure take more than their name.
+	switch args[0] {
+	case "service-version", "update-service", "probe", "vms":
+		fs := flag.NewFlagSet("agent "+args[0], flag.ContinueOnError)
+		if code, stop := cli.Parse(fs, args[1:], false); stop {
+			return code
+		}
 	}
 	switch args[0] {
 	case "service-version":
@@ -133,10 +156,6 @@ func AgentMain(args []string) int {
 		b, _ := json.Marshal(vms)
 		fmt.Println(string(b))
 		return 0
-	case "run", "clean":
-	default:
-		fmt.Fprintln(os.Stderr, "unknown agent command", args[0])
-		return 2
 	}
 	fs := flag.NewFlagSet("agent "+args[0], flag.ContinueOnError)
 	a := &AgentRun{}
@@ -152,8 +171,8 @@ func AgentMain(args []string) int {
 	guestCheck := fs.Int("guest-check", 30, "seconds between readings of a tart clone's boot session")
 	fs.BoolVar(&a.AllowForks, "allow-forks", false, "run jobs from other repositories' pull requests")
 	fs.StringVar(&a.StateDir, "state-dir", "", "the agent's folder; ~/.local/state/runner-up/agent by default, or %LOCALAPPDATA%\\runner-up\\agent on Windows")
-	if err := fs.Parse(args[1:]); err != nil {
-		return 2
+	if code, stop := cli.Parse(fs, args[1:], false); stop {
+		return code
 	}
 	a.BootTimeout = time.Duration(*boot) * time.Second
 	a.GuestCheck = time.Duration(max(*guestCheck, 1)) * time.Second

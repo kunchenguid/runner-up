@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/actions/scaleset"
+	"github.com/kunchenguid/runner-up/internal/cli"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/lock"
 	"github.com/kunchenguid/runner-up/internal/plan"
@@ -390,11 +391,11 @@ func DrainMain(args []string) int {
 	repo := fs.String("repo", "", "the repository the named jobs belong to, OWNER/NAME")
 	label := fs.String("label", "", "name shown in status and logs")
 	minutes := fs.Int("minutes", 0, "the longest the drain lasts, in minutes")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, stop := cli.Parse(fs, args, false); stop {
+		return code
 	}
 	if len(places) == 0 || len(jobs) == 0 || *label == "" || *minutes <= 0 ||
-		int64(*minutes) > int64((1<<63-1)/int64(time.Minute)) || len(fs.Args()) > 0 {
+		int64(*minutes) > int64((1<<63-1)/int64(time.Minute)) {
 		fmt.Fprintln(os.Stderr, "drain needs --place ID --job NAME --label TEXT --minutes N; repeat --place and --job for more")
 		return 2
 	}

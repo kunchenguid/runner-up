@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kunchenguid/runner-up/internal/cli"
 )
 
 type processUse struct {
@@ -192,7 +194,11 @@ func writeUsage(w io.Writer, u Usage) {
 // environment never holds it.
 func MeasureMain(args []string) int {
 	fs := flag.NewFlagSet("agent measure", flag.ContinueOnError)
-	if fs.Parse(args) != nil || len(fs.Args()) == 0 {
+	if code, stop := cli.Parse(fs, args, true); stop {
+		return code
+	}
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "usage: runner-up agent measure -- COMMAND")
 		return 2
 	}
 	input := bufio.NewReader(os.Stdin)
