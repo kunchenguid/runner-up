@@ -36,7 +36,9 @@ func deadline(t testing.TB) time.Duration {
 // Command is exec.Command for a test: the program runs in its own process
 // group, and when it outlives its deadline the test fails naming it and the
 // group is killed. When the test ends, the group is killed too, so nothing a
-// test started outlives it unless it left the group on purpose.
+// test started outlives it unless it left the group on purpose. On Windows,
+// which has no process groups, the program's process tree is killed instead
+// while the program runs.
 func Command(t testing.TB, name string, args ...string) *exec.Cmd {
 	t.Helper()
 	d := deadline(t)
@@ -63,7 +65,7 @@ func Command(t testing.TB, name string, args ...string) *exec.Cmd {
 		mu.Unlock()
 		cancel()
 		if cmd.Process != nil {
-			killGroup(cmd.Process)
+			endLeftovers(cmd.Process)
 		}
 	})
 	return cmd
