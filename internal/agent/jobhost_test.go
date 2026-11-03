@@ -622,7 +622,7 @@ func signedRelease(t *testing.T) (key ed25519.PublicKey, checksums, sig []byte, 
 	return ed25519.PublicKey(k), read("checksums.txt"), read("checksums.txt.sig"), read
 }
 
-// Intent (RUU-37, the captain's choice: "The service updates itself from
+// Intent ("The service updates itself from
 // signed runner-up releases; you create one signing key, and whoever holds it
 // controls the PC"): handed a release the way the coordinator hands it to
 // `runner-up agent update-service`, the service installs it only when the

@@ -14,7 +14,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (RUU-15: "add a connect timeout in SshArgs"). A machine that takes
+// Intent ("add a connect timeout in SshArgs"). A machine that takes
 // SSH's connection but never answers held its place runner for as long as
 // ssh waited, which is for good; one that drops the connection silently held
 // it for the system's own connect timeout. ssh to a machine now gives up

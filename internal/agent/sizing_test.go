@@ -14,7 +14,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/testbin"
 )
 
-// Intent (INF-2112 / RUU-28): the tart guest's executed startup script must
+// Intent: the tart guest's executed startup script must
 // expose the configured cores and memory, including when forks are allowed,
 // without retaining the registration in the reader's process environment.
 // The shared folder and runner archive follow the existing Mac fixture; this

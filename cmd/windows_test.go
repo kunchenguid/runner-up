@@ -43,7 +43,7 @@ func TestWindowsCommandLineReadsTheSameInCmdAndPowerShell(t *testing.T) {
 	}
 }
 
-// Intent (RUU-16): the same Hyper-V places run Ubuntu 24.04 and 26.04 jobs,
+// Intent: the same Hyper-V places run Ubuntu 24.04 and 26.04 jobs,
 // each on the base disk of the pool its job asked for, with the same share
 // of the PC whichever disk boots.
 func TestHyperVPlaceBootsThePoolsBaseDisk(t *testing.T) {

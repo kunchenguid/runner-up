@@ -12,12 +12,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 )
 
-// Intent (RUU-34 / DOP-252): `runner-up usage` never shows a tart guest using
+// Intent: `runner-up usage` never shows a tart guest using
 // more than its own CPUs or memory; such a value reads as unavailable. tart
 // sizes a guest to its reservation. A host job is not confined to its
 // reservation, so its reading stays. The records are real readings from a
-// Mac fleet, renamed: added-up guest processes read 147.70 cores and 83 GB in
-// a 4-core, 16 GB guest.
+// Mac fleet, renamed: they read 147.70 cores and 83 GB in a 4-core, 16 GB guest.
 func TestUsageWithholdsGuestReadingsAboveTheGuestsSize(t *testing.T) {
 	cfg := initialSetup(t)
 	files, err := filepath.Glob(filepath.Join("testdata", "usage", "*.json"))

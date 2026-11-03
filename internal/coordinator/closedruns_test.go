@@ -14,7 +14,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
-// Intent (the captain's direction C on INF-2175: "the coordinator forgets
+// Intent ("the coordinator forgets
 // jobs GitHub closed"): GitHub can stop mentioning a job it assigned to the
 // scale set without ever sending its cancellation, and the coordinator kept
 // such a job waiting for a day, starting runners for it while it read as

@@ -84,9 +84,6 @@ type Config struct {
 	MaxJobSeconds     int `json:"maxJobSeconds,omitempty"`
 	TickSeconds       int `json:"tickSeconds,omitempty"`
 	LogKeepDays       int `json:"logKeepDays,omitempty"`
-	// RecordMessagesDir, when set, keeps every scale set message as JSON for
-	// test fixtures. Messages carry no token.
-	RecordMessagesDir string `json:"recordMessagesDir,omitempty"`
 	// Release, when set, is the runner-up release the coordinator runs and
 	// copies to every machine as its agent (internal/coordinator/program.go).
 	Release *Release `json:"release,omitempty"`

@@ -186,7 +186,7 @@ func TestMachineAddGivesAMacNoMoreTartPlacesThanMacOSRunsVMs(t *testing.T) {
 	}
 }
 
-// Intent (RUU-16): a PC's five Hyper-V places serve the 24.04 and 26.04
+// Intent: a PC's five Hyper-V places serve the 24.04 and 26.04
 // pools alike, each pool on its own base disk: poolImages loads as written
 // and leaves the places, their shares and the machine's budget as they were.
 func TestPoolImagesKeepThePlacesAndTheirShares(t *testing.T) {
@@ -226,7 +226,7 @@ func TestPoolImagesKeepThePlacesAndTheirShares(t *testing.T) {
 	}
 }
 
-// Intent (RUU-16): a pool image no job could run on is refused when the
+// Intent: a pool image no job could run on is refused when the
 // setup loads, not when a job reaches it.
 func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 	// An absolute path on the system the test runs on, as the coordinator's
@@ -261,7 +261,7 @@ func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 	}
 }
 
-// Intent (RUU-37, DOP-235's approved plan: "the setup names a runner-up
+// Intent ("the setup names a runner-up
 // version and a per-platform SHA-256"): a release named as the release
 // workflow tags it, with each platform's archive SHA-256 as its checksums.txt
 // lists it, is accepted; a release the coordinator could not fetch or check is

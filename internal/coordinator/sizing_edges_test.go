@@ -3,7 +3,6 @@
 package coordinator
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +10,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (INF-2112 / RUU-28): keeping room for a waiting job on one machine
+// Intent: keeping room for a waiting job on one machine
 // must not stop compatible work on another machine. The messages are the
 // same recorded release and check offers used by the placement tests.
 func TestPoolReservationLeavesAnotherMachineAvailable(t *testing.T) {
@@ -44,7 +43,7 @@ func TestPoolReservationLeavesAnotherMachineAvailable(t *testing.T) {
 	h.launcher.finish(t, "other-1")
 }
 
-// Intent (INF-2112 / RUU-28): a running job keeps its reservation. A missing
+// Intent: a running job keeps its reservation. A missing
 // snapshot must not make a large running job look like a smaller place
 // default, even after the configured kind size changes.
 func TestUnknownRunningReservationKeepsTheCountedBudget(t *testing.T) {
@@ -60,7 +59,7 @@ func TestUnknownRunningReservationKeepsTheCountedBudget(t *testing.T) {
 	m.Places = append(m.Places, other)
 	busy := occupy(t, cfg, "box-1")
 	defer busy.Close()
-	// occupy writes a readable legacy record; remove it to model a live
+	// occupy writes a readable record; remove it to model a live
 	// runner whose reservation snapshot is unavailable.
 	if err := os.Remove(filepath.Join(cfg.PlaceDir("box-1"), "place.json")); err != nil {
 		t.Fatal(err)
@@ -71,14 +70,4 @@ func TestUnknownRunningReservationKeepsTheCountedBudget(t *testing.T) {
 	if len(h.launcher.held) != 0 {
 		t.Fatalf("unknown live reservation allowed new work: %v", h.placed())
 	}
-	// Readable legacy records still mean the pre-sizing place default.
-	if err := config.WriteJSON(filepath.Join(cfg.PlaceDir("box-1"), "place.json"), PlaceRun{Started: true}); err != nil {
-		t.Fatal(err)
-	}
-	h.svc.Place(context.Background())
-	if len(h.launcher.held) != 1 {
-		t.Fatalf("legacy reservation held too much: %v", h.placed())
-	}
-	h.launcher.finish(t, "box-2")
-	os.Remove(filepath.Join(cfg.PlaceDir("box-1"), "place.json"))
 }

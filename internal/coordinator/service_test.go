@@ -103,7 +103,7 @@ func (f *fakeSet) RemoveRunner(_ context.Context, id int64) error {
 		return errors.New("failed to issue the request: dial tcp: lookup api.github.com: no such host")
 	}
 	if f.running[id] {
-		// As GitHub refused a runner it had given a job (RUU-18).
+		// As GitHub refused a runner it had given a job.
 		return fmt.Errorf("bad request: request DELETE https://broker.actions.githubusercontent.com/rest/_apis/distributedtask/pools/0/agents/%d"+
 			"?api-version=6.0-preview failed(status=\"400 Bad Request\"): %w: Runner is currently running a job and cannot be deleted.",
 			id, scaleset.JobStillRunningError)
@@ -492,7 +492,7 @@ func TestRestartKeepsWaitingJobsAndRunningPlaces(t *testing.T) {
 	h2.want(map[string]string{"box-1": suite, "box-2": pr184, "box-large": publish})
 }
 
-// Intent (RUU-19: "When a job is cancelled before its runner took it,
+// Intent ("When a job is cancelled before its runner took it,
 // runner-up removes the spare runner's GitHub registration first and stops
 // it only once GitHub accepts"): a runner whose job was cancelled before it
 // started keeps its place while GitHub cannot be reached, and is asked about
@@ -579,7 +579,7 @@ func TestUnusedRunnerOutlivesAFailedRemovalAndARestart(t *testing.T) {
 	}
 }
 
-// Intent (RUU-18: at the start timeout, "runner-up removes the runner's
+// Intent (at the start timeout, "runner-up removes the runner's
 // GitHub registration first and powers off only after GitHub accepts the
 // removal"): a runner no job reached in time keeps its place while GitHub
 // cannot be reached, and is asked about again at the next tick. Once GitHub
@@ -639,7 +639,7 @@ func TestIdleRunnerKeepsItsPlaceUntilGitHubRemovesIt(t *testing.T) {
 	}
 }
 
-// Intent (RUU-18: "optionally log a refused removal for an ended place as
+// Intent ("optionally log a refused removal for an ended place as
 // a stranded job, so the next one is diagnosed at once"): when a runner's
 // place has ended but GitHub will not remove the runner because it gave it a
 // job, the coordinator says that job is stranded, naming the runner, and

@@ -205,10 +205,8 @@ func RunPlace(cfg *config.Config, placeID, pool string) int {
 		return agent.ExitFailed
 	}
 	// The pool picks the job's image, so a pool the place does not serve
-	// would run the job on an image chosen for none of its pools. A place
-	// runner started by a coordinator from before pools had images names no
-	// pool, which is safe only where every pool runs on the place's image.
-	if !slices.Contains(p.Pools, pool) && (pool != "" || len(p.PoolImages) > 0) {
+	// would run the job on an image chosen for none of its pools.
+	if !slices.Contains(p.Pools, pool) {
 		log.Error("the place does not serve the pool", "pool", pool)
 		return agent.ExitFailed
 	}

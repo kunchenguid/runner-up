@@ -582,9 +582,8 @@ guarantee of available resources.
   compressed, as Activity Monitor counts it), so a shared page counts once.
   Neither can exceed the guest's own CPUs and memory.
 
-Older agents' tart readings (`guest-processes`) added up guest processes and
-could read far above the guest's size. `runner-up usage` shows any tart value
-above its reservation, which is the guest's size, as unavailable.
+`runner-up usage` shows any tart value above its reservation, which is the
+guest's size, as unavailable.
 
 Compare several representative runs on the same machine/provider, allow
 headroom, then edit the pool's size; a running coordinator applies it to the

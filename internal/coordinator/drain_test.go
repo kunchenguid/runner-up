@@ -79,7 +79,7 @@ func runnerOf(t *testing.T, cfg *config.Config, id string) PlaceRun {
 	return run
 }
 
-// Intent (RUU-31, the captain: "drain new job placement, let running jobs
+// Intent ("drain new job placement, let running jobs
 // finish, do the blocked step, then resume placement right away"; its goal:
 // "without stopping the coordinator or affecting other places"): a drain
 // keeps its places from new jobs while their running jobs finish, then
@@ -155,7 +155,7 @@ func TestDrainLetsRunningJobsFinishAdmitsThePairThenResumes(t *testing.T) {
 	}
 }
 
-// Intent (RUU-31: "then resume placement right away"): a drain whose
+// Intent ("then resume placement right away"): a drain whose
 // caller stops, or reaches its time limit, gives its places back at the
 // next placement, even mid-drain, and the jobs running there carry on.
 func TestDrainEndedByItsCallerResumesPlacementAtOnce(t *testing.T) {
@@ -182,7 +182,7 @@ func TestDrainEndedByItsCallerResumesPlacementAtOnce(t *testing.T) {
 	}
 }
 
-// Intent (RUU-31: "admit one named pair of jobs"; README: GitHub picks which
+// Intent ("admit one named pair of jobs"; README: GitHub picks which
 // of a scale set's jobs a runner takes): each name admits one job at a time,
 // a runner the drain started may take the other of the pair, and the pair
 // counts as run wherever in the drained places GitHub put each job.
@@ -222,7 +222,7 @@ func TestDrainAdmitsOneJobPerNameAndCountsGitHubsPick(t *testing.T) {
 	}
 }
 
-// Intent (RUU-31: "then resume placement right away"): a named job GitHub
+// Intent ("then resume placement right away"): a named job GitHub
 // gives a runner outside the drain will not wait again, so the drain stops
 // waiting for it rather than hold its places to its time limit.
 func TestDrainStopsWaitingForANamedJobThatStartedElsewhere(t *testing.T) {
@@ -244,7 +244,7 @@ func TestDrainStopsWaitingForANamedJobThatStartedElsewhere(t *testing.T) {
 	h.wantDrain("release", "done", `"affected-journeys" started in box-large, outside the drain; placement resumed`)
 }
 
-// Intent (RUU-31: "do not wait for a quiet hour"; README: on a machine whose
+// Intent ("do not wait for a quiet hour"; README: on a machine whose
 // places share its cores and memory, the named jobs keep room ahead of other
 // work): a drained place's named job takes the room its drain freed, even
 // when an older job elsewhere on the machine waits for more room.

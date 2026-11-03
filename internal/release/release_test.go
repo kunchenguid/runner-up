@@ -32,7 +32,7 @@ func signedFixture(t *testing.T) (Signed, []ed25519.PublicKey) {
 		[]ed25519.PublicKey{pub}
 }
 
-// Intent (the captain's choice: "The service updates itself from signed
+// Intent ("The service updates itself from signed
 // runner-up releases; you create one signing key, and whoever holds it
 // controls the PC"): the Windows service accepts a release whose checksums
 // the release signing key signed with openssl, as the release workflow does,

@@ -732,21 +732,17 @@ func (s *Service) inUse(machine, except string) config.Share {
 	return used
 }
 
-// Reservation reads the size held by the running place. Old runners without
-// a snapshot keep the legacy place size.
+// Reservation reads the size held by the running place from its place.json.
 func (s *Service) Reservation(p config.Place) config.Share {
 	var run PlaceRun
 	err := config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), &run)
 	if err == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
 		return run.Reservation
 	}
-	if err != nil || run.Reservation.Cores != 0 || run.Reservation.MemoryMB != 0 {
-		// An unknown live reservation must not be mistaken for a smaller
-		// place default. Hold the counted budget until it can be read.
-		b := s.Cfg.Machine(p.Machine).Budget()
-		return config.Share{Cores: max(b.Cores, p.Cores), MemoryMB: max(b.MemoryMB, p.MemoryMB)}
-	}
-	return share(p)
+	// An unknown live reservation must not be mistaken for a smaller place
+	// default. Hold the counted budget until it can be read.
+	b := s.Cfg.Machine(p.Machine).Budget()
+	return config.Share{Cores: max(b.Cores, p.Cores), MemoryMB: max(b.MemoryMB, p.MemoryMB)}
 }
 
 // PlaceBusy reads one place, sized for the pool when checking an assignment.

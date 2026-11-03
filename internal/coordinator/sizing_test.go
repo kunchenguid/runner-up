@@ -12,7 +12,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (INF-2112, approved design / RUU-28): a pool has one size whichever
+// Intent: a pool has one size whichever
 // place takes it; a waiting large job keeps its room instead of being starved
 // by later small jobs. The 14-core budget and 12+2 illustration are from the
 // accepted card, not proposed production measurements. Job messages are the
@@ -70,7 +70,7 @@ func TestPoolSizesKeepRoomForTheFirstJob(t *testing.T) {
 	h.launcher.finish(t, "host-2")
 }
 
-// Intent (INF-2112 / RUU-28): a job waits only when its cores OR memory do
+// Intent: a job waits only when its cores OR memory do
 // not fit. Pool sizes reach VM launch arguments, not just planner accounting.
 func TestPoolSizeFitsMemoryAndSizesTheAgent(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
