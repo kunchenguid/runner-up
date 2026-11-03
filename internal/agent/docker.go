@@ -22,18 +22,22 @@ type dockerProvider struct{}
 
 func containerName(place string) string { return "runner-up-" + place }
 
+// dockerEntry starts the runner inside the container: it reads the
+// registration from standard input and gives it only to the runner, in the
+// one variable the runner reads it from. The runner removes it from its
+// environment before any job starts.
+const dockerEntry = `read -r ACTIONS_RUNNER_INPUT_JITCONFIG && export ACTIONS_RUNNER_INPUT_JITCONFIG && exec "$@"`
+
 func (dockerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.Writer) error {
 	image := a.Image
 	if image == "" {
 		image = DefaultDockerImage
 	}
-	args := []string{"run", "--rm", "--name", containerName(a.Place), "--label", "runner-up.place=" + a.Place,
-		"--cpus", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB) + "m",
-		// The runner reads its registration from this variable, named here
-		// without a value so docker takes it from its own environment, never
-		// from an argument anyone on the machine could read. The runner removes
-		// it from its environment before any job starts.
-		"-e", "ACTIONS_RUNNER_INPUT_JITCONFIG"}
+	// -i keeps the container's standard input open: the registration
+	// arrives there, never in docker's arguments or environment, so the
+	// container's settings (docker inspect) never hold it.
+	args := []string{"run", "--rm", "-i", "--name", containerName(a.Place), "--label", "runner-up.place=" + a.Place,
+		"--cpus", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB) + "m"}
 	if !a.AllowForks {
 		hook := filepath.Join(a.Dir(), "fork-guard.sh")
 		if err := os.WriteFile(hook, []byte(ForkGuardHook("/opt/runner-up/runner-up")), 0o755); err != nil {
@@ -47,9 +51,9 @@ func (dockerProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 	for _, env := range a.SizeEnv() {
 		args = append(args, "-e", env)
 	}
-	args = append(args, "--entrypoint", "/home/runner/run.sh", image)
+	args = append(args, "--entrypoint", "/bin/sh", image, "-c", dockerEntry, "runner-up", "/home/runner/run.sh")
 	cmd := exec.Command("docker", args...)
-	cmd.Env = append(os.Environ(), "ACTIONS_RUNNER_INPUT_JITCONFIG="+jit)
+	cmd.Stdin = strings.NewReader(jit + "\n")
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("docker: %w", err)

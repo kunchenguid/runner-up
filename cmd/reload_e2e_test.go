@@ -66,7 +66,7 @@ func TestSetupChangeAppliesWhileAJobRuns(t *testing.T) {
 	e.actions.sendTo("ru-small", scaleset.JobAvailable{JobMessageBase: jobMessage(journeysJob(t), scaleset.MessageTypeJobAvailable)})
 	e.eventually("a container starts in the new place", func() bool { small, _ := e.containerIn("box-2"); return small > 0 })
 	small, _ := e.containerIn("box-2")
-	wantDocker := "run --rm --name runner-up-box-2 --label runner-up.place=box-2 --cpus 1 --memory 1024m"
+	wantDocker := "run --rm -i --name runner-up-box-2 --label runner-up.place=box-2 --cpus 1 --memory 1024m"
 	if docker := e.lines(filepath.Join(e.dir, "docker", "docker.log")); !slices.ContainsFunc(docker, func(l string) bool {
 		return strings.HasPrefix(l, wantDocker)
 	}) {

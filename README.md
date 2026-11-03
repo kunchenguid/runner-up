@@ -859,9 +859,11 @@ cannot read. It allows every other job from the repository itself. Set
 
 - **Docker places share the machine's kernel.** A job that escapes its
   container reaches the machine. Use KVM places for code you trust less.
-- **The runner image needs `/home/runner/run.sh`.** Docker places use GitHub's
-  runner image, `ghcr.io/actions/actions-runner`, by default. Another image
-  must keep the runner at that path.
+- **The runner image needs `/home/runner/run.sh` and `/bin/sh`.** Docker
+  places use GitHub's runner image, `ghcr.io/actions/actions-runner`, by
+  default. Another image must keep the runner at that path and a shell at
+  `/bin/sh`: the container's shell reads the registration from its standard
+  input and hands it to the runner, so `docker inspect` never shows it.
 - **KVM places can reach the machine's loopback.** A KVM place uses QEMU's
   user networking. Through it, a job can reach services the machine listens
   on at 127.0.0.1, at the address 10.0.2.2. Keep such services behind their
