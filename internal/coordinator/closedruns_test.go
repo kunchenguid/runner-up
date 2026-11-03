@@ -158,9 +158,7 @@ func TestJobOfAnOpenRunWaitsAndIsAskedAboutRarely(t *testing.T) {
 			free()
 			if tc.to < 5 {
 				msg := loadFixture(t, "assigned-takebacks.json").Messages[4].Message
-				if err := h.svc.Handle(context.Background(), "octo-org/app", "ru-proof", &msg); err != nil {
-					t.Fatal(err)
-				}
+				h.handle("octo-org/app", "ru-proof", &msg)
 			}
 			h.svc.Place(context.Background())
 			h.want(map[string]string{"box-1": proofJob, "box-2": suite})
@@ -260,9 +258,7 @@ func TestRunReadsAreBoundedPerPassAndPerHour(t *testing.T) {
 	for i := range int64(70) {
 		msg := loadFixture(t, "assigned-takebacks.json").Messages[0].Message
 		msg.JobAssignedMessages[0].WorkflowRunID = proofRun + i
-		if err := h.svc.Handle(context.Background(), "octo-org/app", "ru-proof", &msg); err != nil {
-			t.Fatal(err)
-		}
+		h.handle("octo-org/app", "ru-proof", &msg)
 	}
 	h.now = h.now.Add(10 * time.Minute)
 	h.svc.Place(context.Background())

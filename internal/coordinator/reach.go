@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"sync"
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/agent"
@@ -18,6 +19,37 @@ import (
 // another place. Every reachAskEvery the coordinator asks the machine's agent
 // its version, which costs no call to GitHub; once it answers, the machine's
 // places take jobs again.
+
+// machines is what the coordinator knows of its machines beyond the setup:
+// which rest because their agent could not be reached, and which macOS VMs
+// each Mac runs (vmlimit.go).
+type machines struct {
+	// unreachable are the resting machines, by name, with when each was found
+	// unreachable, and reachAsked when each was last asked.
+	unreachable map[string]time.Time
+	reachAsked  map[string]time.Time
+	// Reach asks a resting machine's agent for an answer; asking counts the
+	// questions not yet answered.
+	Reach  reacher
+	asking sync.WaitGroup
+
+	// VmReader, set when a place runs in tart, reads each Mac's running macOS
+	// VMs; vms is the latest reading by machine, and vmsRead when it was
+	// taken.
+	VmReader vmReader
+	vms      map[string][]string
+	vmsRead  map[string]time.Time
+}
+
+func newMachines() machines {
+	return machines{
+		unreachable: map[string]time.Time{},
+		reachAsked:  map[string]time.Time{},
+		Reach:       ReachAgent,
+		vms:         map[string][]string{},
+		vmsRead:     map[string]time.Time{},
+	}
+}
 
 // sshFailed is ssh's exit code when it could not reach the machine or lost
 // it. The agent itself exits 0 to 3.

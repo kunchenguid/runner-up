@@ -6,20 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/config"
-	"github.com/kunchenguid/runner-up/internal/lock"
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
@@ -38,38 +35,6 @@ type Launcher interface {
 	Stop(placeID string) error
 }
 
-// PlaceRun is a place's place.json for a job or borrow, written by the coordinator
-// just before launch. For jobs, the place's runner updates it as the job starts.
-type PlaceRun struct {
-	BorrowID   string    `json:"borrowId,omitempty"`
-	RunnerName string    `json:"runnerName"`
-	RunnerID   int       `json:"runnerId"`
-	Target     string    `json:"target"`
-	Pool       string    `json:"pool"`
-	Repo       string    `json:"repo"`
-	RequestID  int64     `json:"requestId,omitempty"`
-	JobName    string    `json:"jobName"`
-	LaunchedAt time.Time `json:"launchedAt"`
-	Started    bool      `json:"started"`
-	// RanJob is the display name of the job that reached the runner, as the
-	// runner printed it. GitHub may give a scale set's runner another of the
-	// set's jobs than JobName, the one it was started for.
-	RanJob string `json:"ranJob,omitempty"`
-	PID    int    `json:"pid,omitempty"`
-	// Reservation is frozen at launch, so restarts and setup edits cannot
-	// shrink a running job's claim on the machine.
-	Reservation config.Share `json:"reservation,omitempty"`
-	// Unreachable: the place runner could not reach its machine's agent, or
-	// lost it (reach.go).
-	Unreachable bool `json:"unreachable,omitempty"`
-}
-
-type acquired struct {
-	Job   plan.Job  `json:"job"`
-	Place string    `json:"place"`
-	At    time.Time `json:"at"`
-}
-
 // SavedState preserves the job queue and learned timings across a restart.
 // Places remember themselves through their locks and place.json; local borrow
 // requests are re-read by refreshBorrowsLocked.
@@ -81,7 +46,7 @@ type SavedState struct {
 	// Unreachable is when each resting machine was found unreachable, by name.
 	Unreachable map[string]time.Time `json:"unreachable,omitempty"`
 	// Departed are the places a setup change removed, or moved to another
-	// machine, while their runner ran (Service.departed).
+	// machine, while their runner ran (runners.departed).
 	Departed []departedPlace `json:"departed,omitempty"`
 }
 
@@ -92,6 +57,24 @@ type departedPlace struct {
 	Place   config.Place `json:"place"`
 }
 
+// Service is the coordinator's state, in four parts:
+//   - queue (queue.go): the jobs waiting for a place, and those acquired for
+//     a runner that has not yet taken one
+//   - runners (runners.go): the runners it started, and what it still owes
+//     them and their places
+//   - machines (reach.go, vmlimit.go): which machines rest, and which macOS
+//     VMs each Mac runs
+//   - reads (reads.go, closedruns.go): what it read from GitHub's API for the
+//     order rules and about quiet runs
+//
+// and, within each placement pass, a snapshot of the places (snapshot.go).
+//
+// mu guards every part, and is never held through a call to GitHub, a
+// machine or a launch: a pass reads under mu, lets go of it to call out, and
+// takes it again to record the answer. pass makes the placement and tidying
+// passes take turns, so only one acts on a place at a time. Only the serve
+// loop (serve.go) runs them, with the serving context; a scale set's session
+// hands its messages to Handle, which records them and wakes the loop.
 type Service struct {
 	Cfg      *config.Config
 	Log      *slog.Logger
@@ -99,97 +82,32 @@ type Service struct {
 	launcher Launcher
 	Rules    []plan.Rule
 
-	mu       sync.Mutex
-	sets     map[string]SetClient
-	waiting  map[string]plan.Job
-	acquired map[string]acquired
-	cooling  map[string]time.Time
-	wasted   map[string]time.Time
-	timings  map[string]time.Duration
-	// unused are runners that ended before a job reached them, by unusedKey:
-	// each is still registered with its scale set until Tidy removes it.
-	unused map[string]PlaceRun
-	// givenUp are the runners the coordinator gave up on that GitHub has
-	// answered for, by name (giveUpLocked): true once GitHub removed the
-	// runner and its place is stopping, false when GitHub said it runs a job.
-	givenUp map[string]bool
-	// spare are the scale sets a job of which was cancelled before a runner
-	// took it, while a runner left waiting for nothing is still to go
-	// (stopSpareLocked).
-	spare map[setName]bool
-	// unreachable are the resting machines, by name, with when each was found
-	// unreachable, and reachAsked when each was last asked (reach.go).
-	unreachable map[string]time.Time
-	reachAsked  map[string]time.Time
-	// departed are the places a setup change removed, or moved to another
-	// machine, while their runner ran, by id, as the setup had them where the
-	// runner runs (reload.go).
-	departed map[string]config.Place
-	// Reach asks a resting machine's agent for an answer; asking counts the
-	// questions not yet answered.
-	Reach  reacher
-	asking sync.WaitGroup
+	pass sync.Mutex
+	mu   sync.Mutex
+	sets map[string]*liveSet
+	wake chan struct{}
 
-	// The readers the order rules need, set only when the rules use them.
-	LabelReader    func(context.Context, string) (map[string]map[string]bool, error)
-	WorkflowReader func(context.Context, string, int64) (string, error)
-	// RunReader, set whenever GitHub's API can be read, says whether GitHub
-	// has closed a workflow run, cancelled or finished, and every job of it
-	// with it (closedruns.go).
-	RunReader    func(context.Context, string, int64) (bool, error)
-	readMu       sync.Mutex
-	runsChecked  map[workflowRun]time.Time
-	runReads     []time.Time
-	labelsRead   map[string]time.Time
-	labels       map[string]map[string]map[string]bool
-	runWorkflows map[workflowRun]runWorkflow
-
-	// vmReader, set when a place runs in tart, reads each Mac's running macOS
-	// VMs (vmlimit.go); vms is the latest reading by machine.
-	VmReader vmReader
-	vms      map[string][]string
-	vmsRead  map[string]time.Time
+	queue
+	runners
+	machines
+	reads
 
 	// drains are the live drains, reread on every placement (drain.go).
 	drains []*drain
-
-	// held are the places that take no new job, by id, and why: account
-	// places while their machine's service updates (update.go).
-	held map[string]string
 }
 
-type workflowRun struct {
-	repo string
-	id   int64
+// liveSet is a scale set's client while its session is open. calls counts
+// the calls to GitHub a pass makes through it after letting go of mu: its
+// session closes only once they are done (RemoveSet).
+type liveSet struct {
+	SetClient
+	calls sync.WaitGroup
 }
 
 // setName names one runner scale set: a target's, for one pool.
 type setName struct{ target, pool string }
 
-type runWorkflow struct {
-	path      string
-	attempted time.Time
-}
-
 func setKey(target, pool string) string { return target + "|" + pool }
-
-// keysOf names the job a message is about, both ways.
-func keysOf(target, pool string, m scaleset.JobMessageBase) []string {
-	keys := []string{plan.RunKey(target, pool, m.WorkflowRunID, m.JobDisplayName)}
-	if m.RunnerRequestID != 0 {
-		keys = append(keys, plan.RequestKey(target, pool, m.RunnerRequestID))
-	}
-	return keys
-}
-
-// repoOf is the repository a job message belongs to: its own owner and name,
-// or the target's for a repository scale set that left them out.
-func repoOf(target string, m scaleset.JobMessageBase) string {
-	if m.OwnerName != "" && m.RepositoryName != "" {
-		return m.OwnerName + "/" + m.RepositoryName
-	}
-	return target
-}
 
 func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Service, error) {
 	rules, err := plan.ParseOrder(cfg.Order)
@@ -198,25 +116,12 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 	}
 	s := &Service{
 		Cfg: cfg, Log: log, now: time.Now, launcher: launcher, Rules: rules,
-		sets:         map[string]SetClient{},
-		waiting:      map[string]plan.Job{},
-		acquired:     map[string]acquired{},
-		cooling:      map[string]time.Time{},
-		wasted:       map[string]time.Time{},
-		timings:      map[string]time.Duration{},
-		unused:       map[string]PlaceRun{},
-		givenUp:      map[string]bool{},
-		spare:        map[setName]bool{},
-		unreachable:  map[string]time.Time{},
-		reachAsked:   map[string]time.Time{},
-		departed:     map[string]config.Place{},
-		Reach:        ReachAgent,
-		labelsRead:   map[string]time.Time{},
-		labels:       map[string]map[string]map[string]bool{},
-		runWorkflows: map[workflowRun]runWorkflow{},
-		runsChecked:  map[workflowRun]time.Time{},
-		vms:          map[string][]string{},
-		vmsRead:      map[string]time.Time{},
+		sets:     map[string]*liveSet{},
+		wake:     make(chan struct{}, 1),
+		queue:    newQueue(),
+		runners:  newRunners(),
+		machines: newMachines(),
+		reads:    newReads(),
 	}
 	if err := s.prepare(cfg); err != nil {
 		return nil, err
@@ -272,31 +177,66 @@ func (s *Service) Setup() *config.Config {
 	return s.Cfg
 }
 
+// Wakes says when a message or a newly opened session may have given a place
+// work: the serve loop then runs a pass.
+func (s *Service) Wakes() <-chan struct{} { return s.wake }
+
+func (s *Service) poke() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
 // AddSet makes a scale set's client available for acquiring and placing.
 func (s *Service) AddSet(target, pool string, c SetClient) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sets[setKey(target, pool)] = c
+	s.sets[setKey(target, pool)] = &liveSet{SetClient: c}
+	s.mu.Unlock()
+	s.poke()
 }
 
 // RemoveSet makes c, a scale set's client, unavailable once its session
-// ends. A newer session's client for the same scale set stays.
+// ends, and returns once no pass calls GitHub through it any more, so no job
+// is acquired or runner registered through a closing session. A newer
+// session's client for the same scale set stays.
 func (s *Service) RemoveSet(target, pool string, c SetClient) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sets[setKey(target, pool)] == c {
+	ls := s.sets[setKey(target, pool)]
+	if ls != nil && ls.SetClient == c {
 		delete(s.sets, setKey(target, pool))
+	} else {
+		ls = nil
+	}
+	s.mu.Unlock()
+	if ls != nil {
+		ls.calls.Wait()
 	}
 }
 
-// Handle takes one message from a scale set's listener: it records what
-// changed and then places whatever now fits.
-func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset.RunnerScaleSetMessage) error {
+// setLocked hands out the client of target's scale set for pool, while its
+// session is open, for calls made after letting go of mu; done must be
+// called once they are made.
+func (s *Service) setLocked(target, pool string) (c SetClient, done func()) {
+	ls := s.sets[setKey(target, pool)]
+	if ls == nil {
+		return nil, func() {}
+	}
+	ls.calls.Add(1)
+	return ls.SetClient, ls.calls.Done
+}
+
+// Handle takes one message from a scale set's session: it records what
+// changed and wakes the serve loop to place whatever now fits. It calls
+// nothing outside the coordinator, so the session acknowledges the message
+// at once.
+func (s *Service) Handle(target, pool string, msg *scaleset.RunnerScaleSetMessage) {
 	if msg == nil {
-		s.Place(ctx)
-		return nil
+		return
 	}
 	s.mu.Lock()
+	defer s.poke()
+	defer s.mu.Unlock()
 	now := s.now()
 	job := func(m scaleset.JobMessageBase, assigned bool) plan.Job { return jobOf(target, pool, m, assigned, now) }
 	for _, m := range msg.JobAvailableMessages {
@@ -330,7 +270,6 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 		s.Log.Info("job started", "repo", repoOf(target, m.JobMessageBase), "job", m.JobDisplayName, "run", m.WorkflowRunID,
 			"runner", m.RunnerName, "waited", m.RunnerAssignTime.Sub(queued).Round(time.Second).String())
 	}
-	cancelledBeforeRunner := false
 	for _, m := range msg.JobCompletedMessages {
 		// Runner assignment to finish is wall runtime, not queue or boot time.
 		// Cancellations, failures and assignment take-backs teach nothing.
@@ -347,17 +286,15 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 				continue
 			}
 			if _, ok := s.acquired[k]; ok && m.RunnerName == "" {
-				cancelledBeforeRunner = true
+				// Cancelled before a runner took it: the next Tidy stops the
+				// runner left waiting for nothing (stopSpare).
+				s.spare[setName{target, pool}] = true
 			}
 			delete(s.acquired, k)
 			delete(s.waiting, k)
 		}
 		s.Log.Info("job completed", "repo", repoOf(target, m.JobMessageBase), "job", m.JobDisplayName, "run", m.WorkflowRunID,
 			"runner", m.RunnerName, "result", m.Result)
-	}
-	if cancelledBeforeRunner {
-		s.spare[setName{target, pool}] = true
-		s.stopSpareLocked(ctx, target, pool)
 	}
 	if msg.Statistics != nil {
 		known := 0
@@ -372,768 +309,6 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 		}
 	}
 	s.saveLocked()
-	s.mu.Unlock()
-
-	s.Place(ctx)
-	return nil
-}
-
-// jobOf is the job a message of target's scale set for pool is about, as seen
-// at now.
-func jobOf(target, pool string, m scaleset.JobMessageBase, assigned bool, now time.Time) plan.Job {
-	return plan.Job{Target: target, Pool: pool, Repo: repoOf(target, m), RequestID: m.RunnerRequestID, QueueTime: m.QueueTime,
-		Name: m.JobDisplayName, Workflow: m.JobWorkflowRef, RunID: m.WorkflowRunID, SeenAt: now, HeardAt: now,
-		Assigned: assigned, JobID: m.JobID}
-}
-
-// waitLocked records a job GitHub offered or assigned. Offered or assigned
-// again, it keeps its place in line.
-func (s *Service) waitLocked(j plan.Job) {
-	k := j.Key()
-	if j.QueueTime.IsZero() {
-		j.QueueTime = j.SeenAt
-	}
-	if old, ok := s.waiting[k]; ok {
-		j.SeenAt, j.QueueTime = old.SeenAt, old.QueueTime
-	}
-	if a, ok := s.acquired[k]; ok {
-		// Offered or assigned again after its runner was started. While that
-		// runner is alive this is a redelivery, or GitHub assigning again a
-		// job it took back before the runner was up; the runner takes it, and
-		// a second runner would wait for nothing. Once that runner is gone,
-		// GitHub has given the job back.
-		if s.runnerAlive(a.Place) {
-			a.Job.TakenBack, a.Job.JobID, a.Job.HeardAt = false, j.JobID, j.HeardAt
-			s.acquired[k] = a
-			return
-		}
-		delete(s.acquired, k)
-		j.SeenAt, j.QueueTime = a.Job.SeenAt, a.Job.QueueTime
-	}
-	s.waiting[k] = j
-	s.Log.Info("job waiting", "repo", j.Repo, "pool", j.Pool, "job", j.Name, "request", j.RequestID,
-		"assigned", j.Assigned, "queued", j.QueueTime.Format(time.RFC3339))
-}
-
-// takeBackLocked marks an assigned job whose assignment GitHub took back, and
-// reports whether the message was a take-back. The job keeps its place in
-// line, and its starting runner, until GitHub assigns it again. GitHub can
-// send the take-back of an assignment in the same message as the next
-// assignment, whose job id is new, and a message's assignments are read before
-// its completions: a take-back of an assignment other than the job's latest
-// changes nothing.
-func (s *Service) takeBackLocked(k, jobID string, now time.Time) bool {
-	latest := func(j plan.Job) bool { return j.JobID == "" || j.JobID == jobID }
-	if j, ok := s.waiting[k]; ok && j.Assigned {
-		if latest(j) {
-			j.TakenBack = true
-		}
-		j.HeardAt = now
-		s.waiting[k] = j
-		return true
-	}
-	if a, ok := s.acquired[k]; ok && a.Job.Assigned {
-		if latest(a.Job) {
-			a.Job.TakenBack = true
-		}
-		a.Job.HeardAt = now
-		s.acquired[k] = a
-		return true
-	}
-	return false
-}
-
-// handBackLocked finds the job a runner was started for when GitHub gave that
-// runner another job of the same scale set: GitHub gives a set's runner
-// whichever of the set's jobs it picks, and the job the runner was started
-// for still needs one. When the job the runner took had a runner of its own
-// still waiting, that runner is free now and the job handed back is its own,
-// so no further runner starts only to wait out the start timeout with
-// nothing to run. Otherwise the job waits again.
-func (s *Service) handBackLocked(target, pool, runner string, started []string) {
-	placeRun := func(place string) (PlaceRun, bool) {
-		var run PlaceRun
-		return run, config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(place), "place.json"), &run) == nil
-	}
-	var freed *acquired
-	for _, k := range started {
-		if a, ok := s.acquired[k]; ok {
-			if run, ok := placeRun(a.Place); ok && run.RunnerName != runner && a.startedBy(a.Place, run) && !run.Started &&
-				s.runnerAlive(a.Place) {
-				freed = &a
-			}
-		}
-	}
-	for k, a := range s.acquired {
-		if a.Job.Target != target || a.Job.Pool != pool || slices.Contains(started, k) {
-			continue
-		}
-		if run, ok := placeRun(a.Place); !ok || run.RunnerName != runner {
-			continue
-		}
-		if freed != nil {
-			s.acquired[k] = acquired{Job: a.Job, Place: freed.Place, At: freed.At}
-			s.Log.Info("the runner took another job of its scale set; its own job goes to the runner started for that one",
-				"place", a.Place, "job", a.Job.Name, "to", freed.Place)
-			freed = nil
-			continue
-		}
-		delete(s.acquired, k)
-		s.waiting[k] = a.Job
-		s.Log.Info("the runner took another job of its scale set; its own job waits again", "place", a.Place, "job", a.Job.Name)
-	}
-}
-
-// refreshLabels reads the pull request labels of repositories with waiting
-// pull request or branch jobs, at most once a minute each. Network reads
-// never hold the queue lock; an unreadable refresh forgets the repository's
-// labels rather than keep one that may have been removed.
-func (s *Service) refreshLabels(ctx context.Context) {
-	if s.LabelReader == nil {
-		return
-	}
-	s.readMu.Lock()
-	defer s.readMu.Unlock()
-	s.mu.Lock()
-	if labels, _ := plan.Needs(s.Rules); !labels {
-		// A setup change may have dropped the rules that read labels; labels
-		// read before it would be stale once such a rule came back.
-		clear(s.labels)
-		clear(s.labelsRead)
-		s.mu.Unlock()
-		return
-	}
-	now := s.now()
-	repos := map[string]bool{}
-	for _, j := range s.waiting {
-		if !j.TakenBack && j.LabelRef() != "" {
-			if last, ok := s.labelsRead[j.Repo]; !ok || now.Sub(last) >= time.Minute {
-				repos[j.Repo] = true
-			}
-		}
-	}
-	s.mu.Unlock()
-	for repo := range repos {
-		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		labels, err := s.LabelReader(readCtx, repo)
-		cancel()
-		s.mu.Lock()
-		s.labelsRead[repo] = now
-		if err != nil {
-			delete(s.labels, repo)
-			s.Log.Warn("pull request labels unreadable; ordering without them", "repo", repo, "err", err)
-		} else {
-			s.labels[repo] = labels
-		}
-		s.mu.Unlock()
-	}
-}
-
-// refreshRunWorkflows reads each waiting run's top-level workflow once, shared
-// by all its jobs; a failed read is tried again after a minute. A run no job
-// waits for any longer is forgotten. The whole pass has five seconds and
-// never holds the queue lock.
-func (s *Service) refreshRunWorkflows(ctx context.Context) {
-	if s.WorkflowReader == nil {
-		return
-	}
-	s.readMu.Lock()
-	defer s.readMu.Unlock()
-	s.mu.Lock()
-	if _, workflows := plan.Needs(s.Rules); !workflows {
-		s.mu.Unlock()
-		return
-	}
-	now := s.now()
-	queued := map[workflowRun]bool{}
-	for _, j := range s.waiting {
-		if !j.TakenBack && j.RunID > 0 {
-			queued[workflowRun{j.Repo, j.RunID}] = true
-		}
-	}
-	for key := range s.runWorkflows {
-		if !queued[key] {
-			delete(s.runWorkflows, key)
-		}
-	}
-	var reads []workflowRun
-	for key := range queued {
-		v, ok := s.runWorkflows[key]
-		if !ok || v.path == "" && now.Sub(v.attempted) >= time.Minute {
-			reads = append(reads, key)
-		}
-	}
-	s.mu.Unlock()
-	ctx, cancelPass := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelPass()
-	for _, key := range reads {
-		if ctx.Err() != nil {
-			break
-		}
-		p, err := s.WorkflowReader(ctx, key.repo, key.id)
-		s.mu.Lock()
-		if err != nil {
-			p = ""
-			s.Log.Warn("top-level workflow unreadable; using the job's own", "repo", key.repo, "run", key.id, "err", err)
-		}
-		s.runWorkflows[key] = runWorkflow{path: p, attempted: now}
-		s.mu.Unlock()
-	}
-}
-
-// Place gives every free place to the job the rules pick, until nothing more
-// fits. It starts a runner for a job only once its place is chosen, and
-// acquires a job GitHub offered only then. The first-ranked job waiting only
-// for resources keeps room in the plan, without acquiring a runner or lock.
-func (s *Service) Place(ctx context.Context) {
-	s.refreshLabels(ctx)
-	s.refreshRunWorkflows(ctx)
-	s.forgetClosedRuns(ctx)
-	s.refreshVMs(ctx)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.askRestingLocked(ctx)
-	s.expireLocked()
-	s.refreshDrainsLocked()
-	s.refreshBorrowsLocked()
-	for range len(s.Cfg.Places()) + 1 {
-		assignments := plan.Plan(s.waitingLocked(), s.viewsLocked(), s.headroomLocked(), s.Rules, s.now())
-		if len(assignments) == 0 {
-			break
-		}
-		progressed := false
-		for _, a := range assignments {
-			if s.assignLocked(ctx, a) {
-				progressed = true
-			}
-		}
-		if !progressed {
-			break
-		}
-	}
-	s.advanceDrainsLocked()
-	s.noteWasteLocked()
-	s.saveLocked()
-}
-
-// waitingLocked is the jobs a place could take now, with what the rules read
-// filled in. A job whose scale set has no live session cannot be acquired
-// now, and a job GitHub took back is assigned to nothing until it is assigned
-// again. A job a drain names may take only that drain's places.
-func (s *Service) waitingLocked() []plan.Job {
-	out := make([]plan.Job, 0, len(s.waiting))
-	for _, j := range s.waiting {
-		if _, ok := s.sets[setKey(j.Target, j.Pool)]; j.BorrowID == "" && (!ok || j.TakenBack) {
-			continue
-		}
-		j.Size = s.Cfg.PoolSize(j.Pool)
-		if j.BorrowID == "" {
-			j.Estimate = s.timings[j.TimingKey()]
-		}
-		j.RunWorkflow = s.runWorkflows[workflowRun{j.Repo, j.RunID}].path
-		if ref := j.LabelRef(); ref != "" {
-			j.Labels = s.labels[j.Repo][ref]
-		}
-		j.Drain = s.drainFor(j)
-		out = append(out, j)
-	}
-	return out
-}
-
-// viewsLocked reads every place's state from its lock. A place cooling down
-// after a failed launch reads as busy for a minute, and a place on a resting
-// machine until the machine's agent answers (reach.go). A place a drain
-// holds reads as busy until all the drain's places are free, then takes
-// only the jobs the drain admits (drain.go).
-func (s *Service) viewsLocked() []plan.PlaceView {
-	now := s.now()
-	places := s.Cfg.Places()
-	out := make([]plan.PlaceView, 0, len(places))
-	for _, p := range places {
-		// Resource fit depends on the job, not the place's fallback size.
-		busy, _ := s.placeBusy(p, false)
-		if !busy && (now.Before(s.cooling[p.ID]) || s.restingLocked(p.Machine) || s.held[p.ID] != "") {
-			busy = true
-		}
-		view := plan.PlaceView{Place: p, Busy: busy}
-		if d := s.drainOf(p.ID); d != nil {
-			view.Drain = d.ID
-			view.Busy = busy || d.Drained.IsZero()
-		}
-		out = append(out, view)
-	}
-	return out
-}
-
-// Hold keeps places from taking new jobs, for why, until Unhold. Jobs they
-// run carry on.
-func (s *Service) Hold(ids []string, why string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.held == nil {
-		s.held = map[string]string{}
-	}
-	for _, id := range ids {
-		s.held[id] = why
-	}
-	s.Log.Info("places take no new jobs for now", "places", strings.Join(ids, ","), "why", why)
-}
-
-// Unhold lets places Hold held take jobs again.
-func (s *Service) Unhold(ids []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, id := range ids {
-		delete(s.held, id)
-	}
-	s.Log.Info("places take jobs again", "places", strings.Join(ids, ","))
-}
-
-func share(p config.Place) config.Share { return config.Share{Cores: p.Cores, MemoryMB: p.MemoryMB} }
-
-// headroomLocked is what each counted machine's jobs may still reserve.
-func (s *Service) headroomLocked() map[string]plan.Headroom {
-	out := map[string]plan.Headroom{}
-	for _, m := range s.Cfg.Machines {
-		if m.Cores == 0 && m.MemoryMB == 0 {
-			continue
-		}
-		b, used := m.Budget(), s.inUse(m.Name, "")
-		cores := b.Cores - used.Cores
-		if m.Cores == 0 {
-			cores = int(^uint(0) >> 1)
-		}
-		out[m.Name] = plan.Headroom{Cores: cores, MemoryMB: b.MemoryMB - used.MemoryMB, Memory: b.MemoryMB > 0}
-	}
-	return out
-}
-
-// inUse sums what machine's places reserve while their runner or borrow
-// supervisor is alive, leaving out the place except. A runner waiting for its
-// job keeps its share, since the job will run there.
-// A departed place counts on the machine its runner runs on, not where the
-// setup has it now (reload.go).
-func (s *Service) inUse(machine, except string) config.Share {
-	used := config.Share{}
-	places := slices.DeleteFunc(s.Cfg.Places(), func(q config.Place) bool {
-		_, departed := s.departed[q.ID]
-		return departed
-	})
-	for _, id := range slices.Sorted(maps.Keys(s.departed)) {
-		places = append(places, s.departed[id])
-	}
-	for _, q := range places {
-		if q.ID != except && q.Machine == machine && s.runnerAlive(q.ID) {
-			sh := s.Reservation(q)
-			used.Cores += sh.Cores
-			used.MemoryMB += sh.MemoryMB
-		}
-	}
-	return used
-}
-
-// Reservation reads the size held by the running place from its place.json.
-func (s *Service) Reservation(p config.Place) config.Share {
-	var run PlaceRun
-	err := config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), &run)
-	if err == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
-		return run.Reservation
-	}
-	// An unknown live reservation must not be mistaken for a smaller place
-	// default. Hold the counted budget until it can be read.
-	b := s.Cfg.Machine(p.Machine).Budget()
-	return config.Share{Cores: max(b.Cores, p.Cores), MemoryMB: max(b.MemoryMB, p.MemoryMB)}
-}
-
-// PlaceBusy reads one place, sized for the pool when checking an assignment.
-// Its own lock says whether its runner or borrow supervisor is alive. A
-// place is also busy while its size does not fit beside the other runs, within the
-// machine's budget less the owner's room. A tart place is
-// also busy while its Mac runs as many macOS VMs as it may (vmlimit.go). A
-// lock that cannot be read counts busy, so a broken reader never starts a
-// second job in a place.
-func (s *Service) PlaceBusy(p config.Place) (bool, string) {
-	return s.placeBusy(p, true)
-}
-
-func (s *Service) placeBusy(p config.Place, resources bool) (bool, string) {
-	held, err := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(p.ID), "busy.lock"))
-	if err != nil {
-		return true, "unreadable"
-	}
-	if held {
-		var run PlaceRun
-		if config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.BorrowID != "" {
-			return true, "borrow"
-		}
-		return true, "job"
-	}
-	if resources {
-		if why := s.tight(p); why != "" {
-			return true, why
-		}
-	}
-	if why := s.vmLimitFull(p); why != "" {
-		return true, why
-	}
-	return false, ""
-}
-
-// tight says why place p's job size does not fit beside its machine's other
-// runs, or "" when it fits. A machine without a budget always fits.
-func (s *Service) tight(p config.Place) string {
-	m := s.Cfg.Machine(p.Machine)
-	if m.Cores == 0 && m.MemoryMB == 0 {
-		return ""
-	}
-	b, used, sh := m.Budget(), s.inUse(p.Machine, p.ID), share(p)
-	room := func(n int, unit string) string {
-		if n == 0 {
-			return ""
-		}
-		return fmt.Sprintf(", %d%s kept for the owner", n, unit)
-	}
-	if b.Cores > 0 && used.Cores+sh.Cores > b.Cores {
-		return fmt.Sprintf("cores %d of %d in use%s", used.Cores, b.Cores, room(m.RoomCores, ""))
-	}
-	if b.MemoryMB > 0 && used.MemoryMB+sh.MemoryMB > b.MemoryMB {
-		return fmt.Sprintf("memory %d of %d MB in use%s", used.MemoryMB, b.MemoryMB, room(m.RoomMemoryMB, " MB"))
-	}
-	return ""
-}
-
-// runnerAlive reports whether a place's runner or borrow supervisor is alive,
-// from its lock alone. A lock that cannot be read counts alive.
-func (s *Service) runnerAlive(placeID string) bool {
-	held, err := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(placeID), "busy.lock"))
-	return err != nil || held
-}
-
-func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
-	j, p := a.Job, a.Place
-	set := s.sets[setKey(j.Target, j.Pool)]
-	if set == nil && j.BorrowID == "" {
-		return false
-	}
-	// A place given in the same plan as another may have to wait for it now.
-	if busy, _ := s.PlaceBusy(p); busy {
-		return false
-	}
-	lock, err := lock.Busy(filepath.Join(s.Cfg.PlaceDir(p.ID), "busy.lock"))
-	if err != nil || lock == nil {
-		return false
-	}
-	defer lock.Close()
-	// This place's last run may have ended since the last Tidy, and its
-	// place.json is about to be replaced. That run may have found the machine
-	// unreachable.
-	s.retireLocked(p)
-	if s.restingLocked(p.Machine) {
-		return true
-	}
-
-	if j.BorrowID != "" {
-		return s.assignBorrowLocked(p, j, lock)
-	}
-
-	if !j.Assigned {
-		got, err := set.AcquireJobs(ctx, []int64{j.RequestID})
-		if err != nil {
-			s.Log.Error("acquire failed", "repo", j.Repo, "job", j.Name, "err", err)
-			return false
-		}
-		if !slices.Contains(got, j.RequestID) {
-			// Taken, cancelled or expired at GitHub while it waited here.
-			delete(s.waiting, j.Key())
-			s.Log.Info("job no longer available", "repo", j.Repo, "job", j.Name, "request", j.RequestID)
-			return true
-		}
-	}
-	delete(s.waiting, j.Key())
-	now := s.now()
-	s.acquired[j.Key()] = acquired{Job: j, Place: p.ID, At: now}
-
-	name := fmt.Sprintf("runner-up-%s-%d", p.ID, now.Unix())
-	jit, runnerID, err := set.GenerateJIT(ctx, name, p.RunnerWorkFolder())
-	if err == nil {
-		os.Remove(filepath.Join(s.Cfg.PlaceDir(p.ID), "usage.json"))
-		run := PlaceRun{RunnerName: name, RunnerID: runnerID, Target: j.Target, Pool: j.Pool, Repo: j.Repo,
-			RequestID: j.RequestID, JobName: j.Name, LaunchedAt: now, Reservation: share(p)}
-		if err = config.WriteJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), run); err == nil {
-			err = s.launcher.Launch(p, j.Pool, lock, jit)
-		}
-	}
-	if err != nil {
-		// GitHub gives back an acquired job no runner took.
-		s.Log.Error("could not start a runner; the place rests a minute", "place", p.ID, "repo", j.Repo, "job", j.Name, "err", err)
-		s.cooling[p.ID] = now.Add(time.Minute)
-		return true
-	}
-	s.Log.Info("placed", "place", p.ID, "machine", p.Machine, "repo", j.Repo, "pool", j.Pool, "job", j.Name,
-		"request", j.RequestID, "runner", name, "waited", now.Sub(j.QueueTime).Round(time.Second).String())
-	delete(s.wasted, p.ID)
-	return true
-}
-
-// stopSpareLocked gives up on the runners of a scale set nobody will use:
-// when a job acquired for the set was cancelled before a runner took it, the
-// set has more runners waiting for a job than jobs on their way, and the
-// newest waiting runners would otherwise hold their places until the start
-// timeout. A runner given up on before, which is stopping or which GitHub
-// says is running a job, is no longer waiting. While a removal GitHub did not
-// answer leaves a spare runner, Tidy asks again at every tick.
-func (s *Service) stopSpareLocked(ctx context.Context, target, pool string) {
-	pending := 0
-	for _, a := range s.acquired {
-		if a.Job.Target == target && a.Job.Pool == pool {
-			pending++
-		}
-	}
-	type idle struct {
-		place string
-		run   PlaceRun
-	}
-	var idles []idle
-	for _, p := range s.placesLocked() {
-		dir := s.Cfg.PlaceDir(p.ID)
-		if held, err := lock.HeldBy(filepath.Join(dir, "busy.lock")); err != nil || !held {
-			continue
-		}
-		var run PlaceRun
-		if config.ReadJSON(filepath.Join(dir, "place.json"), &run) != nil || run.Started || run.Target != target ||
-			run.Pool != pool {
-			continue
-		}
-		if _, answered := s.givenUp[run.RunnerName]; !answered {
-			idles = append(idles, idle{p.ID, run})
-		}
-	}
-	sort.Slice(idles, func(a, b int) bool { return idles[a].run.LaunchedAt.After(idles[b].run.LaunchedAt) })
-	done := true
-	for _, r := range idles[:max(len(idles)-pending, 0)] {
-		if !s.giveUpLocked(ctx, r.place, r.run, "the runner's job was cancelled before it started") {
-			done = false
-		}
-	}
-	if done {
-		delete(s.spare, setName{target, pool})
-	}
-}
-
-// Tidy runs on every tick: it forgets the last run of every free place,
-// removes the registration of every runner that ended without a job, and
-// gives up on every runner no job reached in time and every spare runner
-// still to go.
-func (s *Service) Tidy(ctx context.Context) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, p := range s.placesLocked() {
-		if held, err := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(p.ID), "busy.lock")); err == nil && !held {
-			s.retireLocked(p)
-		}
-	}
-	removed := false
-	for k, run := range s.unused {
-		set := s.sets[setKey(run.Target, run.Pool)]
-		if set == nil {
-			// Its scale set has no live session; once it has, a later Tidy
-			// removes the runner.
-			continue
-		}
-		err := set.RemoveRunner(ctx, int64(run.RunnerID))
-		if errors.Is(err, scaleset.JobStillRunningError) {
-			// Its place has ended, yet GitHub gave the runner a job: no runner
-			// is left to run it, and GitHub fails it once it stops hearing
-			// from the runner.
-			s.Log.Error("a runner whose place has ended is running a job at GitHub; the job is stranded", "runner", run.RunnerName,
-				"target", run.Target, "pool", run.Pool)
-			continue
-		}
-		if err != nil && !runnerGone(err) {
-			s.Log.Warn("could not remove an unused runner; will retry", "runner", run.RunnerName, "err", err)
-			continue
-		}
-		s.Log.Info("removed an unused runner", "runner", run.RunnerName)
-		delete(s.unused, k)
-		removed = true
-	}
-	if removed {
-		s.saveLocked()
-	}
-	s.stopIdleLocked(ctx)
-	for set := range s.spare {
-		s.stopSpareLocked(ctx, set.target, set.pool)
-	}
-	pruneLogs(s.Cfg.LogsDir(), s.now().Add(-time.Duration(s.Cfg.LogKeepDays)*24*time.Hour))
-	pruneLogs(usageDir(s.Cfg), s.now().Add(-time.Duration(s.Cfg.LogKeepDays)*24*time.Hour))
-}
-
-// runnerGone says a removal found no such runner at GitHub.
-func runnerGone(err error) bool {
-	return errors.Is(err, scaleset.RunnerNotFoundError) || strings.Contains(err.Error(), "404")
-}
-
-// stopIdleLocked gives up on every runner that has waited the start timeout
-// with no job.
-func (s *Service) stopIdleLocked(ctx context.Context) {
-	limit := s.Cfg.Seconds(s.Cfg.StartTimeoutSeconds)
-	now := s.now()
-	for _, p := range s.placesLocked() {
-		dir := s.Cfg.PlaceDir(p.ID)
-		if held, err := lock.HeldBy(filepath.Join(dir, "busy.lock")); err != nil || !held {
-			continue
-		}
-		var run PlaceRun
-		if config.ReadJSON(filepath.Join(dir, "place.json"), &run) != nil || run.BorrowID != "" || run.Started ||
-			now.Sub(run.LaunchedAt) < limit {
-			continue
-		}
-		if _, answered := s.givenUp[run.RunnerName]; answered {
-			continue
-		}
-		s.giveUpLocked(ctx, p.ID, run, "no job reached the runner in time")
-	}
-}
-
-// giveUpLocked gives up on a place's waiting runner, saying why. GitHub can
-// give a scale set's waiting runner a job at any moment until the runner is
-// removed, and a runner stopped first would leave that job to fail when
-// GitHub stops hearing from it. So the runner's registration goes first, and
-// its place is stopped only once GitHub has accepted that. A runner GitHub
-// will not remove because it is running a job keeps running it. It reports
-// whether GitHub answered: a runner whose removal GitHub did not answer, or
-// whose scale set has no live session, keeps its place, to be asked about
-// again at a later tick.
-func (s *Service) giveUpLocked(ctx context.Context, place string, run PlaceRun, why string) bool {
-	if run.RunnerID > 0 {
-		set := s.sets[setKey(run.Target, run.Pool)]
-		if set == nil {
-			return false
-		}
-		err := set.RemoveRunner(ctx, int64(run.RunnerID))
-		if errors.Is(err, scaleset.JobStillRunningError) {
-			s.givenUp[run.RunnerName] = false
-			s.Log.Info(why+", but GitHub says it is running a job; keeping it", "place", place, "runner", run.RunnerName)
-			return true
-		}
-		if err != nil && !runnerGone(err) {
-			s.Log.Warn(why+"; could not remove it from its scale set, so it keeps its place until GitHub answers",
-				"place", place, "runner", run.RunnerName, "err", err)
-			return false
-		}
-	}
-	s.Log.Info(why+"; removed it from its scale set, stopping it", "place", place, "runner", run.RunnerName)
-	if err := s.launcher.Stop(place); err != nil {
-		s.Log.Warn("stop failed", "place", place, "err", err)
-		return false
-	}
-	s.givenUp[run.RunnerName] = true
-	return true
-}
-
-// retireLocked forgets the last run of a free place, which Tidy or the next
-// placement there may reach first. A runner that ended before its job reached
-// it is still registered with its scale set, unless the coordinator removed it
-// there when it gave up on it (giveUpLocked), so it joins the unused runners,
-// saved before its place.json goes. The job it was started for waits again,
-// in line from where it was: GitHub keeps an assigned job assigned to the
-// scale set and sends nothing more, so a job dropped here would never be
-// placed again. A run that could not reach its machine's agent rests the
-// machine. A departed place's run ran as the setup had the place then; once
-// it is retired the place is forgotten or, where the setup still has it,
-// takes jobs as the setup has it now.
-func (s *Service) retireLocked(p config.Place) {
-	if d, ok := s.departed[p.ID]; ok {
-		p = d
-		delete(s.departed, p.ID)
-		s.saveLocked()
-	}
-	dir := s.Cfg.PlaceDir(p.ID)
-	path := filepath.Join(dir, "place.json")
-	var run PlaceRun
-	if config.ReadJSON(path, &run) != nil {
-		return
-	}
-	if run.Unreachable && slices.ContainsFunc(s.Cfg.Machines, func(m config.Machine) bool { return m.Name == p.Machine }) {
-		s.restLocked(p.Machine)
-	}
-	removed := s.givenUp[run.RunnerName]
-	delete(s.givenUp, run.RunnerName)
-	if !run.Started {
-		if run.RunnerID > 0 && !removed {
-			s.unused[unusedKey(run)] = run
-		}
-		for k, a := range s.acquired {
-			if a.startedBy(p.ID, run) {
-				delete(s.acquired, k)
-				s.waiting[k] = a.Job
-				s.Log.Info("the runner ended before its job reached it; the job waits again", "place", p.ID,
-					"repo", a.Job.Repo, "job", a.Job.Name, "runner", run.RunnerName)
-			}
-		}
-		s.saveLocked()
-	}
-	if err := s.recordUsage(p, run); err != nil {
-		s.Log.Warn("could not retain resource readings", "place", p.ID, "err", err)
-	}
-	os.Rename(path, filepath.Join(dir, "last-place.json"))
-}
-
-func unusedKey(run PlaceRun) string { return fmt.Sprintf("%s|%d", run.Target, run.RunnerID) }
-
-// expireLocked forgets jobs GitHub has certainly given up on: a job that
-// waited over a day, and an acquired job no runner took within the start and
-// boot allowance. A job whose own runner has not started stays acquired while
-// that runner lives, and once it has ended waits again, in line from where it
-// was, as retireLocked does.
-func (s *Service) expireLocked() {
-	now := s.now()
-	for k, j := range s.waiting {
-		if now.Sub(j.QueueTime) > 25*time.Hour {
-			delete(s.waiting, k)
-		}
-	}
-	limit := s.Cfg.Seconds(s.Cfg.StartTimeoutSeconds + s.Cfg.BootTimeoutSeconds)
-	for k, a := range s.acquired {
-		if now.Sub(a.At) <= limit {
-			continue
-		}
-		var run PlaceRun
-		own := config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(a.Place), "place.json"), &run) == nil && a.startedBy(a.Place, run) && !run.Started
-		if own && s.runnerAlive(a.Place) {
-			continue
-		}
-		delete(s.acquired, k)
-		if own {
-			s.waiting[k] = a.Job
-		}
-	}
-}
-
-// startedBy says whether run is the one the coordinator started in place for
-// a, which assignLocked launches at the moment it acquires the job.
-func (a acquired) startedBy(place string, run PlaceRun) bool {
-	return a.Place == place && a.At.Equal(run.LaunchedAt)
-}
-
-// noteWasteLocked logs any place left free while a job that fits it has
-// waited over a minute. It should never fire; when it does, the line names
-// the place and the job.
-func (s *Service) noteWasteLocked() {
-	now := s.now()
-	var old []plan.Job
-	for _, j := range s.waitingLocked() {
-		if now.Sub(j.SeenAt) > time.Minute {
-			old = append(old, j)
-		}
-	}
-	for _, a := range plan.Plan(old, s.viewsLocked(), s.headroomLocked(), s.Rules, now) {
-		if t, ok := s.wasted[a.Place.ID]; !ok || now.Sub(t) > 10*time.Minute {
-			s.Log.Warn("waste: a place is free while a job that fits it waits", "place", a.Place.ID,
-				"repo", a.Job.Repo, "job", a.Job.Name, "waiting", now.Sub(a.Job.QueueTime).Round(time.Second).String())
-			s.wasted[a.Place.ID] = now
-		}
-	}
 }
 
 func (s *Service) saveLocked() {

@@ -38,6 +38,32 @@ import (
 // whatever happened; when its input closes, because this process ended or
 // gave up on the runner, it stops the job and cleans up.
 
+// PlaceRun is a place's place.json for a job or borrow, written by the coordinator
+// just before launch. For jobs, the place's runner updates it as the job starts.
+type PlaceRun struct {
+	BorrowID   string    `json:"borrowId,omitempty"`
+	RunnerName string    `json:"runnerName"`
+	RunnerID   int       `json:"runnerId"`
+	Target     string    `json:"target"`
+	Pool       string    `json:"pool"`
+	Repo       string    `json:"repo"`
+	RequestID  int64     `json:"requestId,omitempty"`
+	JobName    string    `json:"jobName"`
+	LaunchedAt time.Time `json:"launchedAt"`
+	Started    bool      `json:"started"`
+	// RanJob is the display name of the job that reached the runner, as the
+	// runner printed it. GitHub may give a scale set's runner another of the
+	// set's jobs than JobName, the one it was started for.
+	RanJob string `json:"ranJob,omitempty"`
+	PID    int    `json:"pid,omitempty"`
+	// Reservation is frozen at launch, so restarts and setup edits cannot
+	// shrink a running job's claim on the machine.
+	Reservation config.Share `json:"reservation,omitempty"`
+	// Unreachable: the place runner could not reach its machine's agent, or
+	// lost it (reach.go).
+	Unreachable bool `json:"unreachable,omitempty"`
+}
+
 // ProcLauncher is the real Launcher.
 type ProcLauncher struct {
 	self   string
@@ -97,11 +123,8 @@ func (l *ProcLauncher) Launch(p config.Place, pool string, lock *os.File, jit st
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	var run PlaceRun
-	path := filepath.Join(cfg.PlaceDir(p.ID), "place.json")
-	if config.ReadJSON(path, &run) == nil {
-		run.PID = cmd.Process.Pid
-		config.WriteJSON(path, run)
+	if err := updatePlaceRun(cfg, p.ID, func(run *PlaceRun) { run.PID = cmd.Process.Pid }); err != nil {
+		l.log.Warn("could not record the place runner's process; stopping it waits for its job to end", "place", p.ID, "err", err)
 	}
 	go func() {
 		err := cmd.Wait()
@@ -253,7 +276,7 @@ type placeRunner struct {
 // the job limit, or that the coordinator asks to stop, is stopped by closing
 // the agent's input; one that does not stop then is killed. A runner no job
 // reached in time is the coordinator's to stop: it removes the runner's
-// registration first (Service.stopIdleLocked), since GitHub can give the
+// registration first (Service.giveUp), since GitHub can give the
 // runner a job up to that moment.
 func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int {
 	stdin, err := cmd.StdinPipe()
@@ -364,10 +387,55 @@ func (r *placeRunner) markUnreachable() {
 }
 
 func (r *placeRunner) update(change func(*PlaceRun)) {
-	path := filepath.Join(r.cfg.PlaceDir(r.p.ID), "place.json")
-	var run PlaceRun
-	if config.ReadJSON(path, &run) == nil {
-		change(&run)
-		config.WriteJSON(path, run)
+	if err := updatePlaceRun(r.cfg, r.p.ID, change); err != nil {
+		r.log.Warn("could not record the run in place.json", "err", err)
 	}
+}
+
+// A place's place.json has two writers: the coordinator, which writes it
+// before a launch, records the launched process and retires it once the
+// place is free, and the place runner, which records its job starting or its
+// machine out of reach. Each write takes the place's place.lock first, so
+// one writer's read, change and write never loses the other's change.
+
+// readPlaceRun reads place id's place.json, and says whether it could.
+func readPlaceRun(cfg *config.Config, id string) (PlaceRun, bool) {
+	var run PlaceRun
+	return run, config.ReadJSON(filepath.Join(cfg.PlaceDir(id), "place.json"), &run) == nil
+}
+
+// withPlaceRun runs f holding place id's place.lock, with the path of its
+// place.json.
+func withPlaceRun(cfg *config.Config, id string, f func(path string) error) error {
+	dir := cfg.PlaceDir(id)
+	l, err := lock.Wait(filepath.Join(dir, "place.lock"))
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	return f(filepath.Join(dir, "place.json"))
+}
+
+// writePlaceRun replaces place id's place.json with run.
+func writePlaceRun(cfg *config.Config, id string, run PlaceRun) error {
+	return withPlaceRun(cfg, id, func(path string) error { return config.WriteJSON(path, run) })
+}
+
+// updatePlaceRun applies change to place id's place.json.
+func updatePlaceRun(cfg *config.Config, id string, change func(*PlaceRun)) error {
+	return withPlaceRun(cfg, id, func(path string) error {
+		var run PlaceRun
+		if err := config.ReadJSON(path, &run); err != nil {
+			return err
+		}
+		change(&run)
+		return config.WriteJSON(path, run)
+	})
+}
+
+// retirePlaceRun keeps place id's place.json as its last-place.json.
+func retirePlaceRun(cfg *config.Config, id string) error {
+	return withPlaceRun(cfg, id, func(path string) error {
+		return os.Rename(path, filepath.Join(filepath.Dir(path), "last-place.json"))
+	})
 }

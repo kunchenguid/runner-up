@@ -52,3 +52,23 @@ func HeldBy(path string) (bool, error) {
 	syscall.Flock(fd, syscall.LOCK_UN)
 	return false, nil
 }
+
+// Wait takes path's exclusive lock, waiting for whoever holds it to let go.
+// It returns the open, locked file; closing it lets go.
+func Wait(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}

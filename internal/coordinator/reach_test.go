@@ -83,7 +83,7 @@ func (h *harness) registrations() int {
 	return n
 }
 
-// round is the main loop's answer to a place runner ending (cmd/main.go):
+// round is the serve loop's answer to a place runner ending (serve.go):
 // Tidy and Place at once, then any answer from a resting machine's agent.
 func (h *harness) round() {
 	h.svc.Tidy(context.Background())

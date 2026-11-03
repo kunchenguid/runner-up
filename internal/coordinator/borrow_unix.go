@@ -317,7 +317,7 @@ func (s *Service) assignBorrowLocked(p config.Place, j plan.Job, busy *os.File) 
 		return false
 	}
 	run := PlaceRun{BorrowID: j.BorrowID, Pool: j.Pool, JobName: j.Name, Started: true, LaunchedAt: s.now(), Reservation: share(p)}
-	err = config.WriteJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), run)
+	err = writePlaceRun(s.Cfg, p.ID, run)
 	if err == nil {
 		err = l.LaunchBorrow(p, busy, j.BorrowID)
 	}
@@ -349,11 +349,8 @@ func (l *ProcLauncher) LaunchBorrow(p config.Place, busy *os.File, id string) er
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	var run PlaceRun
-	path := filepath.Join(cfg.PlaceDir(p.ID), "place.json")
-	if config.ReadJSON(path, &run) == nil {
-		run.PID = cmd.Process.Pid
-		config.WriteJSON(path, run)
+	if err := updatePlaceRun(cfg, p.ID, func(run *PlaceRun) { run.PID = cmd.Process.Pid }); err != nil {
+		l.log.Warn("could not record the borrow supervisor's process", "place", p.ID, "err", err)
 	}
 	go func() { cmd.Wait(); l.Exited <- p.ID }()
 	return nil

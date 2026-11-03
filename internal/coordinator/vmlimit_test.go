@@ -50,9 +50,7 @@ func (h *harness) feedAsMac(f fixture) {
 		for i := range msg.JobAvailableMessages {
 			msg.JobAvailableMessages[i].RequestLabels = []string{"ru-mac"}
 		}
-		if err := h.svc.Handle(context.Background(), m.Repo, "ru-mac", &msg); err != nil {
-			h.t.Fatal(err)
-		}
+		h.handle(m.Repo, "ru-mac", &msg)
 	}
 }
 

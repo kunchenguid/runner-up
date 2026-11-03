@@ -18,6 +18,16 @@ import (
 // when the agent lets go; until the holder closes it, Windows may refuse to
 // open it, which is the same as busy.
 func Busy(path string) (*os.File, error) {
+	return take(path, windows.LOCKFILE_FAIL_IMMEDIATELY)
+}
+
+// Wait takes path's exclusive lock, waiting for whoever holds it to let go.
+// It returns the open, locked file; closing it lets go.
+func Wait(path string) (*os.File, error) {
+	return take(path, 0)
+}
+
+func take(path string, flags uint32) (*os.File, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -36,7 +46,7 @@ func Busy(path string) (*os.File, error) {
 	}
 	f := os.NewFile(uintptr(h), path)
 	ol := new(windows.Overlapped)
-	err = windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, ol)
+	err = windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|flags, 0, 1, 0, ol)
 	if err != nil {
 		f.Close()
 		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {

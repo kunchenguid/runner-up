@@ -66,8 +66,6 @@ func (s *Service) forgetClosedRuns(ctx context.Context) {
 	if s.RunReader == nil {
 		return
 	}
-	s.readMu.Lock()
-	defer s.readMu.Unlock()
 	s.mu.Lock()
 	now := s.now()
 	// Each quiet run is asked about again after the shortest recheck of its
