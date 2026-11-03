@@ -1,4 +1,4 @@
-package main
+package ciguard
 
 import (
 	"archive/tar"

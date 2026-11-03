@@ -1,10 +1,11 @@
-package main_test
+package ciguard
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -418,5 +419,28 @@ func TestExpectedReleaseOutputsIncludesConfiguredExtraFiles(t *testing.T) {
 	want := []string{".release-please-manifest.json", "CHANGELOG.md", "default.nix", "flake.nix", "package.nix"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+// Intent: the release workflow holds the release signing key, and the vendor
+// hash workflow runs nix with write access, so both must use third-party
+// actions pinned by commit, never by a movable tag or branch.
+func TestPrivilegedWorkflowsPinActionsByCommit(t *testing.T) {
+	pinned := regexp.MustCompile(`^[^@\s]+@[0-9a-f]{40}$`)
+	for _, name := range []string{"release.yml", "update-vendor-hash.yml"} {
+		data, err := os.ReadFile(filepath.Join(".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+			if !strings.HasPrefix(trimmed, "uses: ") {
+				continue
+			}
+			ref := strings.Fields(strings.TrimPrefix(trimmed, "uses: "))[0]
+			if !pinned.MatchString(ref) {
+				t.Errorf("%s:%d uses %q; pin it to a full commit id", name, i+1, ref)
+			}
+		}
 	}
 }
