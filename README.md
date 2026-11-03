@@ -142,6 +142,10 @@ curl -fsSL https://kunchenguid.github.io/runner-up/install.sh | sh
 irm https://kunchenguid.github.io/runner-up/install.ps1 | iex
 ```
 
+Both scripts install the latest release only if its archive matches the
+SHA-256 the release's `checksums.txt` lists. Release binaries are static, so
+the Linux ones run on any glibc or musl distribution.
+
 A Windows machine then needs one step as administrator (see
 [Windows machines](#windows-machines)).
 
