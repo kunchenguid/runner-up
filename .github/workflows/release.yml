@@ -122,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Publish the no-mistakes gate status on the release PR
+      - name: Publish the required statuses on the release PR
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -153,12 +153,16 @@ jobs:
             # purpose, so a status is stamped only when the STRUCTURAL
             # release-please conditions hold, never because a bot opened the PR.
             if PR_AUTHOR="structural-release-please-check" ./.github/scripts/no-mistakes-gate.sh; then
-              echo "Stamping the gate status on PR #${PR_NUMBER} (${PR_HEAD_SHA})."
-              gh api --method POST "repos/${REPO}/statuses/${PR_HEAD_SHA}" \
-                -f state=success \
-                -f context='PR must be raised via no-mistakes' \
-                -f description='release-please release PR: structurally exempt' \
-                -f target_url="${RUN_URL}" >/dev/null
+              # Both required contexts: GitHub runs no workflow on this
+              # GITHUB_TOKEN PR, and main's own CI already tested its code.
+              for context in 'PR must be raised via no-mistakes' 'CI passed'; do
+                echo "Stamping ${context} on PR #${PR_NUMBER} (${PR_HEAD_SHA})."
+                gh api --method POST "repos/${REPO}/statuses/${PR_HEAD_SHA}" \
+                  -f state=success \
+                  -f context="${context}" \
+                  -f description='release-please release PR: structurally exempt' \
+                  -f target_url="${RUN_URL}" >/dev/null
+              done
             else
               echo "PR #${PR_NUMBER} is not a structural release-please PR; leaving it to the required check."
             fi

@@ -298,15 +298,17 @@ func workflowJobNames(data []byte) ([]string, error) {
 // publishesRequiredCheck reports whether a workflow backs a required status
 // check on main. Such a workflow must NOT filter by path: a required check that
 // never runs never reports, and the pull request waits on it forever. Release
-// PRs are handled by the gate's own release-please exemption instead.
+// PRs get every required context stamped by release.yml instead.
 func publishesRequiredCheck(data []byte) (bool, error) {
 	names, err := workflowJobNames(data)
 	if err != nil {
 		return false, err
 	}
 	for _, name := range names {
-		if name == requiredCheckContext {
-			return true, nil
+		for _, context := range requiredCheckContexts {
+			if name == context {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
@@ -367,7 +369,7 @@ func TestPullRequestWorkflowsExcludeReleasePleaseOutputs(t *testing.T) {
 		}
 		if required {
 			requiredCheckWorkflows++
-			t.Logf("%s backs the %q required check; path filters are forbidden there, not required", path, requiredCheckContext)
+			t.Logf("%s backs a required check; path filters are forbidden there, not required", path)
 			if filter.kind != "none" {
 				t.Errorf("%s backs a required check and must not filter by path (a filtered required check never reports)", path)
 			}
@@ -390,11 +392,11 @@ func TestPullRequestWorkflowsExcludeReleasePleaseOutputs(t *testing.T) {
 	if prWorkflows == 0 {
 		t.Fatal("no pull_request-triggered workflows found under .github/workflows")
 	}
-	// Exactly the no-mistakes gate is exempt today. A second exemption means a
-	// new workflow claimed the required-check name, which needs a look.
-	if requiredCheckWorkflows != 1 {
-		t.Fatalf("expected exactly 1 pull_request workflow backing the %q required check, found %d",
-			requiredCheckContext, requiredCheckWorkflows)
+	// Exactly the no-mistakes gate and CI back required checks today. Another
+	// one means a new workflow claimed a required-check name, which needs a look.
+	if requiredCheckWorkflows != len(requiredCheckContexts) {
+		t.Fatalf("expected %d pull_request workflows backing the required checks %v, found %d",
+			len(requiredCheckContexts), requiredCheckContexts, requiredCheckWorkflows)
 	}
 }
 
