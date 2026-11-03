@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 372" width="750" height="372" role="img" aria-labelledby="t d">
+  <title id="t">How runner-up is built</title>
+  <desc id="d">GitHub, one coordinator on Linux or macOS, and an agent on each machine reached over SSH. Linux machines run Docker, KVM or host places; Macs run tart, Apple container or host places; Windows machines run account or Hyper-V places through runner-up's Windows service. All are the same runner-up program.</desc>
+  <style>
+    .bg{fill:#ffffff}.box{fill:#f7f9fc;stroke:#c3cad8}.inner{fill:#ffffff;stroke:#d8dde8}
+    .lit{fill:#ffffff;stroke:#0e8fd0;stroke-width:2}.t1{fill:#151b2b}.t2{fill:#4d5a75}.ln{stroke:#6c7891;fill:none}.ah{fill:#6c7891}
+    text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:12.5px}
+    .h{font-size:14px;font-weight:600}.b{font-weight:600}.s{font-size:11px}
+    @media (prefers-color-scheme: dark){
+      .bg{fill:#0d1117}.box{fill:#161b22;stroke:#3d444d}.inner{fill:#0d1117;stroke:#30363d}
+      .lit{fill:#0d1117;stroke:#7fdcff}.t1{fill:#e6edf3}.t2{fill:#9198a1}.ln{stroke:#7a86a0}.ah{fill:#7a86a0}
+    }
+  </style>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <rect class="bg" x="0" y="0" width="750" height="372"/>
+  <rect class="box" x="6" y="104" width="144" height="180" rx="10"/>
+  <text class="t1 h" x="78" y="130" text-anchor="middle">GitHub</text>
+  <text class="t2" x="78" y="160" text-anchor="middle">job queue</text>
+  <text class="t2" x="78" y="182" text-anchor="middle">runner scale sets</text>
+  <text class="t2" x="78" y="262" text-anchor="middle">runner-up releases</text>
+  <rect class="box" x="210" y="6" width="140" height="44" rx="8"/>
+  <text class="t1 b" x="280" y="24" text-anchor="middle">Setup file</text>
+  <text class="t2 s" x="280" y="41" text-anchor="middle">JSON, watched, no token</text>
+  <rect class="box" x="370" y="6" width="140" height="44" rx="8"/>
+  <text class="t1 b" x="440" y="24" text-anchor="middle">GitHub sign-in</text>
+  <text class="t2 s" x="440" y="41" text-anchor="middle">asked for each session</text>
+  <line class="ln" x1="280" y1="50" x2="280" y2="84" marker-end="url(#a)"/>
+  <line class="ln" x1="440" y1="50" x2="440" y2="84" marker-end="url(#a)"/>
+  <rect class="lit" x="200" y="86" width="320" height="236" rx="12"/>
+  <text class="t1 h" x="216" y="110">Coordinator</text>
+  <text class="t2 s" x="504" y="110" text-anchor="end">Linux or macOS</text>
+  <rect class="inner" x="216" y="122" width="288" height="36" rx="6"/><text class="t1" x="230" y="145">Scale set sessions, one per repo × pool</text>
+  <rect class="inner" x="216" y="166" width="288" height="36" rx="6"/><text class="t1" x="230" y="189">Planner: order rules + machine budgets</text>
+  <rect class="inner" x="216" y="210" width="288" height="36" rx="6"/><text class="t1" x="230" y="233">Place runners: one process per job</text>
+  <rect class="inner" x="216" y="254" width="288" height="36" rx="6"/><text class="t1" x="230" y="277">Updater: itself, then each agent</text>
+  <text class="t2 s" x="216" y="312">state, place locks and logs in stateDir</text>
+  <line class="ln" x1="152" y1="140" x2="214" y2="140" marker-start="url(#a)" marker-end="url(#a)"/>
+  <line class="ln" x1="152" y1="262" x2="214" y2="272" marker-end="url(#a)"/>
+  <rect class="box" x="580" y="64" width="164" height="72" rx="10"/>
+  <text class="t1 b" x="594" y="86">Linux machine</text>
+  <text class="t2 s" x="594" y="106">agent →</text>
+  <text class="t2 s" x="594" y="123">Docker · KVM · host</text>
+  <rect class="box" x="580" y="148" width="164" height="72" rx="10"/>
+  <text class="t1 b" x="594" y="170">Mac</text>
+  <text class="t2 s" x="594" y="190">agent →</text>
+  <text class="t2 s" x="594" y="207">tart · container · host</text>
+  <rect class="box" x="580" y="232" width="164" height="90" rx="10"/>
+  <text class="t1 b" x="594" y="254">Windows machine</text>
+  <text class="t2 s" x="594" y="274">agent ⇄ Windows service</text>
+  <text class="t2 s" x="594" y="291">(runs as SYSTEM)</text>
+  <text class="t2 s" x="594" y="308">→ account · Hyper-V</text>
+  <path class="ln" d="M504 228 L540 228 L540 100 L578 100" marker-end="url(#a)"/>
+  <path class="ln" d="M540 184 L578 184" marker-end="url(#a)"/>
+  <path class="ln" d="M540 228 L540 276 L578 276" marker-end="url(#a)"/>
+  <text class="t2 s" x="546" y="58">SSH, registration on stdin</text>
+  <path class="ln" d="M662 322 L662 352 L78 352 L78 286" stroke-dasharray="5 4" marker-end="url(#a)"/>
+  <text class="t2 s" x="370" y="366" text-anchor="middle">each one-job runner then works with GitHub directly</text>
+</svg>
