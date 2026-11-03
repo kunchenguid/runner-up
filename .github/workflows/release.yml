@@ -106,12 +106,12 @@ jobs:
   # therefore never report on a release PR by itself, which would leave every
   # release blocked on a status that can never arrive.
   #
-  # The required check is now decided by the shared require-no-mistakes action.
-  # Publish that status here instead with the repository's local
-  # .github/scripts/no-mistakes-gate.sh, because the shared action can never
-  # report on a GITHUB_TOKEN PR that produces no workflow run at all. The status
-  # is only ever written for a PR the script itself accepts as structurally
-  # release-please's own.
+  # The required check is decided by the shared require-no-mistakes action,
+  # which can never report on a GITHUB_TOKEN PR that produces no workflow run at
+  # all. Publish the statuses here instead, only for a PR the repository's local
+  # .github/scripts/no-mistakes-gate.sh accepts as structurally release-please's
+  # own: reserved branch prefix, same-repository head and Release Please footer.
+  # The script reads no author and no attestation.
   release-pr-gate-status:
     needs: release-please
     runs-on: ubuntu-latest
@@ -141,18 +141,14 @@ jobs:
           for pr in $pr_numbers; do
             eval "$(gh api "repos/${REPO}/pulls/${pr}" --jq '
               "PR_NUMBER=" + (.number|tostring|@sh) +
-              " PR_AUTHOR=" + (.user.login|@sh) +
               " PR_HEAD_REF=" + (.head.ref|@sh) +
               " PR_HEAD_REPO=" + (.head.repo.full_name|@sh) +
               " PR_BASE_REPO=" + (.base.repo.full_name|@sh) +
               " PR_HEAD_SHA=" + (.head.sha|@sh) +
               " PR_BODY=" + ((.body // "")|@sh)')"
-            export PR_NUMBER PR_AUTHOR PR_HEAD_REF PR_HEAD_REPO PR_BASE_REPO PR_BODY
+            export PR_NUMBER PR_HEAD_REF PR_HEAD_REPO PR_BASE_REPO PR_BODY
 
-            # Overriding PR_AUTHOR defeats the script's bot exemption on
-            # purpose, so a status is stamped only when the STRUCTURAL
-            # release-please conditions hold, never because a bot opened the PR.
-            if PR_AUTHOR="structural-release-please-check" ./.github/scripts/no-mistakes-gate.sh; then
+            if ./.github/scripts/no-mistakes-gate.sh; then
               # Both required contexts: GitHub runs no workflow on this
               # GITHUB_TOKEN PR, and main's own CI already tested its code.
               for context in 'PR must be raised via no-mistakes' 'CI passed'; do

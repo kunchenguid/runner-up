@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -30,17 +29,15 @@ const (
 	releaseWorkflowPath = ".github/workflows/release.yml"
 )
 
-// gateScriptPath is the gate's executable decision surface. The required
-// check itself is now decided by the shared composite action the workflow
-// delegates to (tested upstream in the no-mistakes repository), but this script
-// is still what release.yml's release-pr-gate-status job runs to stamp the
-// required context on a release-please PR - GitHub creates no workflow runs on
-// a GITHUB_TOKEN PR, so nothing else can report there. These tests therefore
-// drive the script directly.
+// gateScriptPath is release.yml's release check. The required check itself is
+// decided by the shared composite action the gate workflow delegates to
+// (tested upstream in the no-mistakes repository); release.yml's
+// release-pr-gate-status job runs this script to decide whether a PR is
+// release-please's own, because GitHub creates no workflow runs on a
+// GITHUB_TOKEN PR and nothing else can report the required contexts there.
 const gateScriptPath = "./.github/scripts/no-mistakes-gate.sh"
 
-// gateStep is the gate invocation under test: the script plus the environment
-// contract documented in its own header.
+// gateStep is a workflow step under test: its run block and its env: block.
 type gateStep struct {
 	env map[string]string
 	run string
@@ -81,12 +78,11 @@ var cachedPRLookupInputs = []string{
 // its own judge; bumping this is a separate, deliberate pull request.
 const requireActionPin = "kunchenguid/no-mistakes/.github/actions/require-no-mistakes@f6441c96c352a18b9cadcaef6b6c7017e9ac3970"
 
-// loadGateStep verifies the shipped workflow still delegates the required check
-// to the pinned shared action, then returns the script invocation these tests
-// drive.
-func loadGateStep(t *testing.T) gateStep {
-	t.Helper()
-
+// The required check on every ordinary pull request comes from the pinned
+// shared action, with the bot exemptions as its input and the job always
+// running. The gate script no longer exempts bots, so this workflow is the
+// only place those exemptions live.
+func TestGateWorkflowDelegatesToPinnedAction(t *testing.T) {
 	data, err := os.ReadFile(gateWorkflowPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", gateWorkflowPath, err)
@@ -107,21 +103,15 @@ func loadGateStep(t *testing.T) gateStep {
 		if strings.TrimSpace(job.If) != "" {
 			t.Fatalf("job %q must not carry a job-level if:, a skipped job never reports the required check", jobID)
 		}
-		if len(job.Steps) == 0 {
-			t.Fatalf("job %q has no steps, want the shared-action call", jobID)
-		}
-		step := job.Steps[0]
-		for _, s := range job.Steps {
-			if s.Uses == requireActionPin {
-				step = s
+		var step *workflowStep
+		for i := range job.Steps {
+			if job.Steps[i].Uses == requireActionPin {
+				step = &job.Steps[i]
 				break
 			}
 		}
-		if strings.TrimSpace(step.Run) != "" {
-			t.Fatalf("job %q still carries inline enforcement; it must delegate to the shared action", jobID)
-		}
-		if step.Uses != requireActionPin {
-			t.Fatalf("job %q uses %q, want the pinned shared action %q", jobID, step.Uses, requireActionPin)
+		if step == nil {
+			t.Fatalf("job %q does not use the pinned shared action %q", jobID, requireActionPin)
 		}
 		exemptAuthors := make(map[string]struct{})
 		for _, entry := range strings.FieldsFunc(step.With["exempt-authors"], func(r rune) bool {
@@ -134,35 +124,17 @@ func loadGateStep(t *testing.T) gateStep {
 				t.Errorf("job %q must exempt %q via the action's exempt-authors input", jobID, login)
 			}
 		}
-
-		if _, err := os.Stat(gateScriptPath); err != nil {
-			t.Fatalf("release.yml still stamps the required context with this script: %v", err)
-		}
-		// The environment contract is the one documented in the script header
-		// and supplied by release.yml's release-pr-gate-status job.
-		return gateStep{
-			run: gateScriptPath,
-			env: map[string]string{
-				"PR_BODY":      "${{ github.event.pull_request.body }}",
-				"PR_AUTHOR":    "${{ github.event.pull_request.user.login }}",
-				"PR_NUMBER":    "${{ github.event.pull_request.number }}",
-				"PR_HEAD_REF":  "${{ github.event.pull_request.head.ref }}",
-				"PR_HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
-				"PR_BASE_REPO": "${{ github.event.pull_request.base.repo.full_name }}",
-				"PR_HEAD_SHA":  "${{ github.event.pull_request.head.sha }}",
-			},
-		}
+		return
 	}
 
 	t.Fatalf("%s has no job named %q", gateWorkflowPath, requiredCheckContext)
-	return gateStep{}
 }
 
-var expressionPattern = regexp.MustCompile(`\$\{\{\s*([^}]+?)\s*\}\}`)
-
-// pullRequestEvent is the subset of a GitHub `pull_request` event payload the
-// gate step reads through its env: block.
-type pullRequestEvent struct {
+// pullRequest is what the gate script can see of a pull request: the
+// variables release.yml's release-pr-gate-status job exports from the pull
+// request's API reading. author and headSHA are exported too, though the
+// script must ignore them, so a case can prove neither one passes a PR.
+type pullRequest struct {
 	number   int
 	body     string
 	author   string
@@ -172,59 +144,14 @@ type pullRequestEvent struct {
 	baseRepo string
 }
 
-func (e pullRequestEvent) lookup(path string) (string, bool) {
-	switch path {
-	case "github.event.pull_request.number":
-		return fmt.Sprint(e.number), true
-	case "github.event.pull_request.body":
-		return e.body, true
-	case "github.event.pull_request.user.login":
-		return e.author, true
-	case "github.event.pull_request.head.ref":
-		return e.headRef, true
-	case "github.event.pull_request.head.repo.full_name":
-		return e.headRepo, true
-	case "github.event.pull_request.head.sha":
-		return e.headSHA, true
-	case "github.event.pull_request.base.repo.full_name":
-		return e.baseRepo, true
-	default:
-		return "", false
-	}
-}
-
-// resolveEnv expands the step's `${{ ... }}` expressions against the event, the
-// same substitution the Actions runner performs before running the step.
-func resolveEnv(t *testing.T, step gateStep, event pullRequestEvent) []string {
-	t.Helper()
-
-	if len(step.env) == 0 {
-		t.Fatal("gate step declares no env:, so it can never see the pull request")
-	}
-
-	out := make([]string, 0, len(step.env))
-	for name, raw := range step.env {
-		value := expressionPattern.ReplaceAllStringFunc(raw, func(match string) string {
-			path := expressionPattern.FindStringSubmatch(match)[1]
-			resolved, ok := event.lookup(path)
-			if !ok {
-				t.Fatalf("env %s references unsupported expression %q", name, path)
-			}
-			return resolved
-		})
-		out = append(out, name+"="+value)
-	}
-	return out
-}
-
-// runGate executes the gate script exactly as release.yml does, from
-// the repository root, and reports whether the required check would pass.
-func runGate(t *testing.T, step gateStep, event pullRequestEvent) (bool, string) {
+// runGate executes the gate script from the repository root, as release.yml
+// does, and reports whether it accepts the pull request.
+func runGate(t *testing.T, pr pullRequest) (bool, string) {
 	t.Helper()
 
 	bash, err := exec.LookPath("bash")
 	if err != nil {
-		t.Skip("bash not available; the gate step runs on ubuntu-latest")
+		t.Skip("bash not available; the gate script runs on ubuntu-latest")
 	}
 
 	root, err := filepath.Abs(".")
@@ -232,9 +159,22 @@ func runGate(t *testing.T, step gateStep, event pullRequestEvent) (bool, string)
 		t.Fatalf("resolve repo root: %v", err)
 	}
 
-	cmd := exec.Command(bash, "-e", "-c", step.run)
+	cmd := exec.Command(bash, gateScriptPath)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), resolveEnv(t, step, event)...)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "PR_") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env,
+		"PR_NUMBER="+fmt.Sprint(pr.number),
+		"PR_BODY="+pr.body,
+		"PR_AUTHOR="+pr.author,
+		"PR_HEAD_REF="+pr.headRef,
+		"PR_HEAD_REPO="+pr.headRepo,
+		"PR_HEAD_SHA="+pr.headSHA,
+		"PR_BASE_REPO="+pr.baseRepo,
+	)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, string(output)
@@ -243,43 +183,38 @@ func runGate(t *testing.T, step gateStep, event pullRequestEvent) (bool, string)
 	if errors.As(err, &exitErr) {
 		return false, string(output)
 	}
-	t.Fatalf("run gate step: %v (%s)", err, output)
+	t.Fatalf("run gate script: %v (%s)", err, output)
 	return false, ""
 }
 
 const (
 	noMistakesSignature = "## Pipeline\n\nUpdates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)\n"
-	// attestationHeadSHA is the compact v1 comment's head_sha. Passing cases
-	// bind github.event.pull_request.head.sha to this value.
+	// attestationHeadSHA is the compact v1 comment's head_sha.
 	attestationHeadSHA = "0123456789abcdef0123456789abcdef01234567"
-	otherHeadSHA       = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	// completedAttestation matches the compact v1 comment no-mistakes >= 1.46.0 writes.
-	// pr/ci are commonly still running/pending at PR write time and are not required.
 	completedAttestation = `<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0123456789abcdef0123456789abcdef01234567","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"test","status":"completed"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->`
 	noMistakesBody       = noMistakesSignature + "\n" + completedAttestation + "\n"
 	releaseBody          = ":robot: I have created a release *beep* *boop*\n---\n\n## [2.1.1](https://example.invalid)\n\n---\n" +
 		"This PR was generated with [Release Please](https://github.com/googleapis/release-please). See [documentation](https://github.com/googleapis/release-please#release-please)."
 	repo     = "kunchenguid/runner-up"
 	forkRepo = "someone-else/runner-up"
-
-	attestationVersionFloor = "no-mistakes >= 1.46.0"
-	attestationVersionURL   = "https://github.com/kunchenguid/no-mistakes/pull/670"
 )
 
+// release.yml stamps the required statuses only on a pull request this script
+// accepts, so it must accept exactly release-please's own release PR: a
+// reserved branch prefix, a same-repository head and the Release Please
+// footer. Author identity and a no-mistakes attestation must never be enough,
+// since the shared action, not this script, judges those (RUU-54 audit, fix 5).
 func TestNoMistakesGateDecisions(t *testing.T) {
-	step := loadGateStep(t)
-
 	cases := []struct {
-		name       string
-		event      pullRequestEvent
-		pass       bool
-		wantOutput []string
-		hideOutput []string
+		name string
+		pr   pullRequest
+		pass bool
 	}{
 		{
 			// The live shape of a release-please release PR.
 			name: "release-please release PR is exempt",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 78, body: releaseBody, author: "github-actions[bot]",
 				headRef: "release-please--branches--main", headRepo: repo, baseRepo: repo,
 			},
@@ -289,7 +224,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 			// Structural, not identity: the same PR under a PAT identity, which
 			// is what release-please would become if it ever used one.
 			name: "release-please release PR authored by a human identity is exempt",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 79, body: releaseBody, author: "kunchenguid",
 				headRef: "release-please--branches--main", headRepo: repo, baseRepo: repo,
 			},
@@ -297,173 +232,15 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 		},
 		{
 			name: "legacy release-please branch prefix is exempt",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 80, body: releaseBody, author: "kunchenguid",
 				headRef: "release-please/branches/main", headRepo: repo, baseRepo: repo,
 			},
 			pass: true,
 		},
 		{
-			name: "github-actions bot is exempt",
-			event: pullRequestEvent{
-				number: 81, body: "chore: routine bot update", author: "github-actions[bot]",
-				headRef: "chore/bot", headRepo: repo, baseRepo: repo,
-			},
-			pass: true,
-		},
-		{
-			name: "dependabot is exempt",
-			event: pullRequestEvent{
-				number: 82, body: "Bumps a dependency.", author: "dependabot[bot]",
-				headRef: "dependabot/go_modules/example-1.2.3", headRepo: repo, baseRepo: repo,
-			},
-			pass: true,
-		},
-		{
-			name: "github-actions bot remains exempt even with a signature-only body",
-			event: pullRequestEvent{
-				number: 96, body: noMistakesSignature, author: "github-actions[bot]",
-				headRef: "chore/bot-with-signature", headRepo: repo, baseRepo: repo,
-			},
-			pass: true,
-		},
-		{
-			name: "human PR carrying the no-mistakes signature and completed attestation passes",
-			event: pullRequestEvent{
-				number: 83, body: noMistakesBody, author: "kunchenguid",
-				headRef: "fm/some-work", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass: true,
-		},
-		{
-			name: "human PR with the signature but no attestation fails",
-			event: pullRequestEvent{
-				number: 89, body: noMistakesSignature, author: "kunchenguid",
-				headRef: "fm/old-no-mistakes", headRepo: repo, baseRepo: repo,
-			},
-			pass:       false,
-			wantOutput: []string{attestationVersionFloor, attestationVersionURL, "Older no-mistakes that only writes the signature line is not enough"},
-		},
-		{
-			name: "human PR with unparseable attestation JSON fails",
-			event: pullRequestEvent{
-				number:  90,
-				body:    noMistakesSignature + "\n<!-- no-mistakes-pipeline-attestation:v1 {not-json} -->\n",
-				author:  "kunchenguid",
-				headRef: "fm/bad-attestation", headRepo: repo, baseRepo: repo,
-			},
-			pass:       false,
-			wantOutput: []string{attestationVersionFloor, attestationVersionURL},
-		},
-		{
-			name: "human PR with skipped review fails",
-			event: pullRequestEvent{
-				number:  91,
-				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"review","status":"completed"`, `"step":"review","status":"skipped"`, 1) + "\n",
-				author:  "kunchenguid",
-				headRef: "fm/skipped-review", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass:       false,
-			wantOutput: []string{"review: skipped", "Quota skips and agent skips are not compliant"},
-			hideOutput: []string{attestationVersionFloor},
-		},
-		{
-			name: "human PR with failed test fails",
-			event: pullRequestEvent{
-				number:  92,
-				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"test","status":"completed"`, `"step":"test","status":"failed"`, 1) + "\n",
-				author:  "kunchenguid",
-				headRef: "fm/failed-test", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass:       false,
-			wantOutput: []string{"test: failed"},
-			hideOutput: []string{attestationVersionFloor},
-		},
-		{
-			name: "human PR with pending document fails",
-			event: pullRequestEvent{
-				number:  93,
-				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"document","status":"completed"`, `"step":"document","status":"pending"`, 1) + "\n",
-				author:  "kunchenguid",
-				headRef: "fm/pending-document", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass:       false,
-			wantOutput: []string{"document: pending"},
-			hideOutput: []string{attestationVersionFloor},
-		},
-		{
-			name: "human PR with running document fails",
-			event: pullRequestEvent{
-				number:  94,
-				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"document","status":"completed"`, `"step":"document","status":"running"`, 1) + "\n",
-				author:  "kunchenguid",
-				headRef: "fm/running-document", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass:       false,
-			wantOutput: []string{"document: running"},
-			hideOutput: []string{attestationVersionFloor},
-		},
-		{
-			name: "human PR missing the document step fails",
-			event: pullRequestEvent{
-				number:  95,
-				body:    noMistakesSignature + "\n<!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"steps\":[{\"step\":\"review\",\"status\":\"completed\"},{\"step\":\"test\",\"status\":\"completed\"}]} -->\n",
-				author:  "kunchenguid",
-				headRef: "fm/missing-document", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass:       false,
-			wantOutput: []string{"document: missing"},
-			hideOutput: []string{attestationVersionFloor},
-		},
-		{
-			name: "human PR with attestation for a different head SHA fails",
-			event: pullRequestEvent{
-				number: 97, body: noMistakesBody, author: "kunchenguid",
-				headRef: "fm/stale-attestation", headRepo: repo, headSHA: otherHeadSHA, baseRepo: repo,
-			},
-			pass: false,
-			wantOutput: []string{
-				"not bound to the current pull request head",
-				"stale attestation",
-				attestationHeadSHA,
-				otherHeadSHA,
-			},
-			hideOutput: []string{attestationVersionFloor, "review: skipped"},
-		},
-		{
-			name: "human PR with empty attestation head_sha fails",
-			event: pullRequestEvent{
-				number:  98,
-				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"head_sha":"0123456789abcdef0123456789abcdef01234567"`, `"head_sha":""`, 1) + "\n",
-				author:  "kunchenguid",
-				headRef: "fm/empty-head-sha", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass: false,
-			wantOutput: []string{
-				"not bound to the current pull request head",
-				"attestation head_sha: (missing)",
-				attestationHeadSHA,
-			},
-			hideOutput: []string{attestationVersionFloor},
-		},
-		{
-			name: "human PR with attestation JSON missing head_sha fails",
-			event: pullRequestEvent{
-				number:  99,
-				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"head_sha":"0123456789abcdef0123456789abcdef01234567",`, "", 1) + "\n",
-				author:  "kunchenguid",
-				headRef: "fm/missing-head-sha", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
-			},
-			pass: false,
-			wantOutput: []string{
-				"not bound to the current pull request head",
-				"attestation head_sha: (missing)",
-			},
-			hideOutput: []string{attestationVersionFloor},
-		},
-		{
 			name: "human PR without the signature fails",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 84, body: "## Summary\n\nA hand-written pull request.", author: "kunchenguid",
 				headRef: "fix/something", headRepo: repo, baseRepo: repo,
 			},
@@ -471,7 +248,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 		},
 		{
 			name: "empty body fails",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 85, body: "", author: "kunchenguid",
 				headRef: "fix/something", headRepo: repo, baseRepo: repo,
 			},
@@ -479,7 +256,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 		},
 		{
 			name: "borrowed release branch name alone fails",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 86, body: "## Summary\n\nNot a release PR.", author: "kunchenguid",
 				headRef: "release-please--branches--main", headRepo: repo, baseRepo: repo,
 			},
@@ -487,7 +264,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 		},
 		{
 			name: "fork copying the release body fails",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 87, body: releaseBody, author: "outside-contributor",
 				headRef: "release-please--branches--main", headRepo: forkRepo, baseRepo: repo,
 			},
@@ -495,9 +272,29 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 		},
 		{
 			name: "release body on an ordinary same-repo branch fails",
-			event: pullRequestEvent{
+			pr: pullRequest{
 				number: 88, body: releaseBody, author: "kunchenguid",
 				headRef: "feat/pretend", headRepo: repo, baseRepo: repo,
+			},
+			pass: false,
+		},
+		{
+			// The script used to exempt bots; that exemption now lives only in
+			// the shared action's exempt-authors input.
+			name: "bot author on an ordinary branch fails",
+			pr: pullRequest{
+				number: 81, body: "chore: routine bot update", author: "github-actions[bot]",
+				headRef: "chore/bot", headRepo: repo, baseRepo: repo,
+			},
+			pass: false,
+		},
+		{
+			// The script used to pass a completed attestation bound to the head.
+			// Even with the head exported, it must not stamp a release status.
+			name: "completed attestation bound to the head fails",
+			pr: pullRequest{
+				number: 83, body: noMistakesBody, author: "kunchenguid",
+				headRef: "release-please--branches--main", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
 			},
 			pass: false,
 		},
@@ -505,19 +302,9 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, output := runGate(t, step, tc.event)
+			got, output := runGate(t, tc.pr)
 			if got != tc.pass {
 				t.Fatalf("gate pass = %v, want %v\n%s", got, tc.pass, output)
-			}
-			for _, want := range tc.wantOutput {
-				if !strings.Contains(output, want) {
-					t.Fatalf("gate output missing %q\n%s", want, output)
-				}
-			}
-			for _, hide := range tc.hideOutput {
-				if strings.Contains(output, hide) {
-					t.Fatalf("gate output unexpectedly contains %q\n%s", hide, output)
-				}
 			}
 		})
 	}
@@ -608,7 +395,6 @@ esac
 
 	assignments := []string{
 		shellAssignment("PR_NUMBER", "78"),
-		shellAssignment("PR_AUTHOR", "github-actions[bot]"),
 		shellAssignment("PR_HEAD_REF", "release-please--branches--main"),
 		shellAssignment("PR_HEAD_REPO", repo),
 		shellAssignment("PR_BASE_REPO", repo),
@@ -684,27 +470,25 @@ func TestReleaseWorkflowGateStatusWiring(t *testing.T) {
 		}
 	})
 
-	t.Run("bot identity alone cannot stamp required context", func(t *testing.T) {
+	t.Run("release branch without the Release Please footer is not stamped", func(t *testing.T) {
 		output, posts := runReleaseGateStatusStep(t, step, "not a release-please body")
 		if posts != "" {
-			t.Fatalf("non-structural bot PR wrote a status:\n%s", posts)
+			t.Fatalf("non-structural release-branch PR wrote a status:\n%s", posts)
 		}
 		if !strings.Contains(output, "not a structural release-please PR") {
 			t.Fatalf("missing rejection output:\n%s", output)
 		}
 	})
 
-	// Guard against accidentally widening this release-only path by exporting
-	// the head SHA; the omission itself is not endorsed here.
+	// A completed no-mistakes attestation bound to the release PR's head must
+	// not stamp the required contexts: only the structural check may.
 	t.Run("attestation cannot widen structural release path", func(t *testing.T) {
 		output, posts := runReleaseGateStatusStep(t, step, noMistakesBody)
 		if posts != "" {
 			t.Fatalf("attestation-only release PR wrote a status:\n%s", posts)
 		}
-		for _, want := range []string{"pull request head:    (missing)", "not a structural release-please PR"} {
-			if !strings.Contains(output, want) {
-				t.Fatalf("missing rejection output %q:\n%s", want, output)
-			}
+		if !strings.Contains(output, "not a structural release-please PR") {
+			t.Fatalf("missing rejection output:\n%s", output)
 		}
 	})
 }
