@@ -175,7 +175,7 @@ func serveWith(cfg *config.Config, configPath, self string, clients coordinator.
 		return 1
 	}
 	// Each reader is used only while the setup needs it: label and workflow
-	// reads while an order rule does, VM reads while a place runs in tart.
+	// reads while an order rule does, VM reads of the Macs with tart places.
 	if api != nil {
 		svc.RunReader = api.RunClosed
 		svc.LabelReader = api.PullLabels
