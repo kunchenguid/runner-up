@@ -15,18 +15,12 @@ import (
 
 	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/config"
-	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
-// Intent (README, "Order rules"): a freed place goes to the job the configured
-// order rules pick. label:NAME puts a labeled pull request's jobs first, from
-// the same repository only; workflow:GLOB puts a workflow's jobs first;
-// waited:D keeps a job that waited D from being passed over; shortest runs the
-// job with the shortest learned runtime first, and learns it from GitHub's
-// completion messages. pool:NAME puts a pool's jobs first, so short jobs a
-// merge waits on, given a pool of their own, go ahead even of jobs that waited
-// an hour and of labeled pull requests on the places they share with other
-// pools.
+// Intent (README, "Order rules"): a freed place goes to the job the
+// configured order rules pick, across repositories and pools, with the pull
+// request labels, run workflows and learned runtimes the coordinator reads
+// from GitHub. What each rule does is owned by internal/plan (rules_test.go).
 
 // onePlace is one machine with one place for every pool, so the order the
 // place takes waiting jobs in is the order the rules pick.
@@ -89,51 +83,17 @@ func wantOrder(t *testing.T, got, want []string) {
 	}
 }
 
-func TestDefaultOrderIsFirstInFirstOutWithoutEstimates(t *testing.T) {
-	got := takeOrder(t, onePlace(t.TempDir()), nil)
-	wantOrder(t, got, []string{oVerify, oPR184, oPublish, oSuite, oRelease, oPR186})
-}
-
-// labelPR186 labels app's open pull request #186 urgent.
-func labelPR186(h *harness) {
-	h.svc.LabelReader = func(_ context.Context, repo string) (map[string]map[string]bool, error) {
-		if repo != "octo-org/app" {
-			return nil, nil
-		}
-		return map[string]map[string]bool{"refs/pull/186/merge": {"urgent": true}}, nil
-	}
-}
-
-func TestLabeledPullRequestGoesFirst(t *testing.T) {
-	cfg := onePlace(t.TempDir(), "label:urgent", "waited:60m", "shortest")
-	got := takeOrder(t, cfg, labelPR186)
-	// PR #186's job, the newest, goes first; the rest keep their order.
-	wantOrder(t, got, []string{oPR186, oVerify, oPR184, oPublish, oSuite, oRelease})
-}
-
-func TestPoolGoesFirstAheadOfLabelsAndHourOldJobs(t *testing.T) {
-	cfg := onePlace(t.TempDir(), "pool:ru-large", "label:urgent", "waited:60m", "shortest")
-	got := takeOrder(t, cfg, labelPR186)
-	// The ru-large jobs, publish and the wallet's release, go first, though
-	// verify and PR #184 waited longer and PR #186 is labeled urgent. The
-	// ru-linux jobs follow in the order the later rules give them.
-	wantOrder(t, got, []string{oPublish, oRelease, oPR186, oVerify, oPR184, oSuite})
-}
-
-// A pool rule naming a pool the setup does not have would order nothing and
-// say nothing, so the setup is refused.
-func TestPoolRuleMustNameAPoolOfTheSetup(t *testing.T) {
-	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "pool:ru-large")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "pool:ru-lagre")); err == nil || !strings.Contains(err.Error(), `"pool:ru-lagre"`) {
-		t.Fatalf("a pool rule for a misspelled pool: %v", err)
-	}
-}
-
-func TestReleaseWorkflowGoesFirst(t *testing.T) {
-	cfg := onePlace(t.TempDir(), "workflow:release", "shortest")
+// The order rules themselves are owned by internal/plan (rules_test.go); this
+// test owns their wiring: the labels the label reader finds, the run
+// workflows the workflow reader finds and the runtimes GitHub's completion
+// messages teach all reach the rules, and the place takes jobs in the order
+// they give. Each reading moves one job: PR #186 goes first only by its
+// label, verify counts as release only by its run's top-level workflow, and
+// the suite beats PR #184 only by its learned runtime.
+func TestOrderRulesReadLabelsWorkflowsAndLearnedRuntimes(t *testing.T) {
+	cfg := onePlace(t.TempDir(), "label:urgent", "workflow:release", "shortest")
 	got := takeOrder(t, cfg, func(h *harness) {
+		labelPR186(h)
 		h.svc.WorkflowReader = func(_ context.Context, repo string, id int64) (string, error) {
 			// The runs' top-level workflows. app's run 39361345555 is its
 			// release, which calls verify.yml as a reusable workflow.
@@ -141,15 +101,6 @@ func TestReleaseWorkflowGoesFirst(t *testing.T) {
 				39381269010: ".github/workflows/journeys.yml", 39370000001: ".github/workflows/suite.yml",
 				39370000002: ".github/workflows/release.yml"}[id], nil
 		}
-	})
-	// Both release runs' jobs go first, oldest first: verify counts as
-	// release, since its run's top-level workflow counts, not the job's own
-	// file.
-	wantOrder(t, got, []string{oVerify, oPublish, oRelease, oPR184, oSuite, oPR186})
-}
-
-func TestShortestLearnedJobGoesFirstUnlessAnotherWaitedAnHour(t *testing.T) {
-	teach := func(h *harness) {
 		// GitHub's completion of an earlier successful suite run teaches its
 		// runtime, 4 minutes from runner assignment to finish; a cancelled
 		// verify teaches nothing.
@@ -166,27 +117,17 @@ func TestShortestLearnedJobGoesFirstUnlessAnotherWaitedAnHour(t *testing.T) {
 				RunnerAssignTime: at.Add(-time.Minute), FinishTime: at}},
 		}}
 		h.handle("octo-user/tool", "ru-linux", msg)
-	}
-	// With shortest alone the suite, known to take 4 minutes, goes ahead of
-	// every job of unknown length.
-	got := takeOrder(t, onePlace(t.TempDir(), "shortest"), teach)
-	wantOrder(t, got, []string{oSuite, oVerify, oPR184, oPublish, oRelease, oPR186})
-
-	// Under the default order, jobs that waited an hour go first, oldest
-	// first, and the short suite only beats PR #186, the one job younger
-	// than an hour.
-	got = takeOrder(t, onePlace(t.TempDir()), teach)
-	wantOrder(t, got, []string{oVerify, oPR184, oPublish, oSuite, oRelease, oPR186})
+	})
+	wantOrder(t, got, []string{oPR186, oVerify, oPublish, oRelease, oSuite, oPR184})
 }
 
-func TestOrderRulesAreChecked(t *testing.T) {
-	for _, bad := range [][]string{{"label:"}, {"pool:"}, {"waited:soon"}, {"workflow:["}, {"shortest:yes"}, {"fastest"}} {
-		if _, err := plan.ParseOrder(onePlace("", bad...)); err == nil {
-			t.Errorf("order %v was accepted", bad)
+// labelPR186 labels app's open pull request #186 urgent.
+func labelPR186(h *harness) {
+	h.svc.LabelReader = func(_ context.Context, repo string) (map[string]map[string]bool, error) {
+		if repo != "octo-org/app" {
+			return nil, nil
 		}
-	}
-	if _, err := plan.ParseOrder(onePlace("", "pool:ru-large", "label:urgent", "waited:30m", "workflow:release,deploy-*", "shortest")); err != nil {
-		t.Fatal(err)
+		return map[string]map[string]bool{"refs/pull/186/merge": {"urgent": true}}, nil
 	}
 }
 
@@ -272,18 +213,4 @@ func TestLastPoolLeavesRoomForOtherJobsFirst(t *testing.T) {
 	h.want(map[string]string{"mac": publish, "guest-1": verify})
 	h.launcher.finish(t, "mac")
 	h.launcher.finish(t, "guest-1")
-}
-
-// A last rule naming a pool the setup does not have would order nothing, so
-// the setup is refused, as with pool:.
-func TestLastRuleMustNameAPoolOfTheSetup(t *testing.T) {
-	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "last:ru-linux")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "last:ru-linx")); err == nil || !strings.Contains(err.Error(), `"last:ru-linx"`) {
-		t.Fatalf("a last rule for a misspelled pool: %v", err)
-	}
-	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "last:")); err == nil {
-		t.Error("a last rule naming no pool was accepted")
-	}
 }
