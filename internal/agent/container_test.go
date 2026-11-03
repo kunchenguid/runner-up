@@ -15,10 +15,17 @@ package agent
 // guest's standard input, then waits until its guest is deleted.
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -63,17 +70,39 @@ func containerPlace(t *testing.T) *AgentRun {
 		Image: "runner-up-linux:2026-11-03", StateDir: t.TempDir()}
 }
 
-func TestContainerGuestGetsTheRegistrationOnlyOnItsInput(t *testing.T) {
-	dir := standInContainer(t)
-	a := containerPlace(t)
+// startContainerGuest starts a container place with the stand-in container
+// tool and returns the arguments and the standard input its guest got, and a
+// function that stops the place and returns what the place reported.
+func startContainerGuest(t *testing.T, dir string, a *AgentRun) (args []string, stdin string, stop func() error) {
+	t.Helper()
+	if _, ok := runnerSHA256["linux-"+runnerArch()]; !ok {
+		t.Skip("no Linux runner release for " + runnerArch())
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	var out strings.Builder
 	done := make(chan error, 1)
 	go func() { done <- appleContainerProvider{}.run(ctx, a, registration, &out) }()
 	waitFor(t, filepath.Join(dir, "guest.pid"))
+	b, _ := os.ReadFile(filepath.Join(dir, "args"))
+	in, _ := os.ReadFile(filepath.Join(dir, "stdin"))
+	return strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00"), string(in), func() error {
+		cancel()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatal("the place did not stop")
+			return nil
+		}
+	}
+}
+
+func TestContainerGuestGetsTheRegistrationOnlyOnItsInput(t *testing.T) {
+	dir := standInContainer(t)
+	a := containerPlace(t)
+	args, in, stop := startContainerGuest(t, dir, a)
 
 	b, _ := os.ReadFile(filepath.Join(dir, "args"))
-	args := strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
 	env, _ := os.ReadFile(filepath.Join(dir, "env"))
 	if strings.Contains(string(b), registration) || strings.Contains(string(env), registration) {
 		t.Fatal("the registration is in the guest's arguments or the container tool's environment")
@@ -91,40 +120,27 @@ func TestContainerGuestGetsTheRegistrationOnlyOnItsInput(t *testing.T) {
 			t.Errorf("container run %s %q, want %q (%q)", flag, values[flag], want, args)
 		}
 	}
-	if values["-c"] != containerBootstrap(containerGuestDir) || args[len(args)-3] != a.Image {
-		t.Errorf("the guest does not start runner-up's bootstrap from the place's image: %q", args)
+	if len(args) < 3 || args[len(args)-3] != a.Image || args[len(args)-2] != "-c" {
+		t.Errorf("the guest does not start a program from the place's image: %q", args)
 	}
 
-	// Its input is the guest program, filled in for this job, then the
+	// Its input is a length line and that many bytes of program, then the
 	// registration on one line.
-	in, _ := os.ReadFile(filepath.Join(dir, "stdin"))
-	size, rest, _ := strings.Cut(string(in), "\n")
+	size, rest, _ := strings.Cut(in, "\n")
 	n, err := strconv.Atoi(size)
 	if err != nil || n > len(rest) {
 		t.Fatalf("the guest's input starts %q", size)
 	}
-	guest, want := rest[:n], linuxGuestOrFail(t, false, config.Share{Cores: 2, MemoryMB: 8192})
-	if guest != want {
-		t.Error("the guest's program is not runner-up's guest program for this job")
+	if strings.Contains(rest[:n], registration) {
+		t.Error("the guest's program holds the registration")
 	}
 	if rest[n:] != registration+"\n" {
 		t.Errorf("after the program the guest reads %q, want the registration", rest[n:])
 	}
-	for _, s := range []string{runnerSHA256["linux-"+runnerArch()], `ALLOW_FORKS = "false" == "true"`, `"RUNNER_UP_CORES": "2"`} {
-		if !strings.Contains(guest, s) {
-			t.Errorf("the guest program lacks %q", s)
-		}
-	}
 
 	// Stopping the place deletes its guest.
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("a stopped place reported %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the place did not stop")
+	if err := stop(); err != nil {
+		t.Errorf("a stopped place reported %v", err)
 	}
 	calls, _ := os.ReadFile(filepath.Join(dir, "calls"))
 	if !strings.Contains(string(calls), "delete runner-up-mini-linux1") {
@@ -132,13 +148,181 @@ func TestContainerGuestGetsTheRegistrationOnlyOnItsInput(t *testing.T) {
 	}
 }
 
-func linuxGuestOrFail(t *testing.T, allowForks bool, size config.Share) string {
+// guestHarness runs a container guest's bootstrap, as given to python3, on
+// its standard input, as the guest would, with the guest's filesystem under
+// a directory and its other edges stood in for: GitHub's download serves a
+// file and records what was asked, chown records its arguments, and the
+// runner runs as this user and records the user it was to run as.
+const guestHarness = `import builtins, importlib.util, json, os, shutil, subprocess, sys, urllib.request
+root, served, bootstrap = sys.argv[1:4]
+real_open = builtins.open
+def record(**kw):
+    with real_open(os.path.join(root, "record"), "a") as f:
+        f.write(json.dumps(kw) + "\n")
+def moved(p):
+    if isinstance(p, str) and p.startswith(("/opt/runner-up", "/home/runner", "/etc/environment")):
+        return root + p
+    return p
+def wrap(fn):
+    return lambda p, *a, **k: fn(moved(p), *a, **k)
+builtins.open = wrap(real_open)
+os.makedirs, os.chmod, os.remove, shutil.rmtree = map(wrap, (os.makedirs, os.chmod, os.remove, shutil.rmtree))
+def urlopen(url, timeout=None):
+    record(download=url)
+    return real_open(served, "rb")
+urllib.request.urlopen = urlopen
+real_run = subprocess.run
+def run(args, **kw):
+    args = [moved(a) for a in args]
+    if args[0] == "chown":
+        record(chown=args)
+        return subprocess.CompletedProcess(args, 0)
+    if "user" in kw:
+        record(user=kw.pop("user"), group=kw.pop("group"), extra_groups=kw.pop("extra_groups"))
+    kw["cwd"] = moved(kw.get("cwd"))
+    return real_run(args, **kw)
+subprocess.run = run
+def execv(path, argv):
+    spec = importlib.util.spec_from_file_location("guest", moved(argv[1]))
+    g = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(g)
+    sys.argv = argv[1:]
+    sys.exit(g.main())
+os.execv = execv
+os.makedirs(os.path.join(root, "home/runner"))
+exec(bootstrap, {"__name__": "__main__"})
+`
+
+// standInRunner is a runner release archive whose run.sh writes the
+// environment it runs with beside itself.
+func standInRunner(t *testing.T, path string) string {
 	t.Helper()
-	g, err := linuxGuest(runnerArch(), allowForks, size)
-	if err != nil {
-		t.Skip(err)
+	var b bytes.Buffer
+	gz := gzip.NewWriter(&b)
+	tw := tar.NewWriter(gz)
+	run := "#!/bin/sh\nenv > runner.env\necho 'Running job: build'\n"
+	tw.WriteHeader(&tar.Header{Name: "run.sh", Mode: 0o755, Size: int64(len(run))})
+	tw.Write([]byte(run))
+	tw.Close()
+	gz.Close()
+	os.WriteFile(path, b.Bytes(), 0o600)
+	sum := sha256.Sum256(b.Bytes())
+	return hex.EncodeToString(sum[:])
+}
+
+// Intent: the guest runs GitHub's runner, from GitHub's release of the
+// pinned version, only when its download matches the pin; as the user runner,
+// with the registration and the job's size in its environment and the fork
+// guard, which refuses another repository's pull request, as its job-started
+// hook. The pin is the stand-in release's own sum, so a download of anything
+// else must be refused.
+func TestContainerGuestRunsThePinnedRunnerWithTheForkGuard(t *testing.T) {
+	py := python(t)
+	if _, err := exec.LookPath("tar"); err != nil {
+		t.Skip("no tar")
 	}
-	return g
+	work := t.TempDir()
+	release := filepath.Join(work, "release.tar.gz")
+	key := "linux-" + runnerArch()
+	pinned, had := runnerSHA256[key]
+	runnerSHA256[key] = standInRunner(t, release)
+	t.Cleanup(func() {
+		if had {
+			runnerSHA256[key] = pinned
+		} else {
+			delete(runnerSHA256, key)
+		}
+	})
+	dir := standInContainer(t)
+	args, in, stop := startContainerGuest(t, dir, containerPlace(t))
+	stop()
+	bootstrap := args[len(args)-1]
+
+	guest := func(served string) (root string, out string, code int) {
+		root = t.TempDir()
+		cmd := exec.Command(py, "-I", "-c", guestHarness, root, served, bootstrap)
+		cmd.Stdin = strings.NewReader(in)
+		b, err := cmd.CombinedOutput()
+		return root, string(b), ExitCode(err)
+	}
+
+	root, out, code := guest(release)
+	if code != 0 || !strings.Contains(out, "Running job: build\nrunner-up guest: the runner ended with 0\n") {
+		t.Fatalf("the guest ended with %d:\n%s", code, out)
+	}
+	if strings.Contains(out, registration) {
+		t.Errorf("the guest's output holds the registration:\n%s", out)
+	}
+	recorded, _ := os.ReadFile(filepath.Join(root, "record"))
+	var asked []map[string]any
+	for _, l := range strings.Split(strings.TrimSpace(string(recorded)), "\n") {
+		var m map[string]any
+		json.Unmarshal([]byte(l), &m)
+		asked = append(asked, m)
+	}
+	wantURL := "https://github.com/actions/runner/releases/download/v" + runnerVersion +
+		"/actions-runner-linux-" + runnerArch() + "-" + runnerVersion + ".tar.gz"
+	want := []map[string]any{
+		{"download": wantURL},
+		{"chown": []any{"chown", "-R", "runner:runner", root + "/home/runner/actions-runner"}},
+		{"user": "runner", "group": "runner", "extra_groups": []any{}},
+	}
+	if !reflect.DeepEqual(asked, want) {
+		t.Errorf("the guest asked %v, want %v", asked, want)
+	}
+
+	envFile, err := os.ReadFile(filepath.Join(root, "home/runner/actions-runner/runner.env"))
+	if err != nil {
+		t.Fatal("the runner did not run")
+	}
+	env := map[string]string{}
+	for _, l := range strings.Split(string(envFile), "\n") {
+		if k, v, ok := strings.Cut(l, "="); ok {
+			env[k] = v
+		}
+	}
+	hook := "/opt/runner-up/fork-guard.sh"
+	for k, v := range map[string]string{
+		"ACTIONS_RUNNER_INPUT_JITCONFIG":  registration,
+		"ACTIONS_RUNNER_HOOK_JOB_STARTED": hook,
+		"RUNNER_UP_CORES":                 "2",
+		"RUNNER_UP_MEMORY_MB":             "8192",
+		"HOME":                            "/home/runner",
+		"USER":                            "runner",
+	} {
+		if env[k] != v {
+			t.Errorf("the runner got %s=%q, want %q", k, env[k], v)
+		}
+	}
+
+	// The hook, run with the guest's filesystem under root, refuses a pull
+	// request from a fork and allows one from the repository.
+	script, err := os.ReadFile(root + hook)
+	if info, statErr := os.Stat(root + hook); err != nil || statErr != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("the guest installed no runnable hook at %s (%v)", hook, err)
+	}
+	mapped := strings.NewReplacer("/usr/bin/python3", py+" -I", "/opt/runner-up", root+"/opt/runner-up").Replace(string(script))
+	for event, wantCode := range map[string]int{"pull-request-521-fork.json": 1, "pull-request-527-same-repo.json": 0} {
+		path, _ := filepath.Abs(filepath.Join("testdata/events", event))
+		cmd := exec.Command("bash", "-c", mapped)
+		cmd.Env = append(os.Environ(), "GITHUB_EVENT_PATH="+path, "GITHUB_EVENT_NAME=pull_request")
+		b, err := cmd.CombinedOutput()
+		if ExitCode(err) != wantCode {
+			t.Errorf("the hook on %s ended with %d, want %d: %s", event, ExitCode(err), wantCode, b)
+		}
+	}
+
+	// A download that does not match the pin runs no runner.
+	other := filepath.Join(work, "other.tar.gz")
+	b, _ := os.ReadFile(release)
+	os.WriteFile(other, append([]byte("x"), b...), 0o600)
+	root, out, code = guest(other)
+	if code != 1 || !strings.Contains(out, "runner-up guest: failed: the runner's download does not match its pin") {
+		t.Errorf("a guest given a download that does not match its pin ended with %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "home/runner/actions-runner/runner.env")); err == nil {
+		t.Error("the guest ran a runner whose download does not match its pin")
+	}
 }
 
 // A guest the container tool could not start ran no runner: the place says
