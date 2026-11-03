@@ -1,0 +1,87 @@
+$ runner-up machine add isolated-mac --config {run-worktree}/.test-phase/valid.json --agent {run-worktree}/.test-phase/bin/runner-up --provider container --image runner-up-linux:disposable --places 1 --place-cores 2 --place-memory 4096
+isolated-mac: runner-up dev
+isolated-mac: darwin/arm64, 14 cores, 65536 MB, docker: Docker disabled for isolated CLI validation, kvm: KVM places run only on Linux, tart: ok, host: ok
+isolated-mac (this machine): isolated-mac-1 container 2 cores 4096 MB; places may reserve 13 of 14 cores and 64512 of 65536 MB, all at once
+wrote {run-worktree}/.test-phase/valid.json; (re)start runner-up serve to use it
+[exit 0]
+
+Persisted setup (public JSON contract):
+{
+  "stateDir": "{run-worktree}/.test-phase/state",
+  "github": {
+    "repos": [
+      "example/disposable"
+    ]
+  },
+  "pools": [
+    {
+      "label": "ru-linux",
+      "cores": 2,
+      "memoryMB": 4096
+    }
+  ],
+  "machines": [
+    {
+      "name": "isolated-mac",
+      "agent": "{run-worktree}/.test-phase/bin/runner-up",
+      "cores": 14,
+      "memoryMB": 65536,
+      "roomCores": 1,
+      "roomMemoryMB": 1024,
+      "places": [
+        {
+          "id": "isolated-mac-1",
+          "provider": "container",
+          "pools": [
+            "ru-linux"
+          ],
+          "cores": 2,
+          "memoryMB": 4096,
+          "image": "runner-up-linux:disposable"
+        }
+      ]
+    }
+  ],
+  "order": [
+    "last:ru-linux",
+    "waited:60m",
+    "shortest"
+  ],
+  "announceCapacity": 50,
+  "startTimeoutSeconds": 600,
+  "bootTimeoutSeconds": 300,
+  "guestCheckSeconds": 30,
+  "maxJobSeconds": 21600,
+  "tickSeconds": 10,
+  "logKeepDays": 30
+}
+
+$ runner-up check-config --config {run-worktree}/.test-phase/valid.json
+ok: 1 targets, 1 pools, 1 machines, 1 places
+isolated-mac (this machine): isolated-mac-1 container 2 cores 4096 MB; places may reserve 13 of 14 cores and 64512 of 65536 MB, all at once
+pool ru-linux: each job reserves 2 cores, 4096 MB; overrides place sizes
+[exit 0]
+
+$ runner-up machine add no-image --config {run-worktree}/.test-phase/missing-image.json --agent {run-worktree}/.test-phase/bin/runner-up --provider container --places 1
+no-image: runner-up dev
+no-image: darwin/arm64, 14 cores, 65536 MB, docker: Docker disabled for isolated CLI validation, kvm: KVM places run only on Linux, tart: ok, host: ok
+an Apple container place needs --image, a Linux image on no-image with python3 and a user named runner
+[exit 1]
+
+Rejected machine add left the original setup unchanged.
+
+$ runner-up check-config --config {run-worktree}/.test-phase/unknown-pool.json
+{run-worktree}/.test-phase/unknown-pool.json: order rule "last:ru-linx" names no pool of this setup
+[exit 2]
+
+$ runner-up check-config --config {run-worktree}/.test-phase/empty-pool.json
+{run-worktree}/.test-phase/empty-pool.json: order rule "last:" names no pool of this setup
+[exit 2]
+
+$ runner-up check-config --config {run-worktree}/.test-phase/bad-image.json
+{run-worktree}/.test-phase/bad-image.json: place "isolated-mac-1": an Apple container place needs the image its guests start from, such as runner-up-linux:latest
+[exit 2]
+
+$ runner-up check-config --config {run-worktree}/.test-phase/empty-image.json
+{run-worktree}/.test-phase/empty-image.json: place "isolated-mac-1": an Apple container place needs the image its guests start from, such as runner-up-linux:latest
+[exit 2]

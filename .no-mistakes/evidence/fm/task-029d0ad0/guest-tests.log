@@ -1,0 +1,18 @@
+=== RUN   TestContainerGuestGetsTheRegistrationOnlyOnItsInput
+--- PASS: TestContainerGuestGetsTheRegistrationOnlyOnItsInput (0.36s)
+=== RUN   TestContainerGuestRunsThePinnedRunnerWithTheForkGuard
+--- PASS: TestContainerGuestRunsThePinnedRunnerWithTheForkGuard (0.54s)
+=== RUN   TestContainerGuestThatNeverStartsFailsThePlace
+--- PASS: TestContainerGuestThatNeverStartsFailsThePlace (0.07s)
+=== RUN   TestContainerCleanDeletesALeftoverGuest
+--- PASS: TestContainerCleanDeletesALeftoverGuest (0.07s)
+=== RUN   TestContainerBootstrapLeavesTheRegistrationForTheGuest
+--- PASS: TestContainerBootstrapLeavesTheRegistrationForTheGuest (0.12s)
+=== RUN   TestGuestForkGuardDecidesLikeRunnerUps
+--- PASS: TestGuestForkGuardDecidesLikeRunnerUps (0.72s)
+=== RUN   TestGuestWaitsForTheRegistrationOnItsSerialPort
+--- PASS: TestGuestWaitsForTheRegistrationOnItsSerialPort (0.05s)
+=== RUN   TestGuestRunnerGetsTheImagesEnvironment
+--- PASS: TestGuestRunnerGetsTheImagesEnvironment (0.09s)
+PASS
+ok  	github.com/kunchenguid/runner-up/internal/agent	2.297s

@@ -1,0 +1,12 @@
+=== RUN   TestContainerGuestGetsTheRegistrationOnlyOnItsInput
+--- PASS: TestContainerGuestGetsTheRegistrationOnlyOnItsInput (0.20s)
+=== RUN   TestContainerGuestRunsThePinnedRunnerWithTheForkGuard
+--- PASS: TestContainerGuestRunsThePinnedRunnerWithTheForkGuard (0.47s)
+=== RUN   TestContainerGuestThatNeverStartsFailsThePlace
+--- PASS: TestContainerGuestThatNeverStartsFailsThePlace (0.03s)
+=== RUN   TestContainerCleanDeletesALeftoverGuest
+--- PASS: TestContainerCleanDeletesALeftoverGuest (0.03s)
+=== RUN   TestContainerBootstrapLeavesTheRegistrationForTheGuest
+--- PASS: TestContainerBootstrapLeavesTheRegistrationForTheGuest (0.13s)
+PASS
+ok  	github.com/kunchenguid/runner-up/internal/agent	1.046s

@@ -1,0 +1,6 @@
+=== RUN   TestLastPoolLeavesRoomForOtherJobsFirst
+--- PASS: TestLastPoolLeavesRoomForOtherJobsFirst (0.03s)
+=== RUN   TestLastRuleMustNameAPoolOfTheSetup
+--- PASS: TestLastRuleMustNameAPoolOfTheSetup (0.00s)
+PASS
+ok  	github.com/kunchenguid/runner-up/internal/coordinator	0.249s
