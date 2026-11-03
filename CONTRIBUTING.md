@@ -97,6 +97,22 @@ for the full walkthrough.
 - Follow existing code style (`gofmt` is enforced in CI).
 - Add tests for new functionality when possible.
 
+## Before a release
+
+release-please opens a release PR, and merging it publishes the release. CI
+installs no Tart, so the tests against real Tart skip there and report passed
+without running. Before merging a release PR, run them on a Mac with Apple
+silicon and [Tart](https://tart.run) installed:
+
+```sh
+make test-real-tart
+```
+
+It runs every test named `TestRealTart` in `cmd/` against a private Tart store,
+and fails rather than skips when Tart is missing. Name any new test against
+real Tart `TestRealTart...` so this check runs it; `internal/ciguard` fails
+when one is left out.
+
 ## Reporting Issues
 
 Open a [GitHub issue](https://github.com/kunchenguid/runner-up/issues) with steps to reproduce. Include your OS, architecture, and runner-up version (`runner-up version`).

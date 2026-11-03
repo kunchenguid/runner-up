@@ -1,4 +1,4 @@
-.PHONY: build test fmt lint dist install clean
+.PHONY: build test test-real-tart fmt lint dist install clean
 
 VERSION ?= dev
 LDFLAGS := -X github.com/kunchenguid/runner-up/internal/version.Version=$(VERSION)
@@ -8,6 +8,11 @@ build:
 
 test:
 	go test ./...
+
+# The tests against real Tart, which CI skips: run on a Mac with Apple silicon
+# and Tart before a release (CONTRIBUTING.md, "Before a release").
+test-real-tart:
+	RUNNER_UP_REAL_TART=1 go test -count=1 -v -run '^TestRealTart' ./cmd/
 
 fmt:
 	gofmt -w .
