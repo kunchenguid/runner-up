@@ -61,7 +61,11 @@ until [ -e "$d/go" ]; do sleep 0.05; done
 echo "Running job: build"
 sleep 300 &
 echo $! > "$d/job.pid"
-until [ -e "$d/done" ]; do sleep 0.05; done
+until [ -e "$d/done" ]; do
+  # It answers each ping, to show it still runs.
+  [ -e "$d/ping" ] && rm -f "$d/ping" && echo >> "$d/pongs"
+  sleep 0.05
+done
 echo "Job build completed with result: Succeeded"
 `
 
@@ -272,6 +276,17 @@ func (m *mac) lines(name string) []string {
 	return strings.Split(strings.TrimSpace(string(b)), "\n")
 }
 
+// tartRuns counts the tart commands run so far that begin with prefix.
+func (m *mac) tartRuns(prefix string) int {
+	n := 0
+	for _, l := range m.lines(filepath.Join("tart", "tart.log")) {
+		if strings.HasPrefix(l, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
 func (m *mac) touch(name string) { os.WriteFile(filepath.Join(m.dir, name), nil, 0o600) }
 
 func (m *mac) vm(name string) string { return filepath.Join(m.dir, "tart", "vms", name) }
@@ -370,9 +385,13 @@ func TestTartPlaceEndsTheJobWhenTheClonesMacOSRestarts(t *testing.T) {
 	m.eventually("the runner starts in the clone", a, func() bool { return m.pid("runner.pid") > 0 })
 	m.touch("go")
 	m.eventually("the job starts", a, func() bool { return strings.Contains(a.output(), "Running job: build") })
-	// The clone panics and restarts, with a new boot session. The runner's
-	// tart exec goes on waiting, as it did on the predecessor's Mac.
-	time.Sleep(1500 * time.Millisecond)
+	// The agent has read the clone's first boot session once a second
+	// reading begins. The clone then panics and restarts, with a new boot
+	// session. The runner's tart exec goes on waiting, as it did on the
+	// predecessor's Mac.
+	m.eventually("the agent reads the clone's boot session twice", a, func() bool {
+		return m.tartRuns("exec "+CloneName("mac-2")+" /usr/sbin/sysctl") >= 2
+	})
 	if err := os.WriteFile(filepath.Join(vm, "boot"), []byte("0F9A2B4C-7D1E-4C2A-8B5F-3E6D7A8B9C0D\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -418,8 +437,12 @@ func TestTartPlaceWaitsForAFreeMacOSVM(t *testing.T) {
 	os.WriteFile(filepath.Join(m.vm("xcode-26-test"), "running"), []byte("0\n"), 0o600)
 	a = m.run("jit-mac-1-again", "--provider", "tart", "--place", "mac-1", "--image", sequoia, "--boot-timeout", "60")
 	m.eventually("the agent says it waits", a, func() bool { return strings.Contains(a.output(), "waiting for a macOS VM to stop") })
-	time.Sleep(time.Second)
-	if exists(m.vm(CloneName("mac-1"))) {
+	// The agent keeps looking: once it has begun two more lists of the VMs,
+	// the look between them found macOS still running two, and the agent
+	// cloned nothing.
+	lists := m.tartRuns("list")
+	m.eventually("the agent lists the VMs twice more", a, func() bool { return m.tartRuns("list") >= lists+2 || m.tartRuns("clone") > 1 })
+	if exists(m.vm(CloneName("mac-1"))) || m.tartRuns("clone") != 1 {
 		t.Fatal("the agent cloned while macOS ran two VMs")
 	}
 	os.Remove(filepath.Join(m.vm("xcode-26-test"), "running"))
@@ -479,10 +502,8 @@ func TestHostPlaceLeftByAKilledAgentIsCleanedUp(t *testing.T) {
 	// on until the coordinator's clean, or the place's next agent, removes it.
 	a.cmd.Process.Kill()
 	m.exit(a)
-	time.Sleep(200 * time.Millisecond)
-	if !alive(runnerPID) {
-		t.Fatal("the runner ended with the agent; this test needs it left behind")
-	}
+	m.touch("ping")
+	m.eventually("the runner left behind answers a ping after the agent ended", nil, func() bool { return exists(filepath.Join(m.dir, "pongs")) })
 	clean := exec.Command(runnerUpWithFakeRunner(t), "agent", "clean", "--provider", "host", "--place", "mac-host", "--state-dir", m.state)
 	clean.Env = m.env
 	if out, err := clean.CombinedOutput(); err != nil {

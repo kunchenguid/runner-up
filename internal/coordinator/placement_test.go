@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/config"
@@ -50,47 +51,56 @@ func within(t *testing.T, d time.Duration, what string, f func()) {
 	}
 }
 
+// The test runs in a synctest bubble: synctest.Wait returns once every other
+// goroutine of the test waits, so a session closing that did not wait for the
+// pass's call has closed by then.
 func TestPlacementLetsGoOfTheLockWhileGitHubAnswers(t *testing.T) {
-	f := loadFixture(t, "waiting-jobs.json")
-	h := newHarness(t, oneBox(t.TempDir()), newFakeLauncher(), map[string]*fakeSet{})
-	h.now = f.Now
-	slow := newSlowSet()
-	h.svc.AddSet("octo-org/app", "ru-linux", slow)
-	first, rest := f.Messages[0], f.Messages[1:]
-	h.svc.Handle(first.Repo, first.Label, &first.Message)
+	synctest.Test(t, func(t *testing.T) {
+		f := loadFixture(t, "waiting-jobs.json")
+		h := newHarness(t, oneBox(t.TempDir()), newFakeLauncher(), map[string]*fakeSet{})
+		h.now = f.Now
+		slow := newSlowSet()
+		h.svc.AddSet("octo-org/app", "ru-linux", slow)
+		first, rest := f.Messages[0], f.Messages[1:]
+		h.svc.Handle(first.Repo, first.Label, &first.Message)
 
-	placed := make(chan struct{})
-	go func() { h.svc.Place(context.Background()); close(placed) }()
-	select {
-	case <-slow.asked:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the placement pass never asked GitHub for the job")
-	}
+		// GitHub answers when the test says, or once the test ends.
+		answer := sync.OnceFunc(func() { close(slow.release) })
+		defer answer()
+		placed := make(chan struct{})
+		go func() { h.svc.Place(context.Background()); close(placed) }()
+		<-slow.asked
 
-	// While GitHub has not answered, the setup reads and the next messages
-	// are recorded.
-	within(t, 5*time.Second, "reading the setup", func() { h.svc.Setup() })
-	for _, m := range rest {
-		within(t, 5*time.Second, "handling a message", func() { h.svc.Handle(m.Repo, m.Label, &m.Message) })
-	}
+		// While GitHub has not answered, the coordinator's lock is free: the
+		// setup reads and the next messages are recorded.
+		if !h.svc.mu.TryLock() {
+			t.Fatal("the placement pass held the coordinator's lock while GitHub answered")
+		}
+		h.svc.mu.Unlock()
+		h.svc.Setup()
+		for _, m := range rest {
+			h.svc.Handle(m.Repo, m.Label, &m.Message)
+		}
 
-	// The session closing waits for the call it made.
-	removed := make(chan struct{})
-	go func() { h.svc.RemoveSet("octo-org/app", "ru-linux", slow); close(removed) }()
-	select {
-	case <-removed:
-		t.Fatal("the scale set's session closed while a placement pass acquired a job through it")
-	case <-time.After(200 * time.Millisecond):
-	}
-	close(slow.release)
-	<-placed
-	<-removed
-	if len(slow.acquired) == 0 {
-		t.Fatal("the pass did not acquire the job GitHub answered for")
-	}
-	if len(h.placed()) == 0 {
-		t.Fatal("no place took the acquired job")
-	}
+		// The session closing waits for the call it made.
+		removed := make(chan struct{})
+		go func() { h.svc.RemoveSet("octo-org/app", "ru-linux", slow); close(removed) }()
+		synctest.Wait()
+		select {
+		case <-removed:
+			t.Fatal("the scale set's session closed while a placement pass acquired a job through it")
+		default:
+		}
+		answer()
+		<-placed
+		<-removed
+		if len(slow.acquired) == 0 {
+			t.Fatal("the pass did not acquire the job GitHub answered for")
+		}
+		if len(h.placed()) == 0 {
+			t.Fatal("no place took the acquired job")
+		}
+	})
 }
 
 // Intent (the coordinator's design, place.go): place.json has two writers,

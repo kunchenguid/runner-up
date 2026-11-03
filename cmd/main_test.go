@@ -25,6 +25,9 @@ const (
 	serveEnv   = "RUNNER_UP_TEST_SERVE_CONFIG"
 	actionsEnv = "RUNNER_UP_TEST_ACTIONS"
 	selfEnv    = "RUNNER_UP_TEST_SELF"
+	// passesEnv names a file the coordinator adds a line to after each pass
+	// of its serve loop, for a test to count.
+	passesEnv = "RUNNER_UP_TEST_PASSES"
 )
 
 // trialEnv shortens a new version's trial (coordinator.TrialWindow) in the
@@ -65,5 +68,14 @@ func serveStandIn(path string) int {
 			SystemInfo:          scaleset.SystemInfo{System: "runner-up", Version: version.Version, Subsystem: "coordinator"},
 		})
 	}
-	return serveWith(cfg, path, os.Getenv(selfEnv), clients, nil)
+	var passed func()
+	if passes := os.Getenv(passesEnv); passes != "" {
+		passed = func() {
+			if f, err := os.OpenFile(passes, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+				f.WriteString("pass\n")
+				f.Close()
+			}
+		}
+	}
+	return serveWith(cfg, path, os.Getenv(selfEnv), clients, nil, passed)
 }
