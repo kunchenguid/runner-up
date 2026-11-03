@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/actions/scaleset"
@@ -100,15 +102,81 @@ func ensureScaleSet(ctx context.Context, c *scaleset.Client, target, group, labe
 	})
 }
 
+// Sessions keeps one scale set session open for each repository or
+// organization and pool of the setup the coordinator runs. A setup change
+// opens the sessions of the scale sets it adds and closes those of the ones
+// it removes; every other session stays open through it.
+type Sessions struct {
+	ctx     context.Context
+	svc     *Service
+	log     *slog.Logger
+	clients ClientFactory
+	wg      sync.WaitGroup
+	open    map[sessionKey]context.CancelFunc
+}
+
+// sessionKey names one session: a target's scale set for a pool, found in
+// the runner group an organization's scale sets join.
+type sessionKey struct{ target, pool, group string }
+
+func NewSessions(ctx context.Context, svc *Service, log *slog.Logger, clients ClientFactory) *Sessions {
+	return &Sessions{ctx: ctx, svc: svc, log: log, clients: clients, open: map[sessionKey]context.CancelFunc{}}
+}
+
+// Match opens a session for each scale set cfg serves that has none, and
+// closes each session of a scale set cfg no longer serves. Only one goroutine
+// calls it.
+func (ss *Sessions) Match(cfg *config.Config) {
+	var want []sessionKey
+	for _, target := range cfg.Targets() {
+		group := ""
+		if isOrg(target) {
+			group = cfg.RunnerGroup()
+		}
+		for _, label := range cfg.Labels() {
+			want = append(want, sessionKey{target, label, group})
+		}
+	}
+	for k, cancel := range ss.open {
+		if !slices.Contains(want, k) {
+			ss.log.Info("the setup no longer serves this scale set; closing its session", "target", k.target, "pool", k.pool)
+			cancel()
+			delete(ss.open, k)
+		}
+	}
+	for _, k := range want {
+		if _, ok := ss.open[k]; ok {
+			continue
+		}
+		ctx, cancel := context.WithCancel(ss.ctx)
+		ss.open[k] = cancel
+		ss.wg.Add(1)
+		go func() {
+			defer ss.wg.Done()
+			RunSet(ctx, ss.svc, ss.log, k.target, k.pool, ss.clients)
+		}()
+	}
+}
+
+// Done is closed once every session has ended, after the coordinator's
+// context ended.
+func (ss *Sessions) Done() <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		ss.wg.Wait()
+		close(done)
+	}()
+	return done
+}
+
 // RunSet keeps one scale set's session open and feeds its messages to the
-// service. It never acquires a job itself: the service does, once a place is
-// chosen. Errors restart the session after a pause; the session's messages
-// stay queued at GitHub until acknowledged.
+// service, until ctx ends. It never acquires a job itself: the service does,
+// once a place is chosen. Errors restart the session after a pause; the
+// session's messages stay queued at GitHub until acknowledged.
 func RunSet(ctx context.Context, svc *Service, log *slog.Logger, target, label string, clients ClientFactory) {
 	log = log.With("target", target, "pool", label)
 	for ctx.Err() == nil {
 		err := serveSet(ctx, svc, log, target, label, clients)
-		svc.RemoveSet(target, label)
 		if ctx.Err() != nil {
 			return
 		}
@@ -125,7 +193,7 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 	if err != nil {
 		return err
 	}
-	set, err := ensureScaleSet(ctx, c, target, svc.Cfg.RunnerGroup(), label)
+	set, err := ensureScaleSet(ctx, c, target, svc.Setup().RunnerGroup(), label)
 	if err != nil {
 		return fmt.Errorf("scale set: %w", err)
 	}
@@ -147,7 +215,11 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 		}
 	}()
 	log.Info("scale set session open", "scaleSetId", set.ID)
-	svc.AddSet(target, label, &setClient{client: c, session: session, id: set.ID})
+	sc := &setClient{client: c, session: session, id: set.ID}
+	svc.AddSet(target, label, sc)
+	// Run before the session closes: no job is acquired through a closing
+	// session.
+	defer svc.RemoveSet(target, label, sc)
 
 	first := &scaleset.RunnerScaleSetMessage{MessageID: 0, Statistics: session.Session().Statistics}
 	if err := svc.Handle(ctx, target, label, first); err != nil {
@@ -155,12 +227,12 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 	}
 	last := 0
 	for ctx.Err() == nil {
-		msg, err := session.GetMessage(ctx, last, svc.Cfg.AnnounceCapacity)
+		msg, err := session.GetMessage(ctx, last, svc.Setup().AnnounceCapacity)
 		if err != nil {
 			return fmt.Errorf("get message: %w", err)
 		}
 		if msg != nil {
-			record(svc.Cfg, target, label, msg)
+			record(svc.Setup(), target, label, msg)
 		}
 		if err := svc.Handle(ctx, target, label, msg); err != nil {
 			return err

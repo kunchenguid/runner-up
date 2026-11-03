@@ -164,47 +164,33 @@ func serve(cfg *config.Config, configPath string) int {
 
 // serveWith lets a test serve a local stand-in for GitHub's Actions service,
 // with no sign-in and no reads of GitHub's API. self is the program place
-// runners run as.
+// runners run as. It applies each change to the setup file at configPath as
+// it runs (internal/coordinator/setup.go).
 func serveWith(cfg *config.Config, configPath, self string, clients coordinator.ClientFactory, api *coordinator.GithubAPI) int {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	launcher := coordinator.NewProcLauncher(cfg, configPath, self, log)
+	launcher := coordinator.NewProcLauncher(cfg, self, log)
 	svc, err := coordinator.NewService(cfg, log, launcher)
 	if err != nil {
 		log.Error("service", "err", err)
 		return 1
 	}
-	if labels, workflows := plan.Needs(svc.Rules); api != nil {
+	// Each reader is used only while the setup needs it: label and workflow
+	// reads while an order rule does, VM reads of the Macs with tart places.
+	if api != nil {
 		svc.RunReader = api.RunClosed
-		if labels {
-			svc.LabelReader = api.PullLabels
-		}
-		if workflows {
-			svc.WorkflowReader = api.RunWorkflow
-		}
+		svc.LabelReader = api.PullLabels
+		svc.WorkflowReader = api.RunWorkflow
 	}
-	if cfg.HasTart() {
-		svc.VmReader = coordinator.ReadVMs
-	}
+	svc.VmReader = coordinator.ReadVMs
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	cleanLeftovers(ctx, cfg, log)
 	log.Info("runner-up starting", "version", version.Version, "targets", len(cfg.Targets()), "pools", len(cfg.Pools),
 		"machines", len(cfg.Machines), "places", len(cfg.Places()))
-	var listeners sync.WaitGroup
-	for _, target := range cfg.Targets() {
-		for _, label := range cfg.Labels() {
-			listeners.Add(1)
-			go func() {
-				defer listeners.Done()
-				coordinator.RunSet(ctx, svc, log, target, label, clients)
-			}()
-		}
-	}
-	listenersDone := make(chan struct{})
-	go func() {
-		listeners.Wait()
-		close(listenersDone)
-	}()
+	sessions := coordinator.NewSessions(ctx, svc, log, clients)
+	sessions.Match(cfg)
+	setups := coordinator.WatchSetup(ctx, configPath, coordinator.SetupPoll, coordinator.SetupQuiet)
+	refused := false
 	tick := time.NewTicker(cfg.Seconds(cfg.TickSeconds))
 	defer tick.Stop()
 	for {
@@ -213,13 +199,48 @@ func serveWith(cfg *config.Config, configPath, self string, clients coordinator.
 			// Running jobs keep their places: their place runners are in their
 			// own sessions and hold their own locks. Waiting jobs stay at GitHub.
 			log.Info("runner-up stopping; running jobs carry on")
-			return waitForListeners(listenersDone, shutdownTimeout, log)
+			return waitForListeners(sessions.Done(), shutdownTimeout, log)
 		case <-tick.C:
 		case <-launcher.Exited:
+		case read := <-setups:
+			next, err := applySetup(svc, sessions, read)
+			switch {
+			case err != nil:
+				log.Error("the setup file was not applied; keeping the running setup", "err", err)
+				refused = true
+				continue
+			case next != nil:
+				if next.TickSeconds != cfg.TickSeconds {
+					tick.Reset(next.Seconds(next.TickSeconds))
+				}
+				cfg = next
+			case refused:
+				log.Info("the setup file holds the running setup again")
+			}
+			refused = false
 		}
 		svc.Tidy(ctx)
 		svc.Place(ctx)
 	}
+}
+
+// applySetup checks what the setup file holds, as check-config does, and
+// applies it in place. It returns the setup it applied, nil when the file
+// holds the running setup, or why it kept the running setup.
+func applySetup(svc *coordinator.Service, sessions *coordinator.Sessions, read coordinator.SetupRead) (*config.Config, error) {
+	if read.Err != nil {
+		return nil, read.Err
+	}
+	next, rules, err := coordinator.CheckSetup(read.Data)
+	if err != nil {
+		return nil, err
+	}
+	changed, err := svc.Reload(next, rules)
+	if err != nil || !changed {
+		return nil, err
+	}
+	sessions.Match(next)
+	return next, nil
 }
 
 // waitForListeners joins the listeners, including their deferred session

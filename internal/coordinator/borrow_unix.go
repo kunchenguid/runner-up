@@ -332,8 +332,12 @@ func (s *Service) assignBorrowLocked(p config.Place, j plan.Job, busy *os.File) 
 }
 
 func (l *ProcLauncher) LaunchBorrow(p config.Place, busy *os.File, id string) error {
-	cmd := exec.Command(l.self, "run-borrow", "--config", l.configPath, "--place", p.ID, "--borrow", id)
-	out, err := os.OpenFile(filepath.Join(l.cfg.LogsDir(), "borrow-"+id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	cfg, setupPath, err := l.setup()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(l.self, "run-borrow", "--config", setupPath, "--place", p.ID, "--borrow", id)
+	out, err := os.OpenFile(filepath.Join(cfg.LogsDir(), "borrow-"+id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -345,7 +349,7 @@ func (l *ProcLauncher) LaunchBorrow(p config.Place, busy *os.File, id string) er
 		return err
 	}
 	var run PlaceRun
-	path := filepath.Join(l.cfg.PlaceDir(p.ID), "place.json")
+	path := filepath.Join(cfg.PlaceDir(p.ID), "place.json")
 	if config.ReadJSON(path, &run) == nil {
 		run.PID = cmd.Process.Pid
 		config.WriteJSON(path, run)

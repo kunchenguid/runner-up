@@ -164,7 +164,7 @@ func machineAddMain(args []string) int {
 		return 1
 	}
 	fmt.Println(machineLine(cfg.Machine(name)))
-	fmt.Printf("wrote %s; (re)start runner-up serve to use it\n", *configPath)
+	fmt.Printf("wrote %s; a running runner-up serve applies it, or start runner-up serve\n", *configPath)
 	return 0
 }
 
