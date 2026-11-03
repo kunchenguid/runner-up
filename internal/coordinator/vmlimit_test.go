@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/kunchenguid/runner-up/internal/agent"
 	"github.com/kunchenguid/runner-up/internal/config"
@@ -18,8 +17,8 @@ import (
 // macOS VMs at once on a Mac, so a Mac's tart places never start a third clone,
 // and a macOS VM someone else runs there takes one of the two, as a proof clone
 // did to runner-up's predecessor (it refused every clone of a place until the
-// boot timeout). Once a job runs in a clone, a new boot session in the clone
-// ends the job, and nothing else does.
+// boot timeout). The clone's boot watch is owned by internal/agent
+// (bootwatch_test.go).
 
 // oneMac is a Mac with Apple silicon, 10 cores and 24 GB, with three small
 // tart places and a host place for ru-mac jobs: its budget fits all four at
@@ -150,36 +149,5 @@ func TestMacOSVMOutsideRunnerUpTakesOneOfTheTwo(t *testing.T) {
 	}
 	if mac.reads != 3 {
 		t.Fatalf("the coordinator asked the Mac %d times, want 3", mac.reads)
-	}
-}
-
-func TestOnlyANewBootSessionEndsTheJob(t *testing.T) {
-	// kern.bootsessionuuid as a clone of macOS 15 prints it.
-	const boot = "6C1F5C0B-0A3E-4F3B-9E43-2D9C5D0B1A77"
-	const reboot = "0F9A2B4C-7D1E-4C2A-8B5F-3E6D7A8B9C0D"
-	for _, tc := range []struct {
-		why      string
-		readings []string
-		want     bool
-	}{
-		{"the clone restarted", []string{boot, boot, reboot}, true},
-		{"too busy to answer at first", []string{"", "", boot, reboot}, true},
-		{"failed and odd readings", []string{boot, "", "sysctl: unknown oid 'kern.bootsessionuuid'", boot}, false},
-		{"the same boot throughout", []string{boot, boot, boot, boot}, false},
-	} {
-		ctx, cancel := context.WithCancel(context.Background())
-		i := 0
-		read := func(context.Context) string {
-			if i >= len(tc.readings) {
-				cancel()
-				return ""
-			}
-			i++
-			return tc.readings[i-1]
-		}
-		if got := agent.WatchBootSession(ctx, read, time.Millisecond); got != tc.want {
-			t.Errorf("%s: the watch said restarted=%v, want %v", tc.why, got, tc.want)
-		}
-		cancel()
 	}
 }
