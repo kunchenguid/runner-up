@@ -29,13 +29,12 @@ func longPath(t *testing.T, path string) string {
 	return windows.UTF16ToString(b[:n])
 }
 
-// Intent ("copy agents to the PC"): the
-// coordinator sends a release's program to a Windows machine on standard
-// input of the line it hands the machine's SSH server, which runs it with
-// cmd.exe. The machine keeps the program byte for byte in the account's own
-// folder for that version and prints its path, a path the coordinator can run
-// over SSH; a copy whose SHA-256 is not the release's is refused, and the
-// program already there stays.
+// Intent (README, "Updating runner-up"): the coordinator sends a release's
+// program to a Windows machine on standard input of the line it hands the
+// machine's SSH server, which runs it with cmd.exe. The machine keeps the
+// program byte for byte in the account's own folder for that version and prints
+// its path, a path the coordinator can run over SSH; a copy whose SHA-256 is
+// not the release's is refused, and the program already there stays.
 func TestAWindowsMachineKeepsTheAgentSentOnItsInput(t *testing.T) {
 	// This test program: megabytes of a real Windows program.
 	prog, err := os.ReadFile(os.Args[0])

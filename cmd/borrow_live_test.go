@@ -19,9 +19,10 @@ import (
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
-// Intent: the real borrow supervisor invokes the real Tart agent in a private
-// store, deletes a VM left by the caller, and kills stray command descendants.
-// Creating an empty Linux VM exercises Tart's storage without an OS download.
+// Intent (README, "Borrowing a virtual Mac"): the real borrow supervisor
+// invokes the real Tart agent in a private store, deletes a VM left by the
+// caller, and kills stray command descendants. Creating an empty Linux VM
+// exercises Tart's storage without an OS download.
 func TestBorrowCLIRealTartCleanup(t *testing.T) {
 	e := realTartBorrowE2E(t)
 	e.serve()
@@ -44,8 +45,9 @@ exit 23`)
 	t.Logf("%sTart list after real agent cleanup: %s\nstray child stopped; exit=23\n%s", readBorrowOutput(output), vms, borrowStatus(t, e))
 }
 
-// Intent: losing the caller without a graceful signal still disconnects its
-// private socket, stops the command, cleans the VM, and frees the place.
+// Intent (README, "Borrowing a virtual Mac"): losing the caller without a
+// graceful signal still disconnects its private socket, stops the command,
+// cleans the VM, and frees the place.
 func TestBorrowCLIRealTartDisconnect(t *testing.T) {
 	e := realTartBorrowE2E(t)
 	e.serve()
@@ -70,8 +72,9 @@ exec sleep 120`)
 	t.Logf("caller killed without graceful cancellation\n%sTart list after disconnect: %s\ncommand stopped; place free", readBorrowOutput(output), vms)
 }
 
-// Intent: a granted borrow's persisted grant time bounds the real supervisor,
-// stopping a live foreground command and cleaning its VM before exit 124.
+// Intent (README, "Borrowing a virtual Mac"): a granted borrow's persisted
+// grant time bounds the real supervisor, stopping a live foreground command and
+// cleaning its VM before exit 124.
 func TestBorrowSupervisorLiveDeadline(t *testing.T) {
 	e := realTartBorrowE2E(t)
 	// The short socket address also works with macOS's 104-byte limit.
@@ -150,9 +153,10 @@ func TestBorrowSupervisorLiveDeadline(t *testing.T) {
 	t.Logf("%sTart list after deadline cleanup: %s\ncommand stopped; exit=124", readBorrowOutput(out.Name()), vms)
 }
 
-// Intent: local requests share the real coordinator's queue with GitHub work,
-// and declared duration wins over age until the waited rule applies. Unknown
-// GitHub jobs use the default 15-minute estimate, after both these borrows.
+// Intent (README, "Borrowing a virtual Mac" and "Order rules"): local requests
+// share the real coordinator's queue with GitHub work, and declared duration
+// wins over age until the waited rule applies. Unknown GitHub jobs use the
+// default 15-minute estimate, after both these borrows.
 func TestBorrowCLILiveSharedQueue(t *testing.T) {
 	e := borrowE2E(t)
 	busy, err := lock.Busy(filepath.Join(e.cfg.PlaceDir("box-1"), "busy.lock"))
@@ -187,9 +191,10 @@ func TestBorrowCLILiveSharedQueue(t *testing.T) {
 	t.Logf("short request:\n%slong request:\n%sGitHub acquired after both commands: %v", readBorrowOutput(shortOutput), readBorrowOutput(longOutput), e.actions.read().acquired)
 }
 
-// Intent: two independent borrows with equal labels may run concurrently,
-// including across restart and a reported named VM, but a third must wait.
-// GitHub and the VM inventory are isolated stand-ins; supervisors are real.
+// Intent (README, "Borrowing a virtual Mac"): two independent borrows with
+// equal labels may run concurrently, including across restart and a reported
+// named VM, but a third must wait. GitHub and the VM inventory are isolated
+// stand-ins; supervisors are real.
 func TestBorrowCLILiveTwoSlotAccounting(t *testing.T) {
 	e := borrowE2E(t)
 	e.cfg.Machines[0].Cores, e.cfg.Machines[0].MemoryMB = 8, 16384
@@ -237,8 +242,9 @@ func TestBorrowCLILiveTwoSlotAccounting(t *testing.T) {
 	t.Logf("one:\n%stwo:\n%sthree after release:\n%s", readBorrowOutput(oneOutput), readBorrowOutput(twoOutput), readBorrowOutput(threeOutput))
 }
 
-// Intent: active borrows reserve their share across coordinator restart and
-// cannot take the cores or memory explicitly kept for the machine's owner.
+// Intent (README, "Borrowing a virtual Mac"): active borrows reserve their
+// share across coordinator restart and cannot take the cores or memory
+// explicitly kept for the machine's owner.
 func TestBorrowCLILiveOwnerRoom(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

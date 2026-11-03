@@ -15,13 +15,13 @@ import (
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
-// Intent (the design: "unit tests replaying recorded scale set messages"):
-// GitHub sends most jobs as JobAssigned messages with runner request 0 and no
-// JobAvailable message at all. A job GitHub assigns to a scale set gets a
-// runner in a free place, keeps its place in line and its starting runner
-// while GitHub takes the assignment back and assigns it again, lets go of both
-// once it is cancelled, and goes back in line when GitHub gives its runner
-// another of the set's jobs or its runner ends without it.
+// Intent (README, "How it works" and "When GitHub closes a job"): GitHub sends
+// most jobs as JobAssigned messages with runner request 0 and no JobAvailable
+// message at all. A job GitHub assigns to a scale set gets a runner in a free
+// place, keeps its place in line and its starting runner while GitHub takes the
+// assignment back and assigns it again, lets go of both once it is cancelled,
+// and goes back in line when GitHub gives its runner another of the set's jobs
+// or its runner ends without it.
 
 // The recorded job, as the place runs it.
 const proofJob = "octo-org/app linux"
@@ -181,11 +181,11 @@ func TestRunnerThatTakesAnotherJobHandsItsOwnBack(t *testing.T) {
 	h.want(map[string]string{"proof-a": proofJob})
 }
 
-// Intent ("a runner whose job another took counts as free at
-// hand-back so no surplus runner idles to the timeout"): the runner started
-// for verify takes PR #184's job, whose own runner is still waiting. That
-// waiting runner is free now and takes verify: no third runner starts in the
-// free large place, and once it takes verify nothing waits.
+// Intent (the fix that counts a runner whose job another took as free at
+// hand-back, so no surplus runner idles to the start timeout): the runner
+// started for verify takes PR #184's job, whose own runner is still waiting.
+// That waiting runner is free now and takes verify: no third runner starts in
+// the free large place, and once it takes verify nothing waits.
 func TestRunnerWhoseJobAnotherTookServesTheJobHandedBack(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
 	cfg := oneBox(t.TempDir())

@@ -10,7 +10,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent: a person can configure one pool size that
+// Intent (README, "Setup file"): a person can configure one pool size that
 // replaces all its place sizes, while old setups keep working. Partial,
 // negative and impossible sizes must be rejected before a runner starts.
 func TestConfiguredPoolSizes(t *testing.T) {

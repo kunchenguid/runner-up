@@ -1,11 +1,11 @@
 package agent
 
-// Intent (the design: Hyper-V VM places on Windows): cloud-init in the VM
+// Intent (README, "Windows machines" and "Trade-offs"): cloud-init in the VM
 // reads its seed from a disc runner-up writes; the runner's registration
 // reaches the VM only over its serial port, never on the disc; the guest runs
 // the runner pinned to its published sum; and the fork guard inside the VM,
-// which cannot run runner-up's own Windows program, decides every event the
-// way runner-up's fork-guard command does.
+// which cannot run runner-up's own Windows program, decides every event the way
+// runner-up's fork-guard command does.
 
 import (
 	"bytes"

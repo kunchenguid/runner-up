@@ -14,11 +14,12 @@ import (
 	"github.com/kunchenguid/runner-up/internal/testbin"
 )
 
-// Intent: the tart guest's executed startup script must
-// expose the configured cores and memory, including when forks are allowed,
-// without retaining the registration in the reader's process environment.
-// The shared folder and runner archive follow the existing Mac fixture; this
-// executes the actual script, not an assertion about source strings.
+// Intent (README, "Setup file" and "Macs"): the tart guest's executed startup
+// script must expose the configured cores and memory, including when forks are
+// allowed, without retaining the registration in the reader's process
+// environment. The shared folder and runner archive follow the existing Mac
+// fixture; this executes the actual script, not an assertion about source
+// strings.
 func TestTartGuestReceivesItsSize(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs the guest startup and measurement programs")

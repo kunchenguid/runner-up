@@ -14,11 +14,9 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (the design: "tart VM and host providers with the
-// two-VM limit and the guest reboot watch"; "unit tests for the limit and
-// reboot watch"). Apple's Virtualization framework runs at most two macOS
-// VMs at once on a Mac, so a Mac's tart places never start a third clone, and
-// a macOS VM someone else runs there takes one of the two, as a proof clone
+// Intent (README, "Macs"). Apple's Virtualization framework runs at most two
+// macOS VMs at once on a Mac, so a Mac's tart places never start a third clone,
+// and a macOS VM someone else runs there takes one of the two, as a proof clone
 // did to runner-up's predecessor (it refused every clone of a place until the
 // boot timeout). Once a job runs in a clone, a new boot session in the clone
 // ends the job, and nothing else does.

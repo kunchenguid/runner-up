@@ -2,14 +2,12 @@
 
 package agent
 
-// Intent ("an Apple container provider ...
-// Pass the registration only on the guest's standard input, never with -e or
-// in a file"). An Apple container place starts one fresh Linux guest per job
-// from its image, sized to the job; the registration reaches the guest only on
-// its standard input, after runner-up's guest program, so `container inspect`
-// and the image never hold it; the guest runs the pinned runner with the fork
-// guard; a stopped place force-deletes its guest, and the next job deletes
-// whatever an agent killed outright left.
+// Intent (README, "Linux guests on a Mac"). An Apple container place starts one
+// fresh Linux guest per job from its image, sized to the job; the registration
+// reaches the guest only on its standard input, after runner-up's guest
+// program, so `container inspect` and the image never hold it; the guest runs
+// the pinned runner with the fork guard; a stopped place force-deletes its
+// guest, and the next job deletes whatever an agent killed outright left.
 //
 // container is a stand-in that records what it was asked and, for run, the
 // guest's standard input, then waits until its guest is deleted.
@@ -210,12 +208,12 @@ func standInRunner(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Intent: the guest runs GitHub's runner, from GitHub's release of the
-// pinned version, only when its download matches the pin; as the user runner,
-// with the registration and the job's size in its environment and the fork
-// guard, which refuses another repository's pull request, as its job-started
-// hook. The pin is the stand-in release's own sum, so a download of anything
-// else must be refused.
+// Intent (README, "Linux guests on a Mac" and "Pull requests from forks"): the
+// guest runs GitHub's runner, from GitHub's release of the pinned version, only
+// when its download matches the pin; as the user runner, with the registration
+// and the job's size in its environment and the fork guard, which refuses
+// another repository's pull request, as its job-started hook. The pin is the
+// stand-in release's own sum, so a download of anything else must be refused.
 func TestContainerGuestRunsThePinnedRunnerWithTheForkGuard(t *testing.T) {
 	py := python(t)
 	if _, err := exec.LookPath("tar"); err != nil {

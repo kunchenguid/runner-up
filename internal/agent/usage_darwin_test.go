@@ -12,13 +12,13 @@ import (
 	"time"
 )
 
-// Intent: a tart guest's reading stays within the guest's
-// own CPUs and memory, even when its readings return late as they do in a busy
-// guest. Adding up processes, a ps returning 1.9 s late on every second reading
-// read 70-93 cores on a 14-CPU Mac, and summed RSS read 41-97 GB in 10-16 GB
-// guests. This reads the real machine with macOS's own tools, as a guest does,
-// while a child keeps one core and 32 MiB busy; every second tool returns 1.9 s
-// after it read.
+// Intent (README, "Job sizes and readings"): a tart guest's reading stays
+// within the guest's own CPUs and memory, even when its readings return late as
+// they do in a busy guest. Adding up processes, a ps returning 1.9 s late on
+// every second reading read 70-93 cores on a 14-CPU Mac, and summed RSS read
+// 41-97 GB in 10-16 GB guests. This reads the real machine with macOS's own
+// tools, as a guest does, while a child keeps one core and 32 MiB busy; every
+// second tool returns 1.9 s after it read.
 func TestGuestReadingStaysWithinTheGuest(t *testing.T) {
 	cpus, memoryMB, err := guestSize(context.Background(), guestTool)
 	if err != nil {

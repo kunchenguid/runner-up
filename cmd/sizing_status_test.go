@@ -15,8 +15,9 @@ import (
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
-// Intent: status must describe the pool's actual resource
-// fit and a running job's frozen reservation, not its place's fallback size.
+// Intent (README, "Setting up" and "Job sizes and readings"): status must
+// describe the pool's actual resource fit and a running job's frozen
+// reservation, not its place's fallback size.
 func TestStatusUsesPoolSizesAndRunningReservations(t *testing.T) {
 	cfg := initialSetup(t)
 	cfg.Pools[0].Cores, cfg.Pools[0].MemoryMB = 4, 8192

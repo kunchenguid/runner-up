@@ -16,11 +16,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent: "serve watches its setup file
-// and waits about a second after a change, because a pull rewrites the file.
-// It runs check-config and applies pools, places, sizes and order in place,
+// Intent (README, "Changing the setup"): serve watches its setup file and waits
+// about a second after a change, because a pull rewrites the file. It checks it
+// as check-config does and applies pools, places, sizes and order in place,
 // without dropping running jobs or open sessions. It keeps the running setup
-// when the new one fails."
+// when the new one fails.
 //
 // The coordinator, its place runners and the agent are the real programs, and
 // GitHub, ssh and docker the stand-ins of e2e_test.go. The setup file is

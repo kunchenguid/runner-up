@@ -14,15 +14,14 @@ import (
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
-// Intent ("the coordinator forgets
-// jobs GitHub closed"): GitHub can stop mentioning a job it assigned to the
-// scale set without ever sending its cancellation, and the coordinator kept
-// such a job waiting for a day, starting runners for it while it read as
-// assigned. A waiting job GitHub has gone quiet about is asked about by its
-// run, with few reads ("keep the coordinator's own GitHub calls for this
-// check bounded and cheap"), and forgotten once GitHub says the run is
-// closed; a job of an open run, an unanswered question, a job GitHub assigns
-// again meanwhile, and a job with a runner are never forgotten.
+// Intent (README, "When GitHub closes a job"): GitHub can stop mentioning a job
+// it assigned to the scale set without ever sending its cancellation, and the
+// coordinator kept such a job waiting for a day, starting runners for it while
+// it read as assigned. A waiting job GitHub has gone quiet about is asked about
+// by its run, with few reads (at most ten runs at a time and sixty an hour),
+// and forgotten once GitHub says the run is closed; a job of an open run, an
+// unanswered question, a job GitHub assigns again meanwhile, and a job with a
+// runner are never forgotten.
 
 // The recorded job's run.
 const proofRun = 39463703013

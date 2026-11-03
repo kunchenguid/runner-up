@@ -24,10 +24,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/testbin"
 )
 
-// Intent: a size selected for a pool reaches a real host
-// agent and the job environment, its actual readings survive retirement and
-// a coordinator restart, and `usage` shows readings beside the configured
-// size. Only GitHub's runner is a stand-in; no sign-in or real fleet is used.
+// Intent (README, "Job sizes and readings"): a size selected for a pool reaches
+// a real host agent and the job environment, its actual readings survive
+// retirement and a coordinator restart, and `usage` shows readings beside the
+// configured size. Only GitHub's runner is a stand-in; no sign-in or real fleet
+// is used.
 func TestSizedHostJobReportsItsUse(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs the place runner and host agent as programs")

@@ -422,9 +422,11 @@ func TestExpectedReleaseOutputsIncludesConfiguredExtraFiles(t *testing.T) {
 	}
 }
 
-// Intent: the release workflow holds the release signing key, and the vendor
-// hash workflow runs nix with write access, so both must use third-party
-// actions pinned by commit, never by a movable tag or branch.
+// Intent (README, "Updating runner-up": whoever holds the release signing key
+// controls every Windows machine): the release workflow holds the release
+// signing key, and the vendor hash workflow runs nix with write access, so both
+// must use third-party actions pinned by commit, never by a movable tag or
+// branch.
 func TestPrivilegedWorkflowsPinActionsByCommit(t *testing.T) {
 	pinned := regexp.MustCompile(`^[^@\s]+@[0-9a-f]{40}$`)
 	for _, name := range []string{"release.yml", "update-vendor-hash.yml"} {

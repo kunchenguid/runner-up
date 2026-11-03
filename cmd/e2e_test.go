@@ -26,11 +26,12 @@ import (
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
-// Intent (the design): the coordinator hears of a waiting job
-// from its scale set, acquires it once a place is free, and runs it there
-// through the machine's agent over SSH, handing the runner its registration on
-// standard input only; every runner starts with the fork guard; "a place keeps
-// running through a coordinator restart and a crashed place is cleaned up".
+// Intent (README, "How it works", "Pull requests from forks" and "Running as a
+// service"): the coordinator hears of a waiting job from its scale set,
+// acquires it once a place is free, and runs it there through the machine's
+// agent over SSH, handing the runner its registration on standard input only;
+// every runner starts with the fork guard; a place keeps running through a
+// coordinator restart and a crashed place is cleaned up.
 //
 // The coordinator, its place runners and the agent are the real programs. GitHub's
 // Actions service is a local stand-in speaking the scale set protocol, ssh is a
@@ -554,9 +555,10 @@ func (e *e2e) noSecrets(jits []string) {
 	}
 }
 
-// Intent: the real coordinator/agent journey keeps
-// its runner through a restart, hands registration only on stdin, and gives
-// the job its configured size and fork guard.
+// Intent (README, "How it works" and "Running as a service"): the real
+// coordinator/agent journey keeps its runner through a restart, hands
+// registration only on stdin, and gives the job its configured size and fork
+// guard.
 func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	e := newE2E(t)
 	job := verifyJob(t)
@@ -744,12 +746,12 @@ func TestCrashedPlaceIsCleanedUpAndItsJobPlacedAgain(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
-// Intent (a runner "was powered off by runner-up's idle timer the
-// same second GitHub gave it" a job; "GitHub then failed the job with 'lost
-// communication'"): GitHub can give a scale set's idle runner a job
-// until the runner is removed, so a runner no job reached within the start
-// timeout is removed from its scale set while it still runs, and only then
-// stopped. Its job gets a new runner.
+// Intent (README, "Setup file", startTimeoutSeconds, and the fixed bug:
+// runner-up's idle timer powered off a runner the same second GitHub gave it a
+// job, and GitHub then failed the job with "lost communication"): GitHub can
+// give a scale set's idle runner a job until the runner is removed, so a runner
+// no job reached within the start timeout is removed from its scale set while
+// it still runs, and only then stopped. Its job gets a new runner.
 func TestIdleRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
 	e := newE2E(t)
 	e.cfg.StartTimeoutSeconds = 2
@@ -785,9 +787,10 @@ func TestIdleRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
-// Intent: a runner GitHub gave a job just as the start timeout
-// passed is one GitHub refuses to remove, saying it is running a job. That
-// runner keeps running and runs the job; no second runner starts.
+// Intent (README, "Setup file", startTimeoutSeconds): a runner GitHub gave a
+// job just as the start timeout passed is one GitHub refuses to remove, saying
+// it is running a job. That runner keeps running and runs the job; no second
+// runner starts.
 func TestRunnerGivenAJobAtTheStartTimeoutKeepsRunning(t *testing.T) {
 	e := newE2E(t)
 	e.cfg.StartTimeoutSeconds = 2
@@ -830,13 +833,11 @@ func TestRunnerGivenAJobAtTheStartTimeoutKeepsRunning(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
-// Intent ("When a job is cancelled before its runner took it,
-// runner-up removes the spare runner's GitHub registration first and stops
-// it only once GitHub accepts"): GitHub can give a scale set's waiting runner
-// another of the set's jobs until the runner is removed, so the runner of a
-// job cancelled before it started is removed from its scale set while it
-// still runs, and only then stopped. The cancelled job gets no new runner,
-// and the runner is not removed again once its place ends.
+// Intent (README, "When GitHub closes a job"): GitHub can give a scale set's
+// waiting runner another of the set's jobs until the runner is removed, so the
+// runner of a job cancelled before it started is removed from its scale set
+// while it still runs, and only then stopped. The cancelled job gets no new
+// runner, and the runner is not removed again once its place ends.
 func TestSpareRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
 	e := newE2E(t)
 	e.actions.containerUp = func() bool { pid, _ := e.container(); return alive(pid) }
@@ -874,11 +875,10 @@ func TestSpareRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
-// Intent ("keeping it if GitHub says it is running a job"): GitHub
-// assigns the scale set a second job and gives it to the waiting runner just
-// as the runner's own job is cancelled. GitHub refuses to remove that runner,
-// so it keeps running, is not asked about again, and runs the job; no second
-// runner starts.
+// Intent (README, "When GitHub closes a job"): GitHub assigns the scale set a
+// second job and gives it to the waiting runner just as the runner's own job is
+// cancelled. GitHub refuses to remove that runner, so it keeps running, is not
+// asked about again, and runs the job; no second runner starts.
 func TestSpareRunnerGivenAJobAsItsJobIsCancelledKeepsRunning(t *testing.T) {
 	e := newE2E(t)
 	job, other := verifyJob(t), journeysJob(t)
@@ -922,10 +922,11 @@ func TestSpareRunnerGivenAJobAsItsJobIsCancelledKeepsRunning(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
-// Intent: a place serving two pools runs each pool's job on that
-// pool's image - two Ubuntu releases on the same place, picked by the label
-// the job asks for - and stays one place with one share of its machine: the
-// second job waits for it rather than getting a place of its own.
+// Intent (README, "Setup file", poolImages): a place serving two pools runs
+// each pool's job on that pool's image - two Ubuntu releases on the same place,
+// picked by the label the job asks for - and stays one place with one share of
+// its machine: the second job waits for it rather than getting a place of its
+// own.
 func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 	e := newE2E(t)
 	e.cfg.Pools = append(e.cfg.Pools, config.Pool{Label: "ru-linux-2604"})
@@ -1022,10 +1023,11 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 	t.Logf("check-config:\n%sagent runs:\n%s\ncontainer images: %v", checked, strings.Join(runs, "\n"), images)
 }
 
-// Intent: a place runner started for a pool its place does not
-// serve starts no agent, since no image there was chosen for that pool; nor
-// does one started with no pool, as a coordinator from before pools had
-// images would start it, in a place whose pools have their own images.
+// Intent (README, "Setup file", poolImages): a place runner started for a pool
+// its place does not serve starts no agent, since no image there was chosen for
+// that pool; nor does one started with no pool, as a coordinator from before
+// pools had images would start it, in a place whose pools have their own
+// images.
 func TestPlaceRunnerRefusesAPoolItsPlaceDoesNotServe(t *testing.T) {
 	e := newE2E(t)
 	e.cfg.Machines[0].Places[0].PoolImages = map[string]string{"ru-linux": "runner-2604:latest"}
