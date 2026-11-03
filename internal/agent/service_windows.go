@@ -275,6 +275,7 @@ func openLog(ok bool) (*slog.Logger, func()) {
 }
 
 type listener struct {
+	path    string
 	sa      *windows.SecurityAttributes
 	mu      sync.Mutex
 	closed  bool
@@ -296,7 +297,12 @@ func listen(runner string) (*listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &listener{sa: sa}
+	return listenAt(pipeName, sa)
+}
+
+// listenAt makes the pipe at path with the access sa gives.
+func listenAt(path string, sa *windows.SecurityAttributes) (*listener, error) {
+	l := &listener{path: path, sa: sa}
 	// The first instance proves no one else holds the name.
 	h, err := l.instance(true)
 	if err != nil {
@@ -314,7 +320,7 @@ func pipeSDDL(runner string) string {
 }
 
 func (l *listener) instance(first bool) (windows.Handle, error) {
-	name, _ := windows.UTF16PtrFromString(pipeName)
+	name, _ := windows.UTF16PtrFromString(l.path)
 	mode := uint32(windows.PIPE_ACCESS_DUPLEX)
 	if first {
 		mode |= windows.FILE_FLAG_FIRST_PIPE_INSTANCE
@@ -383,7 +389,7 @@ func (l *listener) close() {
 	l.mu.Lock()
 	l.closed = true
 	l.mu.Unlock()
-	name, _ := windows.UTF16PtrFromString(pipeName)
+	name, _ := windows.UTF16PtrFromString(l.path)
 	if h, err := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, 0, 0); err == nil {
 		windows.CloseHandle(h)
 	}
