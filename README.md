@@ -49,6 +49,76 @@ place's machine over SSH.
 - **Sign-in.** The coordinator uses the GitHub command line's sign-in. It
   stores no token: it asks `gh auth token` each time it opens a session.
 
+## Quick start
+
+### Tell your agent
+
+Paste this to a coding agent running on the machine that will be the
+coordinator:
+
+```text
+Set up runner-up (https://github.com/kunchenguid/runner-up) so my GitHub
+Actions jobs run on my own machines. Read its README first and follow it:
+https://raw.githubusercontent.com/kunchenguid/runner-up/main/README.md
+
+This machine is the coordinator. Ask me which repositories or organization
+to serve, each machine to run jobs on (its SSH address and the kind of
+places it should have: Docker, KVM or host on Linux; tart, Apple container
+or host on a Mac; account or Hyper-V on Windows), and a pool label for each
+kind of machine. A pool is the label workflows ask for in runs-on; separate
+pools keep a Linux job off a Mac or a Windows machine.
+
+1. Install runner-up here. Check that gh is signed in as an admin of each
+   repository (with the admin:org scope for an organization), and that
+   `ssh -o BatchMode=yes USER@MACHINE true` works for every Linux machine
+   and Mac. If it does not, tell me how to fix it.
+2. Over SSH, check that each Linux machine and Mac has what its places
+   need, as "What you need" lists. Tell me what is missing and how to add it.
+3. For each Windows machine, tell me exactly what to run there in an
+   administrator PowerShell: the install command, how to put this machine's
+   SSH public key there, and runner-up.exe setup with it. Once I say it is
+   done, check that ssh to it works.
+4. Run runner-up init, then runner-up machine add for each machine (with
+   --install for a machine of another system, as "Setting up" says). Then
+   edit the setup file so it lists every pool and each place serves only
+   its own machine's pool. Run runner-up check-config until it passes.
+5. Run runner-up serve as a service, as "Running as a service" shows for
+   this machine's system, starting runner-up from where it is installed.
+   Check that runner-up status lists every place.
+6. Show me the runs-on line for each pool.
+
+Ask me before you run anything with sudo.
+```
+
+### By hand
+
+Install runner-up (see [Install](#install)) and check
+[What you need](#what-you-need), then:
+
+```sh
+# What to serve, and the label jobs ask for.
+runner-up init --repo you/app --pool my-pool
+
+# Add machines. Each gets as many places as its cores and memory fit,
+# less the room kept for its owner (1 core and 1024 MB by default).
+runner-up machine add box --ssh ci@box
+runner-up machine add big --ssh ci@big --provider kvm \
+    --image /home/ci/noble-server-cloudimg-amd64.img --place-cores 4 --place-memory 8192
+# A Mac: two tart places of 4 cores and 8 GB by default.
+runner-up machine add mac --ssh you@mac --image ghcr.io/cirruslabs/macos-sequoia-base:latest
+
+runner-up check-config
+runner-up serve
+```
+
+Then ask for the pool in a workflow:
+
+```yaml
+jobs:
+  build:
+    runs-on: my-pool
+```
+
 ## How it works
 
 <p align="center">
@@ -246,32 +316,6 @@ On each Windows machine (Windows 10, 11 or Server 2019 and later, x86-64):
 
 runner-up installs itself on each Linux machine and Mac when you add it. A Windows
 machine needs one step first (see [Windows machines](#windows-machines)).
-
-## Quick start
-
-```sh
-# What to serve, and the label jobs ask for.
-runner-up init --repo you/app --pool my-pool
-
-# Add machines. Each gets as many places as its cores and memory fit,
-# less the room kept for its owner (1 core and 1024 MB by default).
-runner-up machine add box --ssh ci@box
-runner-up machine add big --ssh ci@big --provider kvm \
-    --image /home/ci/noble-server-cloudimg-amd64.img --place-cores 4 --place-memory 8192
-# A Mac: two tart places of 4 cores and 8 GB by default.
-runner-up machine add mac --ssh you@mac --image ghcr.io/cirruslabs/macos-sequoia-base:latest
-
-runner-up check-config
-runner-up serve
-```
-
-Then ask for the pool in a workflow:
-
-```yaml
-jobs:
-  build:
-    runs-on: my-pool
-```
 
 ## Setting up
 
