@@ -15,8 +15,8 @@ import (
 
 // An Apple container place runs its job in a fresh Linux guest on a Mac, made
 // with Apple's container tool from the place's image, sized to the job and
-// removed after it. The image needs only python3 at /usr/bin/python3 and a
-// user named runner. runner-up's Linux guest program (hyperv-guest.py) runs
+// removed after it. Image prerequisites are documented in README.md under
+// "What you need". runner-up's Linux guest program (hyperv-guest.py) runs
 // in it as root: the agent sends the program on the guest's standard input,
 // then the registration on one more line, so neither the image nor
 // `container inspect` ever holds the registration. Nothing of the Mac is
