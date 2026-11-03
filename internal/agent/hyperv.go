@@ -117,6 +117,12 @@ func encodedPowerShell(script string) []string { return encodedScript(hypervLibr
 // encodedScript is the arguments that run script in Windows PowerShell. It
 // travels as -EncodedCommand, one word of base64, so nothing between here and
 // PowerShell can split it.
+// EncodedScript is a command line that runs script in Windows PowerShell,
+// which cmd and PowerShell read the same: the script travels base64 encoded.
+func EncodedScript(script string) []string {
+	return append([]string{"powershell"}, encodedScript(script)...)
+}
+
 func encodedScript(script string) []string {
 	u := utf16.Encode([]rune(script))
 	b := make([]byte, 2*len(u))

@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/testbin"
 	"github.com/kunchenguid/runner-up/internal/version"
 )
@@ -24,7 +27,21 @@ const (
 	selfEnv    = "RUNNER_UP_TEST_SELF"
 )
 
+// trialEnv shortens a new version's trial (coordinator.TrialWindow) in the
+// end-to-end tests of updates.
+const trialEnv = "RUNNER_UP_TEST_TRIAL"
+
 func TestMain(m *testing.M) {
+	// This test program, built as a release of runner-up, run as runner-up: by
+	// the coordinator checking it before it restarts as it, restarting as it,
+	// or on a machine as its agent.
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-test.") {
+		if path := os.Getenv(serveEnv); path != "" && os.Args[1] == "serve" {
+			os.Exit(serveStandIn(path))
+		}
+		Main()
+		os.Exit(0)
+	}
 	if path := os.Getenv(serveEnv); path != "" {
 		os.Exit(serveStandIn(path))
 	}
@@ -36,6 +53,9 @@ func serveStandIn(path string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
+	}
+	if d, err := time.ParseDuration(os.Getenv(trialEnv)); err == nil {
+		coordinator.TrialWindow = d
 	}
 	actions := os.Getenv(actionsEnv)
 	clients := func(_ context.Context, target string) (*scaleset.Client, error) {

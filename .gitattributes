@@ -1,0 +1,3 @@
+# The signed checksums fixture is signed byte for byte; a checkout must not
+# change its line endings.
+internal/release/testdata/** -text

@@ -238,10 +238,12 @@ func (a *actionsStandIn) giveJob(id int64) {
 	a.busy[id] = true
 }
 
-// The stand-in ssh runs the agent's command line, its last argument, here.
+// The stand-in ssh runs the agent's command line, its last argument, on this
+// computer, in $HOME as ssh does.
 const fakeSSH = `#!/bin/sh
 printf '%s\n' "$*" >> "$E2E_DIR/ssh.log"
 for last; do :; done
+cd "$HOME"
 exec sh -c "$last"
 `
 

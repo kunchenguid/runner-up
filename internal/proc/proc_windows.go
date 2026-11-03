@@ -15,3 +15,5 @@ func Terminate(int) error { return errCoordinatorOS }
 func CloseOnExec(int)     {}
 
 func CoordinatorRuns() error { return errCoordinatorOS }
+
+func Exec(string, []string, []string) error { return errCoordinatorOS }

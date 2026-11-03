@@ -24,6 +24,10 @@ func (accountProvider) clean(context.Context, *AgentRun) error { return nil }
 
 func accountReady() string { return errWindowsOnly.Error() }
 
+func serviceVersion(context.Context) (string, error) { return "", errWindowsOnly }
+
+func updateService(context.Context, ServiceUpdate, io.Reader, io.Writer) error { return errWindowsOnly }
+
 func RunService() error { return errors.New("runner-up's service " + errWindowsOnly.Error()) }
 
 // memoryMB is the machine's memory from /proc/meminfo, or a Mac's from

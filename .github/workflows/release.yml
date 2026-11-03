@@ -222,6 +222,10 @@ jobs:
     needs: [release-please, build-and-upload]
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
+    # The release signing key's private half is a secret of this environment.
+    # runner-up's Windows service installs only a release whose checksums.txt
+    # it signed (internal/release), so only main should reach it.
+    environment: release
     steps:
       - uses: actions/checkout@v4
 
@@ -240,3 +244,26 @@ jobs:
           TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: gh release upload "${TAG_NAME}" checksums.txt
         working-directory: ${{ github.workspace }}
+
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          # A raw Ed25519 signature of the file, as internal/release checks it.
+          openssl pkeyutl -sign -rawin -inkey <(printf '%s\n' "$RELEASE_SIGNING_KEY") -in checksums.txt -out checksums.txt.sig
+          # It must verify with a key runner-up trusts (internal/release/key.go),
+          # or runner-up's Windows service would refuse the release.
+          for key in $(sed -n 's/^var signingKeys = "\(.*\)"$/\1/p' internal/release/key.go); do
+            { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s' "$key" | base64 -d; } > trusted.der
+            if openssl pkeyutl -verify -pubin -keyform DER -inkey trusted.der -rawin -in checksums.txt -sigfile checksums.txt.sig; then
+              exit 0
+            fi
+          done
+          echo "::error::The release signing key is not one internal/release/key.go trusts."
+          exit 1
+
+      - name: Upload signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "${TAG_NAME}" checksums.txt.sig

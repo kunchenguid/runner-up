@@ -260,3 +260,40 @@ func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 		}
 	}
 }
+
+// Intent (RUU-37, DOP-235's approved plan: "the setup names a runner-up
+// version and a per-platform SHA-256"): a release named as the release
+// workflow tags it, with each platform's archive SHA-256 as its checksums.txt
+// lists it, is accepted; a release the coordinator could not fetch or check is
+// refused when the setup loads.
+func TestTheSetupsReleaseNamesAVersionAndEachArchivesSHA256(t *testing.T) {
+	// runner-up-v9.0.2-windows-amd64.zip's line in the release fixture's
+	// checksums.txt.
+	const sum = "1a2dc4c30dbf507b3762d4a738564654c94213cb4879b801c2d994c62099f154"
+	cfg := initialSetup(t)
+	cfg.Release = &config.Release{Version: "v0.1.11", SHA256: map[string]string{"darwin-arm64": sum, "windows-amd64": sum}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a release as the workflow publishes it was refused: %v", err)
+	}
+	for _, tc := range []struct {
+		why  string
+		r    config.Release
+		want string
+	}{
+		{"a version without its v", config.Release{Version: "0.1.11", SHA256: map[string]string{"darwin-arm64": sum}},
+			`release: version "0.1.11" is not a release version such as v0.1.11`},
+		{"no archive", config.Release{Version: "v0.1.11"}, "release: sha256 names no platform's archive"},
+		{"a platform no release has", config.Release{Version: "v0.1.11", SHA256: map[string]string{"macos-arm64": sum}},
+			`release: sha256 names platform "macos-arm64"`},
+		{"a SHA-256 in capitals", config.Release{Version: "v0.1.11", SHA256: map[string]string{"linux-amd64": strings.ToUpper(sum)}},
+			"release: linux-amd64's sha256 is not 64 lowercase hex digits"},
+		{"a URL that is not a web address", config.Release{Version: "v0.1.11", SHA256: map[string]string{"linux-amd64": sum}, URL: "file:///srv/releases"},
+			"release: url must be an http or https address"},
+	} {
+		cfg := initialSetup(t)
+		cfg.Release = &tc.r
+		if err := cfg.Validate(); err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+			t.Errorf("%s: validate said %v, want %q", tc.why, err, tc.want)
+		}
+	}
+}

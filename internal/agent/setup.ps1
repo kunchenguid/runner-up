@@ -5,12 +5,16 @@
 #   $key     a public key to let that account sign in with, or ''
 #   $ssh     $true to turn on Windows' OpenSSH server
 #   $hyperv  $true to turn on Hyper-V and let $user make VMs
-# Running it again is harmless and updates the program. Restarting the service
-# ends any job it runs.
+# Running it again is harmless and updates the program. It restarts the
+# service only when its program or settings changed, once no Windows job runs,
+# since a stop ends the jobs the service runs; and whatever happens, it leaves
+# the service running.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $programDir = Join-Path $env:ProgramFiles 'runner-up'
-$program = Join-Path $programDir 'runner-up.exe'
+# The copy on PATH, which the coordinator runs over SSH as the agent until it
+# copies its own release here.
+$pathProgram = Join-Path $programDir 'runner-up.exe'
 $stateDir = Join-Path $env:ProgramData 'runner-up'
 $groupName = 'runner-up-jobs'
 $ruleName = 'runner-up-jobs-internet-only'
@@ -38,16 +42,41 @@ function Set-RunnerUpAcl([string]$path, [object[]]$entries) {
 }
 
 # Only SYSTEM and Administrators change the program; everyone may run it,
-# job accounts included, whose fork guard it is.
-$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-if ($service -and $service.Status -ne 'Stopped') {
-    # The service ends and cleans up its jobs before it stops.
-    Stop-Service -Name $serviceName
-    (Get-Service -Name $serviceName).WaitForStatus('Stopped', [TimeSpan]::FromMinutes(4))
+# job accounts included, whose fork guard it is. Each program sits in a folder
+# of its own, named for its version and SHA-256, as the service installs a
+# signed release too: nothing is ever copied over a program the service or a
+# job runs, so the service runs on until it restarts as the new one.
+$version = (& $source version | Out-String).Trim()
+if ($version -notmatch '^[0-9A-Za-z.+-]+$') { throw "$source did not say its version." }
+function Get-RunnerUpSum([string]$path) {
+    $f = [IO.File]::OpenRead($path)
+    try { [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($f)).Replace('-', '').ToLowerInvariant() } finally { $f.Close() }
 }
+$sum = Get-RunnerUpSum $source
 New-Item -ItemType Directory -Force -Path $programDir | Out-Null
 Set-RunnerUpAcl $programDir @(@($system, 'FullControl'), @($admins, 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))
-if ((Resolve-Path -LiteralPath $source).Path -ne $program) { Copy-Item -LiteralPath $source -Destination $program -Force }
+$installDir = Join-Path $programDir ($version + '-' + $sum.Substring(0, 12))
+$program = Join-Path $installDir 'runner-up.exe'
+function Test-RunnerUpCopy([string]$path) {
+    (Test-Path -LiteralPath $path) -and (Get-RunnerUpSum $path) -eq $sum
+}
+if (-not (Test-RunnerUpCopy $program)) {
+    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+    Copy-Item -LiteralPath $source -Destination "$program.new" -Force
+    Move-Item -LiteralPath "$program.new" -Destination $program -Force
+}
+# An agent running a job keeps the file it started from: Windows lets a
+# running program be renamed but not replaced. The old one is renamed aside
+# and removed once nothing runs it.
+if (-not (Test-RunnerUpCopy $pathProgram)) {
+    if (Test-Path -LiteralPath $pathProgram) {
+        Move-Item -LiteralPath $pathProgram -Destination "$pathProgram.$([DateTime]::UtcNow.Ticks).old" -Force
+    }
+    Copy-Item -LiteralPath $program -Destination $pathProgram -Force
+}
+Get-ChildItem -LiteralPath $programDir -Filter 'runner-up.exe.*.old' -File | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+}
 $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if (($path -split ';') -notcontains $programDir) {
     [Environment]::SetEnvironmentVariable('Path', ($path.TrimEnd(';') + ';' + $programDir), 'Machine')
@@ -105,31 +134,89 @@ Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name
 # Administrators, that may ask it for jobs.
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 Set-RunnerUpAcl $stateDir @(@($system, 'FullControl'), @($admins, 'FullControl'))
-[IO.File]::WriteAllText((Join-Path $stateDir 'service.json'), (@{ user = $account.Name } | ConvertTo-Json -Compress))
+$settingsFile = Join-Path $stateDir 'service.json'
+$settings = @{ user = $account.Name } | ConvertTo-Json -Compress
+$settingsChanged = -not (Test-Path -LiteralPath $settingsFile) -or [IO.File]::ReadAllText($settingsFile) -ne $settings
 
-$binPath = "`"$program`" service"
-if (-not $service) {
-    New-Service -Name $serviceName -DisplayName 'runner-up' -BinaryPathName $binPath -StartupType Automatic `
-        -Description 'Runs each Windows CI job of runner-up as a fresh standard account and deletes it afterwards.' | Out-Null
-} else {
-    # Not sc.exe: Windows PowerShell drops the quotes inside $binPath when it
-    # passes it to a program, which splits the path at its space.
-    $svc = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
-    if ($svc.PathName -ne $binPath -or $svc.StartMode -ne 'Auto') {
-        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ PathName = $binPath; StartMode = 'Automatic' }
-        if ($r.ReturnValue -ne 0) { throw "Could not update the runner-up service ($($r.ReturnValue))." }
+# The service ends every job it runs when it stops, so it stops only between
+# jobs: once it has no job account, which it records from before it makes one
+# until it has deleted it.
+function Wait-RunnerUpJobs {
+    $records = Join-Path $stateDir 'job-accounts.json'
+    $deadline = (Get-Date).AddMinutes(30)
+    $said = [DateTime]::MinValue
+    while ($true) {
+        $jobs = 0
+        try {
+            # Windows PowerShell hands a JSON list on whole and PowerShell 7
+            # item by item, or nothing for an empty one.
+            $list = if (Test-Path -LiteralPath $records) { Get-Content -Raw -LiteralPath $records | ConvertFrom-Json } else { $null }
+            $jobs = if ($null -eq $list) { 0 } else { @($list).Count }
+        } catch { $jobs = 0 }
+        if ($jobs -eq 0) { return }
+        if ((Get-Date) -gt $deadline) {
+            Write-Host 'Windows jobs still run after 30 minutes; restarting the service ends them.' -ForegroundColor Yellow
+            return
+        }
+        if (((Get-Date) - $said).TotalSeconds -ge 30) {
+            Write-Host "Waiting for $jobs Windows job(s) to end before restarting the service. Nothing has changed yet: Ctrl+C stops here safely."
+            $said = Get-Date
+        }
+        Start-Sleep -Seconds 1
     }
 }
-& sc.exe failure $serviceName reset= 86400 actions= restart/10000/restart/10000/restart/60000 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Could not set the runner-up service to restart.' }
-Start-Service -Name $serviceName
-(Get-Service -Name $serviceName).WaitForStatus('Running', [TimeSpan]::FromMinutes(1))
+
+$binPath = "`"$program`" service"
+$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+$before = if ($service) { Get-CimInstance Win32_Service -Filter "Name='$serviceName'" } else { $null }
+$changed = -not $service -or $before.PathName -ne $binPath -or $before.StartMode -ne 'Auto' -or $settingsChanged
+try {
+    if ($changed) {
+        if ($service -and $service.Status -ne 'Stopped') {
+            Wait-RunnerUpJobs
+            Write-Host 'Restarting the runner-up service as the new program.'
+            Stop-Service -Name $serviceName
+            (Get-Service -Name $serviceName).WaitForStatus('Stopped', [TimeSpan]::FromMinutes(4))
+        }
+        [IO.File]::WriteAllText($settingsFile, $settings)
+        if (-not $service) {
+            New-Service -Name $serviceName -DisplayName 'runner-up' -BinaryPathName $binPath -StartupType Automatic `
+                -Description 'Runs each Windows CI job of runner-up as a fresh standard account and deletes it afterwards.' | Out-Null
+        } elseif ($before.PathName -ne $binPath -or $before.StartMode -ne 'Auto') {
+            # Not sc.exe: Windows PowerShell drops the quotes inside $binPath
+            # when it passes it to a program, which splits the path at its space.
+            $r = Invoke-CimMethod -InputObject $before -MethodName Change -Arguments @{ PathName = $binPath; StartMode = 'Automatic' }
+            if ($r.ReturnValue -ne 0) { throw "Could not update the runner-up service ($($r.ReturnValue))." }
+        }
+    }
+    & sc.exe failure $serviceName reset= 86400 actions= restart/10000/restart/10000/restart/60000 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not set the runner-up service to restart.' }
+    # A stop the service manager did not ask for starts it again too: the
+    # service stops so to restart as a signed release it installed.
+    & sc.exe failureflag $serviceName 1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not set the runner-up service to restart after it stops itself.' }
+} finally {
+    # Whatever stopped this script, the service is never left stopped.
+    if ((Get-Service -Name $serviceName -ErrorAction SilentlyContinue) -and (Get-Service -Name $serviceName).Status -ne 'Running') {
+        Start-Service -Name $serviceName
+        (Get-Service -Name $serviceName).WaitForStatus('Running', [TimeSpan]::FromMinutes(1))
+    }
+}
 $deadline = (Get-Date).AddSeconds(60)
 while (-not ([IO.Directory]::GetFiles('\\.\pipe\') -contains '\\.\pipe\runner-up')) {
     if ((Get-Date) -gt $deadline) { throw "The runner-up service is running but not listening; see $stateDir\service.log." }
     Start-Sleep -Milliseconds 500
 }
-Write-Host 'runner-up service running.'
+if ($changed) {
+    # Programs other than this one and the one before it run nothing now.
+    $keep = @($installDir)
+    if ($before -and $before.PathName -match '^"(.+)" service$') { $keep += Split-Path -Parent $Matches[1] }
+    Get-ChildItem -LiteralPath $programDir -Directory | Where-Object { $_.Name -match '-[0-9a-f]{12}$' -and $keep -notcontains $_.FullName } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Host "runner-up service running $version."
+} else {
+    Write-Host "runner-up service already runs $version, unchanged."
+}
 
 if ($ssh) {
     if ((Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0').State -ne 'Installed') {
