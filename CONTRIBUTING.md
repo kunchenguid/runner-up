@@ -20,10 +20,14 @@ make test
 
 ## Contribution Gate
 
-PRs to `main` must be raised through [no-mistakes](https://github.com/kunchenguid/no-mistakes).
-The required check `PR must be raised via no-mistakes` enforces this — a hand-opened PR
-will stay red until the branch is pushed through the gate. The gate writes a pipeline
-attestation whose `head_sha` matches the PR head; a hand-added marker is not enough.
+PRs to `main` must be raised through [no-mistakes](https://github.com/kunchenguid/no-mistakes),
+and using it is the contributor's responsibility. `main` requires two checks:
+
+- `PR must be raised via no-mistakes` — a hand-opened PR stays red until the branch is
+  pushed through the gate. The gate writes a pipeline attestation whose `head_sha`
+  matches the PR head; a hand-added marker is not enough.
+- `CI passed` — formatting, `go vet`, and `go test ./...` with a build on Linux, macOS,
+  and Windows all pass.
 
 ### Setup (one-time)
 
