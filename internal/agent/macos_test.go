@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -291,8 +292,6 @@ func (m *mac) touch(name string) { os.WriteFile(filepath.Join(m.dir, name), nil,
 
 func (m *mac) vm(name string) string { return filepath.Join(m.dir, "tart", "vms", name) }
 
-func exists(path string) bool { _, err := os.Stat(path); return err == nil }
-
 // guard runs a job-started hook with a saved event as the runner would, and
 // says whether it allowed the job.
 func guard(t *testing.T, hook, event string) bool {
@@ -470,15 +469,25 @@ func TestHostPlaceRunsOnTheMachineAndEndsEverythingTheJobStarted(t *testing.T) {
 	if guard(t, hook, "pull-request-521-fork.json") || !guard(t, hook, "push-main.json") {
 		t.Error("the host place's fork guard does not decide as the guard does")
 	}
-	if args, _ := exec.Command("ps", "-ww", "-o", "args=", "-p", strconv.Itoa(a.cmd.Process.Pid)).Output(); strings.Contains(string(args), jit) {
-		t.Errorf("the agent's command line holds the registration: %q", args)
+	// AGENTS.md: the registration never travels on a command line. The
+	// runner got it above; no process on this computer, the runner and the
+	// processes the agent started included, has it among its arguments.
+	runnerPID := m.pid("runner.pid")
+	all, err := exec.Command("ps", "-A", "-ww", "-o", "pid=,args=").Output()
+	if err != nil || !regexp.MustCompile(`(?m)^\s*`+strconv.Itoa(runnerPID)+`\s`).Match(all) {
+		t.Fatalf("ps did not list the runner %d: %v", runnerPID, err)
+	}
+	for _, line := range strings.Split(string(all), "\n") {
+		if strings.Contains(line, jit) {
+			t.Errorf("a process's command line holds the registration: %q", line)
+		}
 	}
 
 	// The job starts a process of its own; then the coordinator lets go of
 	// the agent's input, as when it stops the runner or loses the machine.
 	m.touch("go")
 	m.eventually("the job starts its process", a, func() bool { return m.pid("job.pid") > 0 })
-	runnerPID, jobPID := m.pid("runner.pid"), m.pid("job.pid")
+	jobPID := m.pid("job.pid")
 	a.in.Close()
 	if code := m.exit(a); code != ExitDone {
 		t.Fatalf("the agent exited %d:\n%s", code, a.output())

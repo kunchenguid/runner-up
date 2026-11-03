@@ -323,11 +323,7 @@ func RunBorrow(cfg *config.Config, placeID, id string) int {
 	if config.ReadJSON(filepath.Join(borrowDir(cfg, id), "granted.json"), &r) != nil {
 		return 1
 	}
-	p = cfg.SizePlace(p, r.Pool)
-	var run PlaceRun
-	if config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil && run.Reservation.Cores > 0 && run.Reservation.MemoryMB > 0 {
-		p.Cores, p.MemoryMB = run.Reservation.Cores, run.Reservation.MemoryMB
-	}
+	p = reservedPlace(cfg, p, r.Pool)
 	conn, err := net.DialTimeout("unix", r.Socket, 10*time.Second)
 	if err != nil {
 		return 1

@@ -17,11 +17,11 @@ import (
 	"time"
 )
 
-// Intent (README, "Job sizes and readings"): sizes must be informed by readings
-// of actual work, not copied limits. This child uses one CPU and touches 32 MiB
-// until the parent has collected real OS readings. No fabricated ps fixture or
-// duration-dependent expectation stands in for a measurement.
-func TestUsageWorkload(t *testing.T) {
+// usageWorkload is the job TestUsageObservesActualJobProcesses measures:
+// this test program started again with RUNNER_UP_USAGE_WORKLOAD=1. It uses
+// one CPU and touches 32 MiB until its input closes, so the readings come
+// from actual work, not a fabricated ps fixture or copied limits.
+func init() {
 	if os.Getenv("RUNNER_UP_USAGE_WORKLOAD") != "1" {
 		return
 	}
@@ -36,7 +36,7 @@ func TestUsageWorkload(t *testing.T) {
 		select {
 		case <-done:
 			runtime.KeepAlive(memory)
-			return
+			os.Exit(0)
 		default:
 			for i := range memory {
 				memory[i]++
@@ -45,12 +45,13 @@ func TestUsageWorkload(t *testing.T) {
 	}
 }
 
-// Intent (README, "Job sizes and readings"): the sampler reads this job's
+// Intent (README, "Job sizes and readings"): sizes must be informed by
+// readings of actual work, not copied limits. The sampler reads this job's
 // group, captures nonzero CPU and resident memory, and emits a record the
 // coordinator can consume. Stopping readings completes without leaving a
 // sampler behind.
 func TestUsageObservesActualJobProcesses(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestUsageWorkload$")
+	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(), "RUNNER_UP_USAGE_WORKLOAD=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	in, err := cmd.StdinPipe()

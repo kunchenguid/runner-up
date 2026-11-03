@@ -149,16 +149,37 @@ func TestBorrowAbandonedWaiterAndEqualLabels(t *testing.T) {
 	l := newFakeLauncher()
 	h := newHarness(t, cfg, l, map[string]*fakeSet{})
 	h.now = time.Now()
-	a := enqueueBorrow(t, cfg, borrowRequest{ID: "request-a", Pool: "ru-mac", Label: "check", Minutes: 20, Queued: h.now})
+	// a waited longer, so only its abandonment lets b go first.
+	a := enqueueBorrow(t, cfg, borrowRequest{ID: "request-a", Pool: "ru-mac", Label: "check", Minutes: 20, Queued: h.now.Add(-time.Minute)})
 	enqueueBorrow(t, cfg, borrowRequest{ID: "request-b", Pool: "ru-mac", Label: "check", Minutes: 20, Queued: h.now})
 	h.svc.refreshBorrowsLocked()
 	if len(h.svc.waiting) != 2 {
 		t.Fatal("equal labels overwrote a request")
 	}
 	a.Close()
-	h.svc.refreshBorrowsLocked()
-	if len(h.svc.waiting) != 1 {
-		t.Fatal("abandoned waiter remained queued")
+	h.svc.Place(context.Background())
+	var granted []string
+	for id, jit := range l.jits {
+		if b, ok := strings.CutPrefix(jit, "borrow:"); ok {
+			granted = append(granted, id+" "+b)
+		}
+	}
+	if len(granted) != 1 || !strings.HasSuffix(granted[0], " request-b") {
+		t.Fatalf("places granted %v, want request-b alone", granted)
+	}
+	if _, err := os.Stat(borrowDir(cfg, "request-a")); !os.IsNotExist(err) {
+		t.Fatalf("the abandoned request's folder remains: %v", err)
+	}
+	if len(h.svc.waiting) != 0 {
+		t.Fatalf("still waiting: %v", h.svc.waiting)
+	}
+	// A later pass, with places free, grants nothing more.
+	h.svc.Place(context.Background())
+	if n := len(l.held); n != 1 {
+		t.Fatalf("%d places run borrows after a later pass, want 1", n)
+	}
+	for id := range l.held {
+		l.finish(t, id)
 	}
 }
 
