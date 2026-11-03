@@ -4,11 +4,12 @@ package testbin
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 var (
@@ -43,7 +44,7 @@ func Build(t *testing.T, ldflags string) string {
 	if ldflags != "" {
 		args = append(args, "-ldflags", ldflags)
 	}
-	out, err := exec.Command("go", append(args, "github.com/kunchenguid/runner-up")...).CombinedOutput()
+	out, err := testrun.Command(t, "go", append(args, "github.com/kunchenguid/runner-up")...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build: %s", out)
 	}

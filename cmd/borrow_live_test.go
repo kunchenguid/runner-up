@@ -19,6 +19,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/lock"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Borrowing a virtual Mac"): the real borrow supervisor
@@ -119,7 +120,7 @@ func TestRealTartBorrowDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer in.Close()
-	cmd := exec.Command(runnerUp(t), "run-borrow", "--config", e.config, "--place", "box-1", "--borrow", id)
+	cmd := testrun.Command(t, runnerUp(t), "run-borrow", "--config", e.config, "--place", "box-1", "--borrow", id)
 	cmd.Env, cmd.ExtraFiles, cmd.Stdout, cmd.Stderr = e.env, []*os.File{busy}, out, out
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -320,7 +321,7 @@ func realTartBorrowE2E(t *testing.T) *e2e {
 
 func assertEmptyBorrowTartStore(t *testing.T, e *e2e) string {
 	t.Helper()
-	list := exec.Command("tart", "list", "--format", "json")
+	list := testrun.Command(t, "tart", "list", "--format", "json")
 	list.Env = e.env
 	b, err := list.CombinedOutput()
 	if err != nil {
@@ -373,7 +374,7 @@ func startLiveBorrow(t *testing.T, e *e2e, name string, minutes int) (*exec.Cmd,
 	}
 	defer out.Close()
 	script := `printf 'place=%s vm=%s\n' "$BORROWED_PLACE" "$BORROWED_VM"; touch "$E2E_DIR/` + name + `-started"; while [ ! -e "$E2E_DIR/` + name + `-done" ]; do sleep 0.05; done`
-	cmd := exec.Command(runnerUp(t), "borrow", "--config", e.config, "--pool", "ru-linux", "--label", "same label", "--minutes", strconv.Itoa(minutes), "--", "/bin/sh", "-c", script)
+	cmd := testrun.Command(t, runnerUp(t), "borrow", "--config", e.config, "--pool", "ru-linux", "--label", "same label", "--minutes", strconv.Itoa(minutes), "--", "/bin/sh", "-c", script)
 	cmd.Env, cmd.Stdout, cmd.Stderr = e.env, out, out
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

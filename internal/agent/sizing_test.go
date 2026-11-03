@@ -5,13 +5,13 @@ package agent
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/kunchenguid/runner-up/internal/testbin"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Setup file" and "Macs"): the tart guest's executed startup
@@ -47,7 +47,7 @@ printf 'job-size=%%s,%%s\n' "$RUNNER_UP_CORES" "$RUNNER_UP_MEMORY_MB"
 				t.Fatal(err)
 			}
 			a := AgentRun{Cores: 4, MemoryMB: 16384, AllowForks: allow}
-			cmd := exec.Command("bash", "-c", tartScript(tartProvider{}.launch(&a)), "runner-up", share, "")
+			cmd := testrun.Command(t, "bash", "-c", tartScript(tartProvider{}.launch(&a)), "runner-up", share, "")
 			// Only disposable environment values can enter the process reading.
 			cmd.Env = []string{"HOME=" + dir, "PATH=" + os.Getenv("PATH"), "LANG=C", "ACTIONS_RUNNER_HOOK_JOB_STARTED="}
 			cmd.Stdin = strings.NewReader(registration + "\n")

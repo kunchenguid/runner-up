@@ -22,6 +22,7 @@ import (
 	"unicode"
 
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 	"github.com/kunchenguid/runner-up/internal/version"
 )
 
@@ -230,12 +231,13 @@ func stepsOf(calls []string, name string) []string {
 	return out
 }
 
-func waitStarted(t *testing.T, h *fakeHost) {
+// waitStarted waits until n jobs have started on h.
+func waitStarted(t *testing.T, h *fakeHost, n int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	for h.started() == 0 {
+	for h.started() < n {
 		if time.Now().After(deadline) {
-			t.Fatal("the job never started")
+			t.Fatalf("%d of %d jobs started", h.started(), n)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -464,7 +466,7 @@ func TestJobIsStoppedAndDeletedWhenTheAgentGoes(t *testing.T) {
 	go w.Write(b)
 	done := make(chan error)
 	go func() { done <- s.Serve(context.Background(), in, io.Discard) }()
-	waitStarted(t, h)
+	waitStarted(t, h, 1)
 	// The agent's end of the pipe closes.
 	w.Close()
 	select {
@@ -488,7 +490,7 @@ func TestRefusesASecondJobInABusyPlace(t *testing.T) {
 	go w.Write(b)
 	done := make(chan error)
 	go func() { done <- s.Serve(context.Background(), in, io.Discard) }()
-	waitStarted(t, h)
+	waitStarted(t, h, 1)
 	if out, err := askJobHost(t, s, runRequest("win-pc-1")); err == nil || !strings.Contains(out, "already runs a job") {
 		t.Errorf("a second job in a busy place was not refused: %v %s", err, out)
 	}
@@ -497,7 +499,7 @@ func TestRefusesASecondJobInABusyPlace(t *testing.T) {
 		t.Errorf("a clean of a busy place did not wait and refuse: %v %s", err, out)
 	}
 	w.Close()
-	<-done
+	testrun.Receive(t, done, "the service to end once the agent went")
 }
 
 // The agent's side against the service itself, as over the pipe: a job runs
@@ -527,12 +529,10 @@ func TestAgentAndServiceOverThePipe(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	asked := make(chan error)
 	go func() { asked <- askService(ctx, agent, runRequest("win-pc-1"), io.Discard) }()
-	for h.started() < 2 {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitStarted(t, h, 2)
 	// The coordinator stopped the place: the agent's input closed.
 	cancel()
-	if err := <-asked; err != nil {
+	if err := testrun.Receive(t, asked, "the agent to end once its place stopped"); err != nil {
 		t.Errorf("a stopped job failed the agent: %v", err)
 	}
 	select {
@@ -736,10 +736,10 @@ func TestTheServiceInstallsOnlyANewerReleaseTheSigningKeySigned(t *testing.T) {
 	go w.Write(b)
 	done := make(chan error)
 	go func() { done <- s.Serve(context.Background(), in, io.Discard) }()
-	waitStarted(t, h)
+	waitStarted(t, h, 1)
 	refused("a release while a job runs", "runner-up-v9.0.2-windows-amd64.zip", zip, sig, "1 places run or clean up a job")
 	w.Close()
-	<-done
+	testrun.Receive(t, done, "the service to end once the agent went")
 
 	out, code := hand("runner-up-v9.0.2-windows-amd64.zip", zip, sig)
 	if code != ExitDone || !strings.Contains(out, "updating to v9.0.2") || !slices.Equal(installed, []string{"v9.0.2"}) {

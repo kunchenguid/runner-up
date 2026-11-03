@@ -29,6 +29,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
@@ -44,7 +46,7 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "seed.iso")
 	os.WriteFile(path, iso, 0o600)
 	// libarchive reads the Joliet names, as Linux does.
-	list, err := exec.Command(bsdtar, "-tf", path).Output()
+	list, err := testrun.Command(t, bsdtar, "-tf", path).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +60,7 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 		t.Errorf("the disc holds %q, want meta-data and user-data", got)
 	}
 	for name, want := range seed {
-		got, err := exec.Command(bsdtar, "-xOf", path, name).Output()
+		got, err := testrun.Command(t, bsdtar, "-xOf", path, name).Output()
 		if err != nil || !bytes.Equal(got, want) {
 			t.Errorf("%s reads back as %q (%v), want %q", name, got, err, want)
 		}
@@ -85,7 +87,7 @@ func discReader(t *testing.T) string {
 	}
 	for _, tar := range tars {
 		if path, err := exec.LookPath(tar); err == nil {
-			if out, _ := exec.Command(path, "--version").Output(); strings.HasPrefix(string(out), "bsdtar") {
+			if out, _ := testrun.Command(t, path, "--version").Output(); strings.HasPrefix(string(out), "bsdtar") {
 				return path
 			}
 		}
@@ -166,7 +168,7 @@ except Exception as e:
 `
 	prepare := func(home string, pin ...string) string {
 		os.MkdirAll(home, 0o700)
-		out, err := exec.Command(py, append([]string{"-I", "-c", driver, program, download.URL, home}, pin...)...).CombinedOutput()
+		out, err := testrun.Command(t, py, append([]string{"-I", "-c", driver, program, download.URL, home}, pin...)...).CombinedOutput()
 		if err != nil {
 			t.Fatalf("the guest's download check did not run: %v\n%s", err, out)
 		}
@@ -260,7 +262,7 @@ func TestRegistrationGoesToTheVMOverItsSerialPortOnce(t *testing.T) {
 	if err := talkToGuest(context.Background(), agent, registration, &out, 5*time.Second); err != nil {
 		t.Fatalf("a job that ran to its end failed: %v\n%s", err, out.String())
 	}
-	if l := <-got; l != registration {
+	if l := testrun.Receive(t, got, "the VM to read a line"); l != registration {
 		t.Errorf("the VM read %q, want the registration", l)
 	}
 	if strings.Contains(out.String(), guestReady) || strings.Contains(out.String(), registration) {
@@ -357,7 +359,7 @@ func TestGuestForkGuardDecidesLikeRunnerUps(t *testing.T) {
 		t.Setenv("GITHUB_EVENT_PATH", ev)
 		t.Setenv("GITHUB_EVENT_NAME", "pull_request")
 		code := RunForkGuard(&goOut, &goErr)
-		cmd := exec.Command(py, "-I", guest, "guard")
+		cmd := testrun.Command(t, py, "-I", guest, "guard")
 		var pyOut, pyErr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &pyOut, &pyErr
 		cmd.Env = append(os.Environ(), "GITHUB_EVENT_PATH="+ev, "GITHUB_EVENT_NAME=pull_request")
@@ -395,7 +397,7 @@ def host():
 threading.Thread(target=host, daemon=True).start()
 print(g.registration(port))
 `
-	out, err := exec.Command(py, "-I", "-c", script, filepath.Join(dir, "guest.py"), registration).CombinedOutput()
+	out, err := testrun.Command(t, py, "-I", "-c", script, filepath.Join(dir, "guest.py"), registration).CombinedOutput()
 	if err != nil || strings.TrimSpace(string(out)) != registration {
 		t.Errorf("the guest took %q (%v), want the registration", out, err)
 	}
@@ -424,7 +426,7 @@ spec = importlib.util.spec_from_file_location("guest", sys.argv[1])
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
 print(json.dumps(g.runner_env(sys.argv[3], g.image_environment(sys.argv[2])), sort_keys=True))
 `
-	out, err := exec.Command(py, "-I", "-c", script, filepath.Join(dir, "guest.py"), etc, registration).CombinedOutput()
+	out, err := testrun.Command(t, py, "-I", "-c", script, filepath.Join(dir, "guest.py"), etc, registration).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
@@ -445,7 +447,7 @@ print(json.dumps(g.runner_env(sys.argv[3], g.image_environment(sys.argv[2])), so
 		}
 	}
 	// An image without the file still runs the runner.
-	out, err = exec.Command(py, "-I", "-c", script, filepath.Join(dir, "guest.py"), filepath.Join(dir, "missing"), registration).CombinedOutput()
+	out, err = testrun.Command(t, py, "-I", "-c", script, filepath.Join(dir, "guest.py"), filepath.Join(dir, "missing"), registration).CombinedOutput()
 	env = nil
 	if err != nil || json.Unmarshal(out, &env) != nil {
 		t.Fatalf("with no /etc/environment: %v: %s", err, out)

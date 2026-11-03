@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Exercise the installer through sh, stopping at the asset request: no network,
@@ -70,7 +72,7 @@ exit 42
 				failure = "true"
 			}
 			t.Setenv("CURL_FAILURE", failure)
-			cmd := exec.Command("sh", filepath.Join("docs", "install.sh"))
+			cmd := testrun.Command(t, "sh", filepath.Join("docs", "install.sh"))
 			output, err := cmd.CombinedOutput()
 			exitErr, ok := err.(*exec.ExitError)
 			if !ok {
@@ -235,7 +237,7 @@ exit 42
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+installDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			t.Setenv("ASSET", archive)
 			t.Setenv("CHECKSUMS", checksums)
-			output, err := exec.Command("sh", filepath.Join("docs", "install.sh")).CombinedOutput()
+			output, err := testrun.Command(t, "sh", filepath.Join("docs", "install.sh")).CombinedOutput()
 			installed, readErr := os.ReadFile(filepath.Join(installDir, "runner-up"))
 			if tc.refusal == "" && !tc.noChecksums {
 				if err != nil || readErr != nil || !bytes.Equal(installed, program) {
@@ -303,7 +305,7 @@ function Invoke-WebRequest { param($Uri, $Method, $OutFile, [switch]$UseBasicPar
 function Expand-Archive { throw "REACHED EXTRACTION" }
 . "` + filepath.Join("docs", "install.ps1") + `"
 `
-				cmd := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", stubs)
+				cmd := testrun.Command(t, shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", stubs)
 				// Each shell finds its own modules: a PSModulePath inherited from
 				// PowerShell 7 (as on a CI runner) hides Windows PowerShell's.
 				var env []string

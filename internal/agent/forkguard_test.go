@@ -2,12 +2,12 @@ package agent
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kunchenguid/runner-up/internal/testbin"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Pull requests from forks"): every place's runner starts
@@ -106,7 +106,7 @@ func TestRunnersHookRunsTheForkGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := func(event, name string) (string, string, error) {
-		cmd := exec.Command("bash", path)
+		cmd := testrun.Command(t, "bash", path)
 		for _, kv := range os.Environ() {
 			if !strings.HasPrefix(kv, "GITHUB_EVENT_") {
 				cmd.Env = append(cmd.Env, kv)

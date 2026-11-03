@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 const fakeContainer = `#!/bin/bash
@@ -238,7 +239,7 @@ func TestContainerGuestRunsThePinnedRunnerWithTheForkGuard(t *testing.T) {
 
 	guest := func(served string) (root string, out string, code int) {
 		root = t.TempDir()
-		cmd := exec.Command(py, "-I", "-c", guestHarness, root, served, bootstrap)
+		cmd := testrun.Command(t, py, "-I", "-c", guestHarness, root, served, bootstrap)
 		cmd.Stdin = strings.NewReader(in)
 		b, err := cmd.CombinedOutput()
 		return root, string(b), ExitCode(err)
@@ -302,7 +303,7 @@ func TestContainerGuestRunsThePinnedRunnerWithTheForkGuard(t *testing.T) {
 	mapped := strings.NewReplacer("/usr/bin/python3", py+" -I", "/opt/runner-up", root+"/opt/runner-up").Replace(string(script))
 	for event, wantCode := range map[string]int{"pull-request-521-fork.json": 1, "pull-request-527-same-repo.json": 0} {
 		path, _ := filepath.Abs(filepath.Join("testdata/events", event))
-		cmd := exec.Command("bash", "-c", mapped)
+		cmd := testrun.Command(t, "bash", "-c", mapped)
 		cmd.Env = append(os.Environ(), "GITHUB_EVENT_PATH="+path, "GITHUB_EVENT_NAME=pull_request")
 		b, err := cmd.CombinedOutput()
 		if ExitCode(err) != wantCode {
@@ -365,7 +366,7 @@ while not line.endswith(b"\n"):
     line += os.read(0, 1)
 print(sys.argv[1:], line.decode().strip())
 `
-	cmd := exec.Command(py, "-I", "-c", containerBootstrap(filepath.Join(dir, "opt")))
+	cmd := testrun.Command(t, py, "-I", "-c", containerBootstrap(filepath.Join(dir, "opt")))
 	cmd.Stdin = strings.NewReader(strconv.Itoa(len(program)) + "\n" + program + registration + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(out)) != "['stdin'] "+registration {
@@ -380,14 +381,14 @@ spec = importlib.util.spec_from_file_location("guest", sys.argv[1])
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
 print(g.registration(0, announce=False))
 `
-	cmd = exec.Command(py, "-I", "-c", script, guest)
+	cmd = testrun.Command(t, py, "-I", "-c", script, guest)
 	cmd.Stdin = strings.NewReader(registration + "\n")
 	out, err = cmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(out)) != registration {
 		t.Errorf("the guest took %q (%v), want the registration", out, err)
 	}
 
-	cmd = exec.Command(py, "-I", guest, "stdin")
+	cmd = testrun.Command(t, py, "-I", guest, "stdin")
 	out, err = cmd.CombinedOutput()
 	if ExitCode(err) != 1 || !strings.Contains(string(out), "runner-up guest: failed: the agent closed its input") {
 		t.Errorf("a guest with no registration said %q (%v)", out, err)

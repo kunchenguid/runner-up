@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (the coordinator's design, coordinator/place.go): a file two
@@ -36,7 +38,7 @@ func TestTwoWritersOfOneFileBothSucceed(t *testing.T) {
 			}
 		}()
 	}
-	wg.Wait()
+	testrun.Wait(t, "both writers to finish", wg.Wait)
 	close(errs)
 	for err := range errs {
 		if err != nil {

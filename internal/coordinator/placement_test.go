@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (the coordinator's design, service.go): a placement pass never
@@ -135,7 +136,7 @@ func TestPlaceRunKeepsBothWritersChanges(t *testing.T) {
 			defer wg.Done()
 			errs <- updatePlaceRun(cfg, "box-1", func(r *PlaceRun) { r.Started, r.RanJob = true, "verify / linux" })
 		}()
-		wg.Wait()
+		testrun.Wait(t, "both writers to finish", wg.Wait)
 		close(errs)
 		for err := range errs {
 			if err != nil {

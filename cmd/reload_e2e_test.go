@@ -5,7 +5,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Changing the setup"): serve watches its setup file and waits
@@ -134,7 +134,7 @@ func TestRefusedSetupKeepsTheRunningSetup(t *testing.T) {
 	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
 	pid, _ := e.container()
 	run, _ := e.placeRun()
-	args, _ := exec.Command("ps", "-ww", "-o", "args=", "-p", strconv.Itoa(run.PID)).Output()
+	args, _ := testrun.Command(t, "ps", "-ww", "-o", "args=", "-p", strconv.Itoa(run.PID)).Output()
 	if want := "--config " + filepath.Join(e.cfg.StateDir, "setups") + string(filepath.Separator); !strings.Contains(string(args), want) {
 		t.Errorf("the place runner runs as %q, want it to read the coordinator's setup under %q", args, want)
 	}

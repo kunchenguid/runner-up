@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "When a machine is down"). Before, the coordinator ran Tidy
@@ -85,7 +86,7 @@ func (h *harness) registrations() int {
 func (h *harness) round() {
 	h.svc.Tidy(context.Background())
 	h.svc.Place(context.Background())
-	h.svc.asking.Wait()
+	testrun.Wait(h.t, "the resting machines' agents to answer", h.svc.asking.Wait)
 }
 
 func TestUnreachableMachineRestsUntilItsAgentAnswers(t *testing.T) {
