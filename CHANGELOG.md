@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/kunchenguid/runner-up/compare/v0.1.6...v0.1.7) (2026-11-03)
+
+
+### Features
+
+* **agent:** support Apple container Linux guests and pool deprioritization ([447ba5e](https://github.com/kunchenguid/runner-up/commit/447ba5e465a5ea062d89320e5d762e9a68c85391))
+
 ## [0.1.6](https://github.com/kunchenguid/runner-up/compare/v0.1.5...v0.1.6) (2026-11-02)
 
 
