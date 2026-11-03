@@ -96,8 +96,8 @@ Install runner-up (see [Install](#install)) and check
 [What you need](#what-you-need), then:
 
 ```sh
-# What to serve, and the label jobs ask for.
-runner-up init --repo you/app --pool my-pool
+# What to serve, and the label Linux jobs ask for.
+runner-up init --repo you/app --pool my-linux
 
 # Add machines. Each gets as many places as its cores and memory fit,
 # less the room kept for its owner (1 core and 1024 MB by default).
@@ -106,18 +106,36 @@ runner-up machine add big --ssh ci@big --provider kvm \
     --image /home/ci/noble-server-cloudimg-amd64.img --place-cores 4 --place-memory 8192
 # A Mac: two tart places of 4 cores and 8 GB by default.
 runner-up machine add mac --ssh you@mac --image ghcr.io/cirruslabs/macos-sequoia-base:latest
+```
 
+`machine add` has each place serve every pool the setup lists, so the Mac's
+places now serve `my-linux` too, and a Linux job could run on macOS. Give the
+Mac a pool of its own in the setup file (see [Setting up](#setting-up) for
+where it is):
+
+1. Add `{"label": "my-mac"}` to `"pools"`.
+2. In each of the Mac's places, `mac-1` and `mac-2`, change `"pools"` to
+   `["my-mac"]`.
+
+Then check the setup and start the coordinator:
+
+```sh
 runner-up check-config
 runner-up serve
 ```
 
-Then ask for the pool in a workflow:
+Then ask for a pool in a workflow:
 
 ```yaml
 jobs:
   build:
-    runs-on: my-pool
+    runs-on: my-linux
+  build-mac:
+    runs-on: my-mac
 ```
+
+A machine you add later serves both pools unless you add it with
+`--pool my-linux` or `--pool my-mac`.
 
 ## How it works
 
