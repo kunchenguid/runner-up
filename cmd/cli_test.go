@@ -13,6 +13,7 @@ import (
 
 	"github.com/kunchenguid/runner-up/internal/agent"
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (the fix that gave each command its own flags, clean -h exits and
@@ -26,7 +27,7 @@ import (
 func cliRun(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	c := exec.Command(runnerUp(t), args...)
+	c := testrun.Command(t, runnerUp(t), args...)
 	c.Stdout, c.Stderr = &out, &errOut
 	err := c.Run()
 	var exit *exec.ExitError

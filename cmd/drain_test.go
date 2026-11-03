@@ -16,6 +16,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/agent"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // drainBoxes gives the e2e machine three Docker places: box-1 and box-2 for
@@ -46,7 +47,7 @@ func (e *e2e) drain(args ...string) *drainCLI {
 		e.t.Fatal(err)
 	}
 	defer f.Close()
-	cmd := exec.Command(runnerUp(e.t), append([]string{"drain", "--config", e.config}, args...)...)
+	cmd := testrun.Command(e.t, runnerUp(e.t), append([]string{"drain", "--config", e.config}, args...)...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = e.env, f, f
 	if err := cmd.Start(); err != nil {
 		e.t.Fatal(err)
@@ -75,7 +76,7 @@ func (d *drainCLI) wait(t *testing.T) int {
 
 func (e *e2e) status() string {
 	e.t.Helper()
-	out, err := exec.Command(runnerUp(e.t), "status", "--config", e.config).CombinedOutput()
+	out, err := testrun.Command(e.t, runnerUp(e.t), "status", "--config", e.config).CombinedOutput()
 	if err != nil {
 		e.t.Fatalf("status failed: %v\n%s", err, out)
 	}
@@ -255,7 +256,7 @@ func TestDrainRefusesWhatItCannotDo(t *testing.T) {
 		{[]string{"--place", "box-1", "--job", "build", "--job", "build", "--label", "check", "--minutes", "5"},
 			`job "build" is named twice; each name admits one job`},
 	} {
-		cmd := exec.Command(runnerUp(t), append([]string{"drain", "--config", path}, c.args...)...)
+		cmd := testrun.Command(t, runnerUp(t), append([]string{"drain", "--config", path}, c.args...)...)
 		out, err := cmd.CombinedOutput()
 		if code := agent.ExitCode(err); code != 2 || !strings.Contains(string(out), c.says) {
 			t.Errorf("drain %v exited %d saying %q, want 2 saying %q", c.args, code, out, c.says)

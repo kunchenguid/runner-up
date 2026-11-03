@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -19,6 +18,8 @@ import (
 	"github.com/kunchenguid/runner-up/internal/testbin"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 func TestMain(m *testing.M) { testbin.Main(m) }
@@ -48,7 +49,7 @@ func TestTheServiceSetsUpOnceAndUpdatesItselfFromASignedRelease(t *testing.T) {
 	older, newer := build("v9.0.1"), build("v9.0.2")
 	user := os.Getenv("USERNAME")
 	run := func(stdin []byte, program string, args ...string) (string, error) {
-		cmd := exec.Command(program, args...)
+		cmd := testrun.Command(t, program, args...)
 		cmd.Stdin = bytes.NewReader(stdin)
 		out, err := cmd.CombinedOutput()
 		return string(out), err

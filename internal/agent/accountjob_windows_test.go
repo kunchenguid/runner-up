@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/kunchenguid/runner-up/internal/testrun"
 	"golang.org/x/sys/windows"
 )
 
@@ -66,7 +67,7 @@ func TestAccountJobStartScriptRunsOnlyThePinnedRunner(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		cmd := exec.Command(powershell)
+		cmd := testrun.Command(t, powershell)
 		cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: jobCommandLine(powershell, folder)}
 		cmd.Env = env
 		cmd.Stdin = strings.NewReader(registration + "\n")

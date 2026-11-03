@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -24,6 +23,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/agent"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/release"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Updating runner-up"): the setup names a runner-up version
@@ -43,7 +43,7 @@ import (
 func testRelease(t *testing.T, version string) (program, archive []byte) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "runner-up")
-	out, err := exec.Command("go", "test", "-c", "-o", path,
+	out, err := testrun.Command(t, "go", "test", "-c", "-o", path,
 		"-ldflags", "-X github.com/kunchenguid/runner-up/internal/version.Version="+version, ".").CombinedOutput()
 	if err != nil {
 		t.Fatalf("go test -c: %s", out)
@@ -107,7 +107,7 @@ func (e *e2e) serveAs(program string) {
 		e.t.Fatal(err)
 	}
 	defer out.Close()
-	cmd := exec.Command(program, "serve", "--config", e.config)
+	cmd := testrun.Command(e.t, program, "serve", "--config", e.config)
 	cmd.Env = append(slices.Clone(e.env), serveEnv+"="+e.config, actionsEnv+"="+e.actions.URL, selfEnv+"="+runnerUp(e.t))
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Start(); err != nil {

@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // usageWorkload is the job TestUsageObservesActualJobProcesses measures:
@@ -51,7 +52,7 @@ func init() {
 // coordinator can consume. Stopping readings completes without leaving a
 // sampler behind.
 func TestUsageObservesActualJobProcesses(t *testing.T) {
-	cmd := exec.Command(os.Args[0])
+	cmd := testrun.Command(t, os.Args[0])
 	cmd.Env = append(os.Environ(), "RUNNER_UP_USAGE_WORKLOAD=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	in, err := cmd.StdinPipe()
@@ -127,7 +128,7 @@ func TestUsageReportsUnavailableAndShortReadings(t *testing.T) {
 				<-ctx.Done()
 				return rows, err
 			})
-			<-read
+			testrun.Receive(t, read, "the first reading")
 			u := finish()
 			var output strings.Builder
 			writeUsage(&output, u)

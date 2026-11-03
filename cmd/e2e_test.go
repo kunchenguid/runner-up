@@ -27,6 +27,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/lock"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "How it works", "Pull requests from forks" and "Running as a
@@ -379,7 +380,7 @@ func (e *e2e) serve() {
 		e.t.Fatal(err)
 	}
 	defer out.Close()
-	cmd := exec.Command(os.Args[0])
+	cmd := testrun.Command(e.t, os.Args[0])
 	cmd.Env = append(slices.Clone(e.env), serveEnv+"="+e.config, actionsEnv+"="+e.actions.URL, selfEnv+"="+runnerUp(e.t),
 		passesEnv+"="+filepath.Join(e.dir, "passes"))
 	cmd.Stdout, cmd.Stderr = out, out
@@ -631,7 +632,7 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	pid, agentPID := e.container()
 	run, _ := e.placeRun()
 	for _, p := range []int{run.PID, agentPID} {
-		args, _ := exec.Command("ps", "-ww", "-o", "args=", "-p", strconv.Itoa(p)).Output()
+		args, _ := testrun.Command(t, "ps", "-ww", "-o", "args=", "-p", strconv.Itoa(p)).Output()
 		if len(args) == 0 || strings.Contains(string(args), seen.jits[0]) {
 			t.Errorf("process %d's command line is %q", p, args)
 		}
@@ -990,7 +991,7 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 	box.Image = "runner-2404:latest"
 	box.PoolImages = map[string]string{"ru-linux-2604": "runner-2604:latest"}
 	e.save()
-	checked, err := exec.Command(runnerUp(t), "check-config", "--config", e.config).CombinedOutput()
+	checked, err := testrun.Command(t, runnerUp(t), "check-config", "--config", e.config).CombinedOutput()
 	wantChecked := "ok: 1 targets, 2 pools, 1 machines, 1 places\n" +
 		"box (ci@box): box-1 docker 2 cores 4096 MB; places may reserve 3 of 4 cores and 7168 of 8192 MB, all at once\n"
 	if err != nil || string(checked) != wantChecked {
@@ -1011,7 +1012,7 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 	// The 24.04 job arrives while the only place is busy: it waits.
 	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(older, scaleset.MessageTypeJobAvailable)})
 	status := func() string {
-		out, _ := exec.Command(runnerUp(t), "status", "--config", e.config).Output()
+		out, _ := testrun.Command(t, runnerUp(t), "status", "--config", e.config).Output()
 		return string(out)
 	}
 	e.eventually("the 24.04 job waits for the place", func() bool { return slices.Contains(e.waiting(), "verify / linux") })
@@ -1090,7 +1091,7 @@ func TestPlaceRunnerRefusesAPoolItsPlaceDoesNotServe(t *testing.T) {
 		if pool != "" {
 			args = append(args, "--pool", pool)
 		}
-		cmd := exec.Command(runnerUp(t), args...)
+		cmd := testrun.Command(t, runnerUp(t), args...)
 		cmd.Env = e.env
 		cmd.Stdin = strings.NewReader("stand-in-registration\n")
 		out, err := cmd.CombinedOutput()

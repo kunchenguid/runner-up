@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/runner-up/internal/testrun"
 	"golang.org/x/sys/windows"
 )
 
@@ -85,7 +86,7 @@ func TestTheAgentHearsItsJobWhileConnectedAndTheServiceHearsItLeave(t *testing.T
 
 	// The coordinator stopped the place: the agent leaves while the job runs.
 	leave()
-	if err := <-asked; err != nil {
+	if err := testrun.Receive(t, asked, "the agent to end once it left"); err != nil {
 		t.Errorf("a job stopped by the agent leaving failed the agent: %v", err)
 	}
 	deadline := time.Now().Add(20 * time.Second)

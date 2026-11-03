@@ -14,6 +14,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/lock"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Borrowing a virtual Mac"): the real borrow CLI waits beside
@@ -199,7 +200,7 @@ func startBorrow(t *testing.T, e *e2e, script string) (*exec.Cmd, string) {
 	if err := os.WriteFile(filepath.Join(bin, "borrow-check"), []byte("#!/bin/sh\n"+script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(runnerUp(t), "borrow", "--config", e.config, "--pool", "ru-linux", "--label", "native check", "--minutes", "20", "--", "borrow-check")
+	cmd := testrun.Command(t, runnerUp(t), "borrow", "--config", e.config, "--pool", "ru-linux", "--label", "native check", "--minutes", "20", "--", "borrow-check")
 	cmd.Env = append(append([]string{}, e.env...), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cmd.Stdin = strings.NewReader("hello\n")
 	cmd.Stdout, cmd.Stderr = out, out
@@ -212,7 +213,7 @@ func startBorrow(t *testing.T, e *e2e, script string) (*exec.Cmd, string) {
 func readBorrowOutput(path string) string { b, _ := os.ReadFile(path); return string(b) }
 func borrowStatus(t *testing.T, e *e2e) string {
 	t.Helper()
-	b, err := exec.Command(runnerUp(t), "status", "--config", e.config).CombinedOutput()
+	b, err := testrun.Command(t, runnerUp(t), "status", "--config", e.config).CombinedOutput()
 	if err != nil {
 		t.Fatalf("status: %v %s", err, b)
 	}
@@ -236,7 +237,7 @@ func TestBorrowCLIRejectsInvalidInputs(t *testing.T) {
 		{[]string{"--pool", "ru-linux", "--label", "check", "--minutes", "20", "--", "true"}, "pool has no tart place"},
 	} {
 		args := append([]string{"borrow", "--config", e.config}, tc.args...)
-		cmd := exec.Command(runnerUp(t), args...)
+		cmd := testrun.Command(t, runnerUp(t), args...)
 		b, err := cmd.CombinedOutput()
 		if err == nil || cmd.ProcessState.ExitCode() != 2 || strings.TrimSpace(string(b)) != tc.why {
 			t.Fatalf("borrow %v: %v %q, want exit 2 and %q", tc.args, err, b, tc.why)

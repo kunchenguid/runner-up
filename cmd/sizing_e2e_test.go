@@ -18,6 +18,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/testbin"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Job sizes and readings"): a size selected for a pool reaches
@@ -108,7 +109,7 @@ echo 'Job sized host check completed with result: Succeeded'
 	if code := e.stop(); code != 0 {
 		t.Fatalf("the coordinator exited %d on SIGTERM\n%s", code, e.logs())
 	}
-	result, err := exec.Command(runnerUp(t), "usage", "--config", e.config).CombinedOutput()
+	result, err := testrun.Command(t, runnerUp(t), "usage", "--config", e.config).CombinedOutput()
 	if err != nil || !strings.Contains(string(result), fmt.Sprintf("configured %d cores, %d MB", pool.Cores, pool.MemoryMB)) || !strings.Contains(string(result), "process-group") || strings.Contains(string(result), "unavailable") {
 		t.Fatalf("usage: %v\n%s", err, result)
 	}

@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // requiredCheckContext is the status check context this repository's main
@@ -159,7 +161,7 @@ func runGate(t *testing.T, pr pullRequest) (bool, string) {
 		t.Fatalf("resolve repo root: %v", err)
 	}
 
-	cmd := exec.Command(bash, gateScriptPath)
+	cmd := testrun.Command(t, bash, gateScriptPath)
 	cmd.Dir = root
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "PR_") {
@@ -420,7 +422,7 @@ esac
 		}
 	}
 
-	cmd := exec.Command(bash, "-e", "-c", step.run)
+	cmd := testrun.Command(t, bash, "-e", "-c", step.run)
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
 		if _, overridden := values[name]; !overridden && !strings.HasPrefix(name, "PR_") {

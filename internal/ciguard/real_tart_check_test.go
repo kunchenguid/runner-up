@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (CONTRIBUTING.md, "Before a release"): CI installs no Tart, so the
@@ -48,7 +50,7 @@ func TestRealTartCheckRunsEveryRealTartTestAndFailsWithoutTart(t *testing.T) {
 	if onPath("tart", path) {
 		t.Skip("Tart is installed in /usr/bin or /bin")
 	}
-	cmd := exec.Command("make", "test-real-tart")
+	cmd := testrun.Command(t, "make", "test-real-tart")
 	cmd.Env = append(withoutEnv(os.Environ(), "PATH", "RUNNER_UP_REAL_TART"), "PATH="+path)
 	out, err := cmd.CombinedOutput()
 	if err == nil {

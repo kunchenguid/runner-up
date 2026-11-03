@@ -3,7 +3,6 @@ package coordinator
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -13,6 +12,8 @@ import (
 	"github.com/kunchenguid/runner-up/internal/quote"
 	releases "github.com/kunchenguid/runner-up/internal/release"
 	"golang.org/x/sys/windows"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 func longPath(t *testing.T, path string) string {
@@ -46,7 +47,7 @@ func TestAWindowsMachineKeepsTheAgentSentOnItsInput(t *testing.T) {
 	local := longPath(t, t.TempDir())
 	send := func(prog []byte, sum string) (string, error) {
 		line, _ := agentCopy(config.Machine{Name: "pc", OS: "windows", SSH: []string{"runner@pc"}}, "v9.0.2", sum)
-		cmd := exec.Command(filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"))
+		cmd := testrun.Command(t, filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"))
 		// As Windows' OpenSSH server starts a command: cmd.exe /c and the line.
 		cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: "cmd.exe /c " + line}
 		cmd.Env = append(os.Environ(), "LOCALAPPDATA="+local)

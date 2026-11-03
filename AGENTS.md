@@ -11,6 +11,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 - `internal/cli/` (how every command reads its flags), `internal/config/` (the setup file), `internal/plan/` (order rules), `internal/release/` (release archives and their signature), `internal/lock/`, `internal/proc/`, `internal/quote/`, `internal/version/`
 - `internal/ciguard/` - tests that guard the CI, release and install files
 - `internal/testbin/` builds runner-up once per test binary for tests that run it as a program
+- `internal/testrun/` - tests start every program with `testrun.Command` and give every wait a deadline, such as `testrun.Receive` or `testrun.Wait`, so a hang fails with its cause and nothing a test started outlives it
 
 ## Commands
 

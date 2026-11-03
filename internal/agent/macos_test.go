@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/testbin"
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Macs", "Pull requests from forks" and "Trade-offs"). The
@@ -206,7 +207,7 @@ type agent struct {
 func (m *mac) run(jit string, args ...string) *agent {
 	m.t.Helper()
 	argv := append([]string{"agent", "run", "--state-dir", m.state}, args...)
-	a := &agent{cmd: exec.Command(runnerUpWithFakeRunner(m.t), argv...), done: make(chan int, 1)}
+	a := &agent{cmd: testrun.Command(m.t, runnerUpWithFakeRunner(m.t), argv...), done: make(chan int, 1)}
 	a.cmd.Env = m.env
 	in, err := a.cmd.StdinPipe()
 	if err != nil {
@@ -296,7 +297,7 @@ func (m *mac) vm(name string) string { return filepath.Join(m.dir, "tart", "vms"
 // says whether it allowed the job.
 func guard(t *testing.T, hook, event string) bool {
 	t.Helper()
-	cmd := exec.Command("bash", hook)
+	cmd := testrun.Command(t, "bash", hook)
 	cmd.Env = append(os.Environ(), "GITHUB_EVENT_PATH="+filepath.Join("testdata", "events", event))
 	return cmd.Run() == nil
 }
@@ -473,7 +474,7 @@ func TestHostPlaceRunsOnTheMachineAndEndsEverythingTheJobStarted(t *testing.T) {
 	// runner got it above; no process on this computer, the runner and the
 	// processes the agent started included, has it among its arguments.
 	runnerPID := m.pid("runner.pid")
-	all, err := exec.Command("ps", "-A", "-ww", "-o", "pid=,args=").Output()
+	all, err := testrun.Command(t, "ps", "-A", "-ww", "-o", "pid=,args=").Output()
 	if err != nil || !regexp.MustCompile(`(?m)^\s*`+strconv.Itoa(runnerPID)+`\s`).Match(all) {
 		t.Fatalf("ps did not list the runner %d: %v", runnerPID, err)
 	}
@@ -513,7 +514,7 @@ func TestHostPlaceLeftByAKilledAgentIsCleanedUp(t *testing.T) {
 	m.exit(a)
 	m.touch("ping")
 	m.eventually("the runner left behind answers a ping after the agent ended", nil, func() bool { return exists(filepath.Join(m.dir, "pongs")) })
-	clean := exec.Command(runnerUpWithFakeRunner(t), "agent", "clean", "--provider", "host", "--place", "mac-host", "--state-dir", m.state)
+	clean := testrun.Command(t, runnerUpWithFakeRunner(t), "agent", "clean", "--provider", "host", "--place", "mac-host", "--state-dir", m.state)
 	clean.Env = m.env
 	if out, err := clean.CombinedOutput(); err != nil {
 		t.Fatalf("agent clean: %v %s", err, out)

@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 // Intent (README, "Job sizes and readings"): a tart guest's reading stays
@@ -24,7 +25,7 @@ func TestGuestReadingStaysWithinTheGuest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestUsageWorkload$")
+	cmd := testrun.Command(t, os.Args[0], "-test.run=^TestUsageWorkload$")
 	cmd.Env = append(os.Environ(), "RUNNER_UP_USAGE_WORKLOAD=1")
 	in, err := cmd.StdinPipe()
 	if err != nil {
