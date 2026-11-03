@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/agent"
+	"github.com/kunchenguid/runner-up/internal/cli"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/lock"
@@ -59,9 +60,14 @@ Running:
                 --place ID --job NAME [--repo OWNER/NAME] --label TEXT --minutes N
 
 On each machine (run by the coordinator):
-  agent probe|vms|run|clean
-  fork-guard    the runner's job-started hook
-  version
+  agent probe            show the machine's cores, memory and providers
+  agent vms              list the macOS virtual machines running here
+  agent run|clean        run one job in a place, or clean up after one
+  agent measure          run a tart guest's runner and sample its use
+  agent service-version  show the version of the Windows service here
+  agent update-service   hand the Windows service here a signed release
+  fork-guard             the runner's job-started hook
+  version                show this program's version
 
 On a Windows machine:
   setup         set it up for places, as an administrator, once
@@ -70,11 +76,27 @@ On a Windows machine:
 Every command but agent, fork-guard, setup, service and version takes --config FILE;
 the default is ` + "%s\n"
 
+var aboutCommand = map[string]string{
+	"fork-guard": "the runner's job-started hook: it stops a job from another repository's pull request",
+	"service":    "the Windows service that runner-up setup installs; Windows' service manager starts it",
+	"version":    "show this program's version",
+}
+
 // Main runs the runner-up command line named by os.Args.
 func Main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, usage, config.DefaultConfigPath())
 		os.Exit(2)
+	}
+	// fork-guard, service and version take nothing: they say what they are
+	// on -h and refuse anything else.
+	switch os.Args[1] {
+	case "fork-guard", "service", "version":
+		fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
+		fs.Usage = func() { fmt.Fprintf(fs.Output(), "usage: runner-up %s\n%s\n", os.Args[1], aboutCommand[os.Args[1]]) }
+		if code, stop := cli.Parse(fs, os.Args[2:], false); stop {
+			os.Exit(code)
+		}
 	}
 	switch os.Args[1] {
 	case "agent":
@@ -113,18 +135,33 @@ func Main() {
 	case "init":
 		os.Exit(initMain(os.Args[2:]))
 	case "machine":
-		if len(os.Args) < 3 || os.Args[2] != "add" {
-			fmt.Fprintln(os.Stderr, "usage: runner-up machine add NAME --ssh DESTINATION [flags]")
+		switch {
+		case cli.Help(os.Args[2:]):
+			fmt.Println(machineAddUsage)
+			return
+		case len(os.Args) < 3 || os.Args[2] != "add":
+			fmt.Fprintln(os.Stderr, machineAddUsage)
 			os.Exit(2)
 		}
 		os.Exit(machineAddMain(os.Args[3:]))
 	}
-	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
+	name, args := os.Args[1], os.Args[2:]
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	configPath := fs.String("config", config.DefaultConfigPath(), "setup file")
-	borrowID := fs.String("borrow", "", "borrow request (run-borrow)")
-	placeID := fs.String("place", "", "place to run (run-place)")
-	pool := fs.String("pool", "", "pool of the job the place runs (run-place)")
-	fs.Parse(os.Args[2:])
+	// Place runners and borrows are started by the coordinator, never by a
+	// person; only they take these.
+	var borrowID, placeID, pool *string
+	switch name {
+	case "run-place":
+		placeID = fs.String("place", "", "place to run")
+		pool = fs.String("pool", "", "pool of the job the place runs")
+	case "run-borrow":
+		placeID = fs.String("place", "", "place to run the borrow in")
+		borrowID = fs.String("borrow", "", "borrow request")
+	}
+	if code, stop := cli.Parse(fs, args, false); stop {
+		os.Exit(code)
+	}
 	cfg, err := config.LoadConfig(*configPath)
 	if err == nil {
 		_, err = plan.ParseOrder(cfg.Order)
@@ -137,7 +174,7 @@ func Main() {
 	case "serve":
 		os.Exit(serve(cfg, *configPath))
 	case "update":
-		os.Exit(updateProgram(cfg, *configPath, os.Stdout))
+		os.Exit(updateProgram(cfg, *configPath, os.Stdout, os.Stderr))
 	case "run-borrow":
 		os.Exit(coordinator.RunBorrow(cfg, *placeID, *borrowID))
 	case "run-place":
@@ -145,7 +182,7 @@ func Main() {
 	case "status":
 		os.Exit(status(cfg, os.Stdout))
 	case "usage":
-		os.Exit(usageReport(cfg, os.Stdout))
+		os.Exit(usageReport(cfg, os.Stdout, os.Stderr))
 	case "check-config":
 		os.Exit(checkConfig(cfg, os.Stdout))
 	}
@@ -302,14 +339,14 @@ func applySetup(svc *coordinator.Service, sessions *coordinator.Sessions, up *co
 // updateProgram is `runner-up update`: it fetches and checks the setup's
 // release and points program/current under the state folder at it, for a
 // supervisor to start, as a running coordinator would.
-func updateProgram(cfg *config.Config, configPath string, w io.Writer) int {
+func updateProgram(cfg *config.Config, configPath string, w, errw io.Writer) int {
 	if cfg.Release == nil {
-		fmt.Fprintln(w, "the setup names no release; add one (see the README's Updating runner-up)")
+		fmt.Fprintln(errw, "the setup names no release; add one (see the README's Updating runner-up)")
 		return 2
 	}
 	self, err := os.Executable()
 	if err != nil {
-		fmt.Fprintln(w, err)
+		fmt.Fprintln(errw, err)
 		return 1
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -318,7 +355,7 @@ func updateProgram(cfg *config.Config, configPath string, w io.Writer) int {
 	defer cancel()
 	current, err := p.Ready(ctx, cfg.Release)
 	if err != nil {
-		fmt.Fprintln(w, err)
+		fmt.Fprintln(errw, err)
 		return 1
 	}
 	fmt.Fprintf(w, "runner-up %s is ready; a supervisor starts it as %s serve --config %s\n", cfg.Release.Version, current, configPath)
@@ -469,10 +506,10 @@ func checkConfig(cfg *config.Config, w io.Writer) int {
 	return 0
 }
 
-func usageReport(cfg *config.Config, w io.Writer) int {
+func usageReport(cfg *config.Config, w, errw io.Writer) int {
 	records, err := coordinator.ReadUsage(cfg)
 	if err != nil {
-		fmt.Fprintln(w, "could not read resource readings:", err)
+		fmt.Fprintln(errw, "could not read resource readings:", err)
 		return 1
 	}
 	fmt.Fprintln(w, "Sampled peaks, not guaranteed maxima; CPU is cores, memory is MB.")

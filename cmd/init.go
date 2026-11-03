@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/agent"
+	"github.com/kunchenguid/runner-up/internal/cli"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 )
@@ -40,8 +41,8 @@ func initMain(args []string) int {
 	group := fs.String("runner-group", "", "the organization runner group; Default when empty")
 	gh := fs.String("gh", "gh", "the GitHub command line program")
 	force := fs.Bool("force", false, "replace an existing setup")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, stop := cli.Parse(fs, args, false); stop {
+		return code
 	}
 	if _, err := os.Stat(*configPath); err == nil && !*force {
 		fmt.Fprintf(os.Stderr, "%s already exists; add machines with runner-up machine add, or pass --force to start over\n", *configPath)
@@ -99,16 +100,17 @@ func initSetup(ctx context.Context, cfg *config.Config, api *coordinator.GithubA
 	return nil
 }
 
+const machineAddUsage = "usage: runner-up machine add NAME --ssh DESTINATION [flags]"
+
 // machineAddMain is `runner-up machine add`: it reaches the machine over SSH,
 // installs the agent there when it is missing, reads the machine's cores,
 // memory and providers, and adds it with as many places as its budget fits.
 func machineAddMain(args []string) int {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		fmt.Fprintln(os.Stderr, "usage: runner-up machine add NAME --ssh DESTINATION [flags]")
-		return 2
-	}
-	name := args[0]
 	fs := flag.NewFlagSet("machine add", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), machineAddUsage)
+		fs.PrintDefaults()
+	}
 	configPath := fs.String("config", config.DefaultConfigPath(), "setup file")
 	sshDest := fs.String("ssh", "", `the machine for ssh, with any options, such as "ci@box" or "-p 2222 ci@10.0.0.5"; empty is this machine`)
 	agent := fs.String("agent", "", "runner-up's path on the machine; runner-up on its PATH by default")
@@ -124,8 +126,17 @@ func machineAddMain(args []string) int {
 	roomMemory := fs.Int("room-memory", 1024, "memory kept for the machine's owner, in MB")
 	var pools listFlag
 	fs.Var(&pools, "pool", "a pool the places serve; every pool by default")
-	if err := fs.Parse(args[1:]); err != nil {
+	// The machine's name comes first: runner-up machine add NAME [flags].
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		if code, stop := cli.Parse(fs, args, false); stop {
+			return code
+		}
+		fs.Usage()
 		return 2
+	}
+	name := args[0]
+	if code, stop := cli.Parse(fs, args[1:], false); stop {
+		return code
 	}
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/agent"
+	"github.com/kunchenguid/runner-up/internal/cli"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/lock"
 	"github.com/kunchenguid/runner-up/internal/plan"
@@ -68,8 +69,8 @@ func BorrowMain(args []string) int {
 	pool := fs.String("pool", "", "pool to borrow a tart place from")
 	label := fs.String("label", "", "name shown in the queue and status")
 	minutes := fs.Int("minutes", 0, "declared runtime in minutes")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, stop := cli.Parse(fs, args, true); stop {
+		return code
 	}
 	if *pool == "" || *label == "" || *minutes <= 0 || int64(*minutes) > int64((1<<63-1)/int64(time.Minute)) || len(fs.Args()) == 0 {
 		fmt.Fprintln(os.Stderr, "borrow needs --pool LABEL --label TEXT --minutes N -- COMMAND")

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/kunchenguid/runner-up/internal/cli"
 )
 
 //go:embed setup.ps1
@@ -33,8 +35,8 @@ func SetupMain(args []string) int {
 	keyFile := fs.String("ssh-key", "", "a public key file (such as the coordinator's id_ed25519.pub) to let that account sign in with")
 	fs.BoolVar(&o.SSH, "ssh", false, "turn on Windows' OpenSSH server")
 	fs.BoolVar(&o.HyperV, "hyperv", false, "turn on Hyper-V and let the account make VMs, for Hyper-V places")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, stop := cli.Parse(fs, args, false); stop {
+		return code
 	}
 	if o.User == "" {
 		fmt.Fprintln(os.Stderr, "name the account the coordinator signs in as with --user")
