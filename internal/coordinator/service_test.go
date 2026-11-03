@@ -522,8 +522,8 @@ func TestCancelledBeforeRunnerStopsTheSpareRunnerOnceGitHubRemovesIt(t *testing.
 		h.now = h.now.Add(d)
 		h.svc.Tidy(context.Background())
 	}
-	tick(10 * time.Second)
-	tick(10 * time.Second)
+	tick(h.cfg.Seconds(h.cfg.TickSeconds))
+	tick(h.cfg.Seconds(h.cfg.TickSeconds))
 	if !slices.Equal(set.removed, []int64{int64(spare.RunnerID)}) || !slices.Equal(h.launcher.stopped, []string{"box-2"}) {
 		t.Fatalf("removed %v and stopped %v, want runner %d removed and box-2 stopped, once each", set.removed,
 			h.launcher.stopped, spare.RunnerID)
@@ -534,7 +534,7 @@ func TestCancelledBeforeRunnerStopsTheSpareRunnerOnceGitHubRemovesIt(t *testing.
 	h.launcher.giveUp(t, "box-2")
 	tick(time.Minute)
 	h.svc.Place(context.Background())
-	tick(10 * time.Second)
+	tick(h.cfg.Seconds(h.cfg.TickSeconds))
 	if len(set.removed) != 1 {
 		t.Fatalf("removed %v, want the runner removed once", set.removed)
 	}
@@ -618,8 +618,8 @@ func TestIdleRunnerKeepsItsPlaceUntilGitHubRemovesIt(t *testing.T) {
 		t.Fatalf("while GitHub could not be reached removed %v and stopped %v", set.removed, h.launcher.stopped)
 	}
 	// At the next tick GitHub removes it, and its place is stopped once.
-	tick(10 * time.Second)
-	tick(10 * time.Second)
+	tick(h.cfg.Seconds(h.cfg.TickSeconds))
+	tick(h.cfg.Seconds(h.cfg.TickSeconds))
 	if !slices.Equal(set.removed, []int64{int64(first.RunnerID)}) || !slices.Equal(h.launcher.stopped, []string{"box-1"}) {
 		t.Fatalf("removed %v and stopped %v, want runner %d removed and box-1 stopped, once each", set.removed,
 			h.launcher.stopped, first.RunnerID)
@@ -630,7 +630,7 @@ func TestIdleRunnerKeepsItsPlaceUntilGitHubRemovesIt(t *testing.T) {
 	h.launcher.giveUp(t, "box-1")
 	tick(time.Second)
 	h.svc.Place(context.Background())
-	tick(10 * time.Second)
+	tick(h.cfg.Seconds(h.cfg.TickSeconds))
 	if len(set.removed) != 1 {
 		t.Fatalf("removed %v, want the runner removed once", set.removed)
 	}

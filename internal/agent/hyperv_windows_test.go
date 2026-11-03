@@ -37,12 +37,12 @@ func (p *endedPipe) Close() error                { return nil }
 
 func TestAVMTurningOffEndsItsJobNormally(t *testing.T) {
 	for _, closed := range []error{windows.ERROR_PIPE_NOT_CONNECTED, windows.ERROR_BROKEN_PIPE} {
-		p := &endedPipe{closed: closed, r: strings.NewReader(guestReady + "\nrunner-up guest: starting the runner\nrunner-up guest: the runner ended with 0\n")}
+		p := &endedPipe{closed: closed, r: strings.NewReader(guestReady + "\nrunner-up guest: starting the runner\n" + guestEnded)}
 		var out bytes.Buffer
 		if err := talkToGuest(context.Background(), p, registration, &out, 5*time.Second); err != nil {
 			t.Errorf("a VM that turned off after its job failed the place: %v", err)
 		}
-		if !strings.Contains(out.String(), "the runner ended with 0") || p.sent.String() != registration+"\n" {
+		if !strings.Contains(out.String(), guestEnded) || p.sent.String() != registration+"\n" {
 			t.Errorf("output %q, sent %q", out.String(), p.sent.String())
 		}
 	}

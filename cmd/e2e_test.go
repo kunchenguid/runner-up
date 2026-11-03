@@ -3,9 +3,12 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -504,6 +507,43 @@ func (e *e2e) busy() bool {
 	return err != nil || held
 }
 
+// heldBy says why place id is busy, as status reads it: "" when free.
+func (e *e2e) heldBy(id string) coordinator.BusyReason {
+	p, _ := e.cfg.Place(id)
+	_, why := (&coordinator.Service{Cfg: e.cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}).PlaceBusy(p)
+	return why
+}
+
+// saved is the state the coordinator last saved, which status reads.
+func (e *e2e) saved() coordinator.SavedState {
+	var st coordinator.SavedState
+	config.ReadJSON(filepath.Join(e.cfg.StateDir, "state.json"), &st)
+	return st
+}
+
+// waiting names the jobs the coordinator saved as waiting.
+func (e *e2e) waiting() []string {
+	var names []string
+	for _, j := range e.saved().Waiting {
+		names = append(names, j.Name)
+	}
+	return names
+}
+
+// statusAsRead runs runner-up status beside the coordinator and checks it
+// says what status says of the same setup and state in this process;
+// TestStatusSaysEachPlaceAndJobInOneLine owns what that is.
+func (e *e2e) statusAsRead() string {
+	e.t.Helper()
+	out := e.status()
+	var here bytes.Buffer
+	status(e.cfg, &here)
+	if out != here.String() {
+		e.t.Errorf("runner-up status said\n%s\nwant what its setup and state say\n%s", out, here.String())
+	}
+	return out
+}
+
 func (e *e2e) lines(path string) []string {
 	data, _ := os.ReadFile(path)
 	return strings.Split(strings.TrimSpace(string(data)), "\n")
@@ -599,8 +639,8 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	// The agent ran over SSH with every word quoted, and gave the container
 	// the place's share and the fork guard as its job-started hook.
 	ssh := e.lines(filepath.Join(e.dir, "ssh.log"))
-	wantRun := "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '" + runnerUp(t) +
-		"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300'"
+	wantRun := sshTo(e.cfg.Machines[0]) + " '" + runnerUp(t) +
+		"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '" + strconv.Itoa(e.cfg.BootTimeoutSeconds) + "'"
 	if !slices.Contains(ssh, wantRun) {
 		t.Errorf("ssh ran %q, want %q among them", ssh, wantRun)
 	}
@@ -634,10 +674,10 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 
 	e.startJob(pid)
 	e.eventually("the place runner sees the job start", func() bool { run, ok := e.placeRun(); return ok && run.Started })
-	out, err := exec.Command(runnerUp(t), "status", "--config", e.config).Output()
-	if err != nil || !strings.Contains(string(out), `place box-1 on box (docker, 2 cores, 4096 MB) busy (job): octo-org/app "verify / linux" running`) {
-		t.Errorf("status said %q (%v)", out, err)
+	if why := e.heldBy("box-1"); why != coordinator.BusyJob {
+		t.Errorf("box-1 is held for %q, want %q", why, coordinator.BusyJob)
 	}
+	e.statusAsRead()
 
 	// The coordinator stops; the job carries on in its place.
 	if code := e.stop(); code != 0 {
@@ -974,9 +1014,7 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 		out, _ := exec.Command(runnerUp(t), "status", "--config", e.config).Output()
 		return string(out)
 	}
-	e.eventually("the 24.04 job waits for the place", func() bool {
-		return strings.Contains(status(), `waiting octo-org/app ru-linux "verify / linux"`)
-	})
+	e.eventually("the 24.04 job waits for the place", func() bool { return slices.Contains(e.waiting(), "verify / linux") })
 	if n := len(e.registrations()); n != 1 {
 		t.Fatalf("%d containers ran while the place was busy, want 1", n)
 	}
@@ -1005,8 +1043,8 @@ func TestPlaceRunsEachJobOnItsPoolsImage(t *testing.T) {
 
 	// Each job's agent and container got its pool's image, in the one place.
 	agentRun := func(image string) string {
-		return "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '" + runnerUp(t) +
-			"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '300' '--image' '" + image + "'"
+		return sshTo(e.cfg.Machines[0]) + " '" + runnerUp(t) +
+			"' 'agent' 'run' '--provider' 'docker' '--place' 'box-1' '--cores' '2' '--memory' '4096' '--boot-timeout' '" + strconv.Itoa(e.cfg.BootTimeoutSeconds) + "' '--image' '" + image + "'"
 	}
 	var runs []string
 	for _, line := range e.lines(filepath.Join(e.dir, "ssh.log")) {

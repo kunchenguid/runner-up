@@ -74,14 +74,14 @@ func TestTheAgentHearsItsJobWhileConnectedAndTheServiceHearsItLeave(t *testing.T
 	out := &listening{lines: make(chan string, 100)}
 	asked := make(chan error, 1)
 	go func() { asked <- askService(agent, conn, runRequest("win-pc-1"), out) }()
-	running, ok := out.hear(servicePrefix + "running as rujob-")
+	running, ok := out.hear(servicePrefix + serviceRunningAs)
 	if !ok {
 		t.Fatalf("the agent, still connected while the job ran, never heard the service's running as line; it heard %q", out.heard.String())
 	}
 	if _, ok := out.hear("Running job: build"); !ok {
 		t.Fatalf("the agent, still connected while the job ran, never heard the job's output; it heard %q", out.heard.String())
 	}
-	name := strings.TrimSpace(strings.TrimPrefix(running, servicePrefix+"running as "))
+	name := strings.TrimSpace(strings.TrimPrefix(running, servicePrefix+serviceRunningAs))
 
 	// The coordinator stopped the place: the agent leaves while the job runs.
 	leave()
@@ -119,7 +119,7 @@ func TestTheAgentHearsItsJobWhileConnectedAndTheServiceHearsItLeave(t *testing.T
 	if err != nil {
 		t.Fatalf("a job that ran to its end failed the agent: %v\n%s", err, all.String())
 	}
-	for _, want := range []string{servicePrefix + "running as rujob-", "Running job: build", servicePrefix + "start script ended with 0"} {
+	for _, want := range []string{servicePrefix + serviceRunningAs, "Running job: build", servicePrefix + serviceScriptEnded + "0"} {
 		if !strings.Contains(all.String(), want) {
 			t.Errorf("the agent did not hear %q from a job that ran to its end; it heard %q", want, all.String())
 		}

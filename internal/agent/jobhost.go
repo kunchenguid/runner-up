@@ -215,6 +215,14 @@ const (
 	serviceReady   = servicePrefix + "ready"
 )
 
+// What follows servicePrefix on the lines that say where a request stands,
+// which the agent reads back in serviceAnswer.
+const (
+	serviceRunningAs   = "running as "
+	serviceScriptEnded = "start script ended with "
+	serviceUpdatingTo  = "updating to "
+)
+
 // Options are the service's settings.
 type Options struct {
 	Records string
@@ -532,7 +540,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	if err != nil {
 		fmt.Fprintf(out, "%s%v\n", servicePrefix, err)
 	} else {
-		fmt.Fprintf(out, "%sstart script ended with %d\n", servicePrefix, code)
+		fmt.Fprintf(out, "%s%s%d\n", servicePrefix, serviceScriptEnded, code)
 	}
 	return err
 }
@@ -566,7 +574,7 @@ func (s *Server) update(req JobRequest, in io.Reader, out io.Writer) error {
 		return s.refuse(out, err)
 	}
 	s.log.Info("installed a signed release; restarting as it", "version", v)
-	fmt.Fprintf(out, "%supdating to %s\n", servicePrefix, v)
+	fmt.Fprintf(out, "%s%s%s\n", servicePrefix, serviceUpdatingTo, v)
 	return nil
 }
 
@@ -628,7 +636,7 @@ func (s *Server) run(ctx context.Context, req JobRequest, out io.Writer, gone <-
 		return 0, fmt.Errorf("could not start the job as %s: %w", name, err)
 	}
 	defer job.Close()
-	fmt.Fprintf(out, "%srunning as %s\n", servicePrefix, name)
+	fmt.Fprintf(out, "%s%s%s\n", servicePrefix, serviceRunningAs, name)
 
 	relayed := make(chan struct{})
 	go func() {
@@ -826,13 +834,13 @@ func serviceAnswer(op, line string) error {
 		return errors.New(strings.TrimPrefix(line, "refused: "))
 	case op == "probe" && strings.HasPrefix(line, "ready"):
 		return errServiceDone
-	case op == "update" && strings.HasPrefix(line, "updating to "):
+	case op == "update" && strings.HasPrefix(line, serviceUpdatingTo):
 		return errServiceDone
 	case op == "clean" && strings.HasSuffix(line, " is clean"):
 		return errServiceDone
-	case op == "run" && strings.HasPrefix(line, "start script ended with "):
+	case op == "run" && strings.HasPrefix(line, serviceScriptEnded):
 		return errServiceDone
-	case op == "run" && strings.HasPrefix(line, "running as "):
+	case op == "run" && strings.HasPrefix(line, serviceRunningAs):
 		return errors.New("runner-up's service stopped answering during the job")
 	}
 	return errors.New(line)

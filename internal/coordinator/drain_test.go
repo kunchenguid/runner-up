@@ -84,7 +84,8 @@ func runnerOf(t *testing.T, cfg *config.Config, id string) PlaceRun {
 // gives the places back at once when the pair ends. A place it does not name
 // keeps placing throughout, a named job waits for the drained places rather
 // than start there, no running job is stopped, and a coordinator restart keeps
-// the drain.
+// the drain. This test owns the drain detail sentences; tests elsewhere
+// read a drain's phase and places.
 func TestDrainLetsRunningJobsFinishAdmitsThePairThenResumes(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
 	cfg := oneBox(t.TempDir())
@@ -103,7 +104,7 @@ func TestDrainLetsRunningJobsFinishAdmitsThePairThenResumes(t *testing.T) {
 		Jobs: []string{"suite", "affected-journeys"}, Minutes: 90, Queued: h.now})
 	h.feedRange(f, 1, len(f.Messages))
 	h.want(map[string]string{"box-1": verify, "box-2": pr184, "box-large": publish})
-	h.wantDrain("release", "draining", `box-1 runs octo-org/app "verify / linux"; box-2 runs octo-org/app "affected-journeys"`)
+	h.wantDrain("release", DrainDraining, `box-1 runs octo-org/app "verify / linux"; box-2 runs octo-org/app "affected-journeys"`)
 
 	// The large place serves ru-linux, and with no drain the hour-old suite
 	// would take it next. Named, the suite waits for the drained places.
@@ -114,7 +115,7 @@ func TestDrainLetsRunningJobsFinishAdmitsThePairThenResumes(t *testing.T) {
 	// A drained place stays free while the other still runs its job.
 	h.finishAndPlace("box-1")
 	h.want(map[string]string{"box-2": pr184, "box-large": release})
-	h.wantDrain("release", "draining", `box-2 runs octo-org/app "affected-journeys"`)
+	h.wantDrain("release", DrainDraining, `box-2 runs octo-org/app "affected-journeys"`)
 
 	at := h.now
 	h = newHarness(t, cfg, launcher, sets)
@@ -129,12 +130,12 @@ func TestDrainLetsRunningJobsFinishAdmitsThePairThenResumes(t *testing.T) {
 	if run := runnerOf(t, cfg, "box-2"); run.RequestID != 9104 {
 		t.Fatalf("box-2 runs request %d, want PR #186's 9104", run.RequestID)
 	}
-	h.wantDrain("release", "admitting", `"suite" starting in box-1, "affected-journeys" starting in box-2`)
+	h.wantDrain("release", DrainAdmitting, `"suite" starting in box-1, "affected-journeys" starting in box-2`)
 
 	jobReached(t, cfg, "box-1", "suite")
 	jobReached(t, cfg, "box-2", "affected-journeys")
 	h.svc.Place(context.Background())
-	h.wantDrain("release", "running", `"suite" runs in box-1, "affected-journeys" runs in box-2`)
+	h.wantDrain("release", DrainRunning, `"suite" runs in box-1, "affected-journeys" runs in box-2`)
 
 	// A later job the drained places serve waits while the pair runs, even
 	// once one of the pair has ended.
@@ -142,12 +143,12 @@ func TestDrainLetsRunningJobsFinishAdmitsThePairThenResumes(t *testing.T) {
 	h.feedRange(later, 1, 2)
 	h.finishAndPlace("box-1")
 	h.want(map[string]string{"box-2": pr184, "box-large": release})
-	h.wantDrain("release", "running", `"suite" ran in box-1, "affected-journeys" runs in box-2`)
+	h.wantDrain("release", DrainRunning, `"suite" ran in box-1, "affected-journeys" runs in box-2`)
 
 	// The pair has ended: the later job takes a freed place in the same pass.
 	h.finishAndPlace("box-2")
 	h.want(map[string]string{"box-1": "octo-org/app linux", "box-large": release})
-	h.wantDrain("release", "done", `"suite" ran in box-1, "affected-journeys" ran in box-2; placement resumed`)
+	h.wantDrain("release", DrainDone, `"suite" ran in box-1, "affected-journeys" ran in box-2; placement resumed`)
 	if len(launcher.stopped) != 0 {
 		t.Fatalf("stopped %v, want no running job stopped", launcher.stopped)
 	}
@@ -209,7 +210,7 @@ func TestDrainAdmitsOneJobPerNameAndCountsGitHubsPick(t *testing.T) {
 	box1, box2 := runnerOf(t, h.cfg, "box-1"), runnerOf(t, h.cfg, "box-2")
 	h.handle("octo-org/app", "ru-linux", started(box2.RunnerName, jobs[0].JobMessageBase))
 	h.handle("octo-org/app", "ru-linux", started(box1.RunnerName, jobs[1].JobMessageBase))
-	h.wantDrain("release", "running", `"verify / linux" runs in box-2, "affected-journeys" runs in box-1`)
+	h.wantDrain("release", DrainRunning, `"verify / linux" runs in box-2, "affected-journeys" runs in box-1`)
 
 	// PR #186's job, named the same, waits for the drain to end.
 	h.launcher.finish(t, "box-1")
@@ -237,9 +238,9 @@ func TestDrainStopsWaitingForANamedJobThatStartedElsewhere(t *testing.T) {
 	// GitHub gives the large place's runner PR #184's job.
 	jobs := f.Messages[0].Message.JobAvailableMessages
 	h.handle("octo-org/app", "ru-linux", started(runnerOf(t, h.cfg, "box-large").RunnerName, jobs[1].JobMessageBase))
-	h.wantDrain("release", "draining", `box-1 runs octo-org/app "verify / linux"`)
+	h.wantDrain("release", DrainDraining, `box-1 runs octo-org/app "verify / linux"`)
 	h.finishAndPlace("box-1")
-	h.wantDrain("release", "done", `"affected-journeys" started in box-large, outside the drain; placement resumed`)
+	h.wantDrain("release", DrainDone, `"affected-journeys" started in box-large, outside the drain; placement resumed`)
 }
 
 // Intent (README, "Draining places": on a machine whose places share its cores

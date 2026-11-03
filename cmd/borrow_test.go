@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
@@ -37,8 +38,8 @@ exit 23`
 	e.eventually("borrow reports its queue position", func() bool { return strings.Contains(readBorrowOutput(output), "position 1") })
 	busy.Close()
 	e.eventually("command starts in borrowed place", func() bool { _, err := os.Stat(filepath.Join(e.dir, "vm-live")); return err == nil })
-	if status := borrowStatus(t, e); !strings.Contains(status, `busy (borrow): borrow "native check"`) {
-		t.Fatalf("status: %s", status)
+	if run, _ := e.runIn("box-1"); e.heldBy("box-1") != coordinator.BusyBorrow || run.JobName != "native check" {
+		t.Fatalf("box-1 is held for %q by %q, want the borrow \"native check\"\n%s", e.heldBy("box-1"), run.JobName, borrowStatus(t, e))
 	}
 	if got := e.stop(); got != 0 {
 		t.Fatalf("stop=%d", got)
@@ -48,7 +49,7 @@ exit 23`
 		t.Fatal("restart lost borrow lock")
 	}
 	e.serve()
-	e.eventually("new service sees borrow", func() bool { return strings.Contains(borrowStatus(t, e), "busy (borrow)") })
+	e.eventually("new service sees borrow", func() bool { return e.heldBy("box-1") == coordinator.BusyBorrow })
 	os.WriteFile(filepath.Join(e.dir, "borrow-done"), nil, 0600)
 	if err := client.Wait(); err == nil || client.ProcessState.ExitCode() != 23 {
 		t.Fatalf("exit=%v output=%s", err, readBorrowOutput(output))

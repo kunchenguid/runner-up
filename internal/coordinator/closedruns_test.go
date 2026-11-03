@@ -6,8 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,12 +78,12 @@ func TestJobOfARunGitHubClosedIsForgotten(t *testing.T) {
 		// coordinator, as when a session ends before it is delivered. GitHub
 		// takes an assigned job no runner took back after five minutes, so
 		// ten quiet minutes are suspect.
-		{"assigned, its cancellation lost", 5, 10 * time.Minute},
+		{"assigned, its cancellation lost", 5, quietAssigned},
 		// GitHub took the assignment back, then the run was cancelled: GitHub
 		// assigns it to nothing and says nothing more. A taken-back job of a
 		// long queue can wait quietly for its next assignment, and no runner
 		// starts for it, so only an hour is suspect.
-		{"taken back, then cancelled", 4, time.Hour},
+		{"taken back, then cancelled", 4, quietTakenBack},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			answers := &runAnswers{closed: true}
@@ -124,10 +128,10 @@ func TestJobOfAnOpenRunWaitsAndIsAskedAboutRarely(t *testing.T) {
 		to             int
 		quiet, recheck time.Duration
 	}{
-		{"assigned, GitHub says the run is open", open(), 5, 10 * time.Minute, 15 * time.Minute},
-		{"assigned, GitHub does not answer", unanswered(), 5, 10 * time.Minute, 15 * time.Minute},
-		{"taken back, GitHub says the run is open", open(), 4, time.Hour, time.Hour},
-		{"taken back, GitHub does not answer", unanswered(), 4, time.Hour, time.Hour},
+		{"assigned, GitHub says the run is open", open(), 5, quietAssigned, recheckAssigned},
+		{"assigned, GitHub does not answer", unanswered(), 5, quietAssigned, recheckAssigned},
+		{"taken back, GitHub says the run is open", open(), 4, quietTakenBack, recheckTakenBack},
+		{"taken back, GitHub does not answer", unanswered(), 4, quietTakenBack, recheckTakenBack},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, last, free := quietJob(t, tc.to, tc.answers)
@@ -175,10 +179,10 @@ func TestJobAssignedAgainWhileItsRunIsAskedAboutWaits(t *testing.T) {
 	again := f.Messages[2].Message.JobAssignedMessages[0].JobMessageBase
 	answers.during = func() {
 		h.svc.mu.Lock()
-		h.svc.waitLocked(jobOf("octo-org/app", "ru-proof", again, true, last.Add(10*time.Minute+time.Second)))
+		h.svc.waitLocked(jobOf("octo-org/app", "ru-proof", again, true, last.Add(quietAssigned+time.Second)))
 		h.svc.mu.Unlock()
 	}
-	h.now = last.Add(10 * time.Minute)
+	h.now = last.Add(quietAssigned)
 	h.svc.Place(context.Background())
 	if len(answers.asked) != 1 || len(h.svc.waiting) != 1 {
 		t.Fatalf("asked %v, waiting %v; want one question and the job assigned again waiting", answers.asked, h.svc.waiting)
@@ -198,7 +202,7 @@ func TestJobWithARunnerIsNeverAskedAbout(t *testing.T) {
 	h.want(map[string]string{"box-1": proofJob})
 
 	// Its runner lives, waiting for the job, past the quiet minutes.
-	h.now = f.Messages[0].At.Add(11 * time.Minute)
+	h.now = f.Messages[0].At.Add(quietAssigned + time.Minute)
 	h.svc.Place(context.Background())
 	first := f.Messages[0].Message.JobAssignedMessages[0]
 	if _, ok := h.svc.acquired[plan.RunKey("octo-org/app", "ru-proof", first.WorkflowRunID, first.JobDisplayName)]; !ok || len(answers.asked) != 0 {
@@ -259,13 +263,13 @@ func TestRunReadsAreBoundedPerPassAndPerHour(t *testing.T) {
 		msg.JobAssignedMessages[0].WorkflowRunID = proofRun + i
 		h.handle("octo-org/app", "ru-proof", &msg)
 	}
-	h.now = h.now.Add(10 * time.Minute)
+	h.now = h.now.Add(quietAssigned)
 	h.svc.Place(context.Background())
 	if len(answers.asked) != runReadsPerPass {
 		t.Fatalf("one pass asked about %d runs, want %d", len(answers.asked), runReadsPerPass)
 	}
 	start := h.now
-	for h.now.Sub(start) < 59*time.Minute {
+	for h.now.Sub(start) < runReadsWindow-time.Minute {
 		h.now = h.now.Add(time.Minute)
 		h.svc.Place(context.Background())
 		h.svc.Place(context.Background())
@@ -273,12 +277,50 @@ func TestRunReadsAreBoundedPerPassAndPerHour(t *testing.T) {
 	if len(answers.asked) != runReadsPerHour {
 		t.Fatalf("an hour asked %d times, want %d", len(answers.asked), runReadsPerHour)
 	}
-	h.now = start.Add(time.Hour)
+	h.now = start.Add(runReadsWindow)
 	h.svc.Place(context.Background())
 	if len(answers.asked) != runReadsPerHour+runReadsPerPass {
 		t.Fatalf("the next hour's first pass asked %d times in all, want %d", len(answers.asked), runReadsPerHour+runReadsPerPass)
 	}
 	if len(h.svc.waiting) != 70 {
 		t.Fatalf("%d jobs waiting, want all seventy", len(h.svc.waiting))
+	}
+}
+
+// Intent (README.md, "When GitHub closes a job"): the README's quiet times,
+// recheck times and read bounds are the coordinator's. This test owns those
+// numbers; the other tests here use the constants.
+func TestClosedRunTimesAreTheReadmes(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(string(readme)), " ")
+	words := map[int]string{1: "one", 5: "five", 10: "ten", 15: "fifteen", 30: "thirty", 60: "sixty"}
+	number := func(n int) string {
+		if w, ok := words[n]; ok {
+			return w
+		}
+		return strconv.Itoa(n)
+	}
+	spoken := func(d time.Duration) string {
+		switch {
+		case d == time.Hour:
+			return "an hour"
+		case d%time.Hour == 0:
+			return number(int(d/time.Hour)) + " hours"
+		default:
+			return number(int(d/time.Minute)) + " minutes"
+		}
+	}
+	every := func(d time.Duration) string { return "every " + strings.TrimPrefix(spoken(d), "an ") }
+	for _, want := range []string{
+		fmt.Sprintf("said nothing for %s about a job it assigned, or for %s about a job it took back,", spoken(quietAssigned), spoken(quietTakenBack)),
+		fmt.Sprintf("reads each such run again %s, or %s, while the job stays quiet,", every(recheckAssigned), every(recheckTakenBack)),
+		fmt.Sprintf("reads at most %s runs at a time and %s %s.", number(runReadsPerPass), number(runReadsPerHour), spoken(runReadsWindow)),
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the README does not say %q", want)
+		}
 	}
 }

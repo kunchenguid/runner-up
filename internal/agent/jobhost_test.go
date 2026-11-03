@@ -277,7 +277,9 @@ func TestEachJobRunsAsAFreshAccountDeletedAfterwards(t *testing.T) {
 	if as, _ := s.load(); len(as) != 0 {
 		t.Errorf("records left after the jobs: %v", as)
 	}
-	if !strings.Contains(out, "Running job: build") || !strings.Contains(out, "start script ended with 0") {
+	// This test owns the service's running as and start script lines.
+	if !strings.Contains(out, "runner-up service: running as rujob-") || !strings.Contains(out, "Running job: build") ||
+		!strings.Contains(out, "runner-up service: start script ended with 0") {
 		t.Errorf("the job's output and end did not reach the agent:\n%s", out)
 	}
 	if h.share != (config.Share{Cores: 2, MemoryMB: 4096}) {

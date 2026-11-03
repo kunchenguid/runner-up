@@ -92,7 +92,7 @@ func TestForkGuardRefusesTrailingValues(t *testing.T) {
 	if err := os.WriteFile(path, append(b, fork...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, stderr := runForkGuard(t, path, "push"); code == 0 || !strings.Contains(stderr, "unreadable event file") {
+	if code, _, stderr := runForkGuard(t, path, "push"); code == 0 || !strings.Contains(stderr, errUnreadableEvent.Error()) {
 		t.Fatalf("the guard read only the first of two values: %d %s", code, stderr)
 	}
 }

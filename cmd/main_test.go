@@ -18,6 +18,10 @@ import (
 // runnerUp builds this program for the tests that run it as a program.
 func runnerUp(t *testing.T) string { return testbin.Build(t, "") }
 
+// sshTo is how ssh to m starts, as a stand-in ssh logs its arguments:
+// coordinator.TestSshArgsAreBatchKeptAliveAndTimed owns its words.
+func sshTo(m config.Machine) string { return strings.Join(coordinator.SshArgs(m)[1:], " ") }
+
 // The end-to-end tests run the coordinator as this test program started
 // again with serveEnv set: it serves the stand-in for GitHub's Actions service
 // at actionsEnv, and its place runners are the built program at selfEnv.
