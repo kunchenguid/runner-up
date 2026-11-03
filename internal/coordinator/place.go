@@ -3,6 +3,7 @@ package coordinator
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,9 +27,10 @@ import (
 
 // The place runner is this same program run as `runner-up run-place`. The
 // coordinator starts it in its own session, so it outlives a coordinator
-// restart, with the place's locked busy.lock as file descriptor 3, the pool
-// of the job it was started for as an argument, and the runner's one-time
-// registration on standard input, never in an argument or an environment. It
+// restart, with the place's locked busy.lock as file descriptor 3, the setup
+// the coordinator runs (writeSetup) and the pool of the job it was started
+// for as arguments, and the runner's one-time registration on standard
+// input, never in an argument or an environment. It
 // runs the place's machine's agent - over SSH, or directly on the
 // coordinator's own machine - with the pool's image, hands it the
 // registration, and holds the agent's input open until the runner ends. The
@@ -38,26 +40,56 @@ import (
 
 // ProcLauncher is the real Launcher.
 type ProcLauncher struct {
-	cfg        *config.Config
-	configPath string
-	self       string
-	log        *slog.Logger
-	Exited     chan string
+	self   string
+	log    *slog.Logger
+	Exited chan string
+
+	// mu guards the setup place runners are started with: the coordinator's,
+	// kept at setupPath (writeSetup).
+	mu        sync.Mutex
+	cfg       *config.Config
+	setupPath string
 }
 
-// NewProcLauncher starts place runners with self, this program.
-func NewProcLauncher(cfg *config.Config, configPath, self string, log *slog.Logger) *ProcLauncher {
-	return &ProcLauncher{cfg: cfg, configPath: configPath, self: self, log: log, Exited: make(chan string, 16)}
+// NewProcLauncher starts place runners with self, this program, under cfg.
+func NewProcLauncher(cfg *config.Config, self string, log *slog.Logger) *ProcLauncher {
+	return &ProcLauncher{cfg: cfg, self: self, log: log, Exited: make(chan string, 16)}
+}
+
+// UseSetup keeps cfg for the place runners started from now on to read.
+func (l *ProcLauncher) UseSetup(cfg *config.Config) error {
+	path, err := writeSetup(cfg)
+	if err != nil {
+		return fmt.Errorf("could not keep the setup for place runners: %w", err)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cfg, l.setupPath = cfg, path
+	return nil
+}
+
+// setup is the setup place runners start with, and where they read it.
+func (l *ProcLauncher) setup() (*config.Config, string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.setupPath == "" {
+		return nil, "", errors.New("no setup kept for place runners")
+	}
+	return l.cfg, l.setupPath, nil
 }
 
 func (l *ProcLauncher) Launch(p config.Place, pool string, lock *os.File, jit string) error {
-	logPath := filepath.Join(l.cfg.LogsDir(), fmt.Sprintf("%s-%s.log", p.ID, time.Now().UTC().Format("20060102T150405Z")))
+	cfg, setupPath, err := l.setup()
+	if err != nil {
+		return err
+	}
+	logPath := filepath.Join(cfg.LogsDir(), fmt.Sprintf("%s-%s.log", p.ID, time.Now().UTC().Format("20060102T150405Z")))
 	out, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	cmd := exec.Command(l.self, "run-place", "--config", l.configPath, "--place", p.ID, "--pool", pool)
+	cmd := exec.Command(l.self, "run-place", "--config", setupPath, "--place", p.ID, "--pool", pool)
 	cmd.Stdin = strings.NewReader(jit + "\n")
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.ExtraFiles = []*os.File{lock}
@@ -66,7 +98,7 @@ func (l *ProcLauncher) Launch(p config.Place, pool string, lock *os.File, jit st
 		return err
 	}
 	var run PlaceRun
-	path := filepath.Join(l.cfg.PlaceDir(p.ID), "place.json")
+	path := filepath.Join(cfg.PlaceDir(p.ID), "place.json")
 	if config.ReadJSON(path, &run) == nil {
 		run.PID = cmd.Process.Pid
 		config.WriteJSON(path, run)
@@ -84,11 +116,14 @@ func (l *ProcLauncher) Launch(p config.Place, pool string, lock *os.File, jit st
 // child, so its pid comes from place.json, and only while the place's lock is
 // still held.
 func (l *ProcLauncher) Stop(placeID string) error {
+	l.mu.Lock()
+	cfg := l.cfg
+	l.mu.Unlock()
 	var run PlaceRun
-	if err := config.ReadJSON(filepath.Join(l.cfg.PlaceDir(placeID), "place.json"), &run); err != nil {
+	if err := config.ReadJSON(filepath.Join(cfg.PlaceDir(placeID), "place.json"), &run); err != nil {
 		return err
 	}
-	held, err := lock.HeldBy(filepath.Join(l.cfg.PlaceDir(placeID), "busy.lock"))
+	held, err := lock.HeldBy(filepath.Join(cfg.PlaceDir(placeID), "busy.lock"))
 	if err != nil || !held || run.PID <= 1 {
 		return fmt.Errorf("place %s has no live runner", placeID)
 	}

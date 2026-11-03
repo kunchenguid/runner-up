@@ -41,6 +41,9 @@ place's machine over SSH.
   default, on every provider (see [Pull requests from forks](#pull-requests-from-forks)).
 - **Restarts.** A running job keeps its place while the coordinator restarts.
   A crashed place is cleaned up, and its job gets a new runner.
+- **Setup changes.** A running coordinator applies an edited setup file about
+  a second after it settles, with no restart and without stopping running
+  jobs (see [Changing the setup](#changing-the-setup)).
 - **Down machines.** A machine whose agent cannot be reached rests until its
   agent answers again, and its job goes to another place (see
   [When a machine is down](#when-a-machine-is-down)).
@@ -61,7 +64,9 @@ runner-up is young. Read this before you trust it with your jobs.
 - **Proven only in part:** Hyper-V places have run only a check's test jobs,
   not yet anyone's daily work. Apple container places have run the runner
   with a stand-in registration, not yet a real job. Account places on Windows pass their tests but
-  have not yet run a real job.
+  have not yet run a real job. Changing the setup while the coordinator runs
+  is proven by end-to-end tests with stand-ins for GitHub, ssh and Docker,
+  not yet with real jobs.
 - **Order rules** are proven by tests that replay GitHub's recorded scale set
   messages. Within one pool of one repository GitHub picks which job a runner
   takes, so the order there is only close (see [Order rules](#order-rules)).
@@ -233,7 +238,8 @@ download runner-up for it from the
 [releases](https://github.com/kunchenguid/runner-up/releases) and pass
 `--install FILE`. Both commands write the setup file,
 `~/.config/runner-up/config.json` by default. You can edit that file by hand,
-and it never holds a token.
+and it never holds a token. A running `runner-up serve` applies your edits
+(see [Changing the setup](#changing-the-setup)).
 
 Then ask for the pool in a workflow:
 
@@ -425,6 +431,37 @@ A `linux-2604` job boots `resolute.vhdx`, and a `linux` job boots
 `noble.vhdx`. Either way it is one place; its pool's size, or the place's
 fallback size when the pool has none, counts against its machine's budget.
 
+### Changing the setup
+
+`runner-up serve` watches its setup file. Once the file has held the same
+content for a second, so a `git pull` or an editor that rewrites it in steps
+is read whole, the coordinator checks it as `check-config` does and applies
+it in place:
+
+- Repositories, organizations and pools the change adds get their scale set
+  sessions, and ones it removes have theirs closed. Every other session stays
+  open.
+- Machines, places, sizes, order rules and the other settings apply to the
+  next job the coordinator places.
+- Running jobs run on, each with the setup and reservation it started with.
+  A place the change removes, or moves to another machine, while its job runs
+  takes no new job, and its reservation counts against the machine its job
+  runs on until the job ends, through a coordinator restart too.
+- A job of a pool the change removes waits at GitHub until the pool comes back
+  or GitHub gives up on the job.
+
+The coordinator logs `applied the changed setup` with what changed, such as
+`pools=+mac-sign places=-box-2`. A file it cannot read, a setup that fails the
+check, or one that moves `stateDir` is not applied: the coordinator logs
+`the setup file was not applied; keeping the running setup` with the reason
+and runs on as before. Once you fix the file, it applies. A new `stateDir`
+takes a restart, since running places hold their locks in the old one.
+
+Place runners never read the setup file. Each reads the setup the coordinator
+was running when it started the place, kept under `stateDir/setups`, so a
+half-written or refused file never reaches a job. `runner-up status` and
+`runner-up usage` read the setup file itself.
+
 ### Job sizes and readings
 
 A pool is a job kind. For example, this setup illustrates a large check and
@@ -476,8 +513,8 @@ could read far above the guest's size. `runner-up usage` shows any tart value
 above its reservation, which is the guest's size, as unavailable.
 
 Compare several representative runs on the same machine/provider, allow
-headroom, then edit the pool's size and restart the coordinator. Runner-up
-does not automatically reduce a size or treat missing readings as evidence.
+headroom, then edit the pool's size; a running coordinator applies it to the
+next job of the pool. Runner-up does not automatically reduce a size or treat missing readings as evidence.
 It retains one record per finished job in the coordinator's `usage` folder
 for `logKeepDays`, including across restarts. The readings travel with the
 runner's output and are advisory: a job can falsify its output, but cannot

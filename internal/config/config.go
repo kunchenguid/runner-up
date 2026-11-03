@@ -282,15 +282,25 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	c, err := ParseConfig(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
+}
+
+// ParseConfig reads a setup from its file's content, fills in the defaults
+// and checks it.
+func ParseConfig(b []byte) (*Config, error) {
 	var c Config
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
 	c.Defaults()
 	if err := c.Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
 	return &c, nil
 }

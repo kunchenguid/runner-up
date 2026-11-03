@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -79,6 +80,16 @@ type SavedState struct {
 	Unused   []PlaceRun               `json:"unused,omitempty"`
 	// Unreachable is when each resting machine was found unreachable, by name.
 	Unreachable map[string]time.Time `json:"unreachable,omitempty"`
+	// Departed are the places a setup change removed, or moved to another
+	// machine, while their runner ran (Service.departed).
+	Departed []departedPlace `json:"departed,omitempty"`
+}
+
+// departedPlace is a departed place as the setup had it, with its machine,
+// which a place's own JSON leaves out.
+type departedPlace struct {
+	Machine string       `json:"machine"`
+	Place   config.Place `json:"place"`
 }
 
 type Service struct {
@@ -110,6 +121,10 @@ type Service struct {
 	// unreachable, and reachAsked when each was last asked (reach.go).
 	unreachable map[string]time.Time
 	reachAsked  map[string]time.Time
+	// departed are the places a setup change removed, or moved to another
+	// machine, while their runner ran, by id, as the setup had them where the
+	// runner runs (reload.go).
+	departed map[string]config.Place
 	// Reach asks a resting machine's agent for an answer; asking counts the
 	// questions not yet answered.
 	Reach  reacher
@@ -190,6 +205,7 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 		spare:        map[setName]bool{},
 		unreachable:  map[string]time.Time{},
 		reachAsked:   map[string]time.Time{},
+		departed:     map[string]config.Place{},
 		Reach:        ReachAgent,
 		labelsRead:   map[string]time.Time{},
 		labels:       map[string]map[string]map[string]bool{},
@@ -198,12 +214,10 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 		vms:          map[string][]string{},
 		vmsRead:      map[string]time.Time{},
 	}
-	for _, p := range cfg.Places() {
-		if err := os.MkdirAll(cfg.PlaceDir(p.ID), 0o700); err != nil {
-			return nil, err
-		}
+	if err := s.prepare(cfg); err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(cfg.LogsDir(), 0o700); err != nil {
+	if err := s.useSetup(cfg); err != nil {
 		return nil, err
 	}
 	b, err := os.ReadFile(s.statePath())
@@ -230,6 +244,12 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 				s.unreachable[name] = since
 			}
 		}
+		for _, d := range st.Departed {
+			d.Place.Machine = d.Machine
+			if q, ok := cfg.Place(d.Place.ID); !ok || q.Machine != d.Machine {
+				s.departed[d.Place.ID] = d.Place
+			}
+		}
 		log.Info("restored state", "waiting", len(s.waiting), "acquired", len(s.acquired), "unused", len(s.unused),
 			"resting", len(s.unreachable))
 	case !errors.Is(err, os.ErrNotExist):
@@ -240,6 +260,14 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 
 func (s *Service) statePath() string { return filepath.Join(s.Cfg.StateDir, "state.json") }
 
+// Setup is the setup the coordinator runs now. A setup change replaces it
+// whole and never changes it in place.
+func (s *Service) Setup() *config.Config {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Cfg
+}
+
 // AddSet makes a scale set's client available for acquiring and placing.
 func (s *Service) AddSet(target, pool string, c SetClient) {
 	s.mu.Lock()
@@ -247,10 +275,14 @@ func (s *Service) AddSet(target, pool string, c SetClient) {
 	s.sets[setKey(target, pool)] = c
 }
 
-func (s *Service) RemoveSet(target, pool string) {
+// RemoveSet makes c, a scale set's client, unavailable once its session
+// ends. A newer session's client for the same scale set stays.
+func (s *Service) RemoveSet(target, pool string, c SetClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sets, setKey(target, pool))
+	if s.sets[setKey(target, pool)] == c {
+		delete(s.sets, setKey(target, pool))
+	}
 }
 
 // Handle takes one message from a scale set's listener: it records what
@@ -459,6 +491,14 @@ func (s *Service) refreshLabels(ctx context.Context) {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	s.mu.Lock()
+	if labels, _ := plan.Needs(s.Rules); !labels {
+		// A setup change may have dropped the rules that read labels; labels
+		// read before it would be stale once such a rule came back.
+		clear(s.labels)
+		clear(s.labelsRead)
+		s.mu.Unlock()
+		return
+	}
 	now := s.now()
 	repos := map[string]bool{}
 	for _, j := range s.waiting {
@@ -496,6 +536,10 @@ func (s *Service) refreshRunWorkflows(ctx context.Context) {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	s.mu.Lock()
+	if _, workflows := plan.Needs(s.Rules); !workflows {
+		s.mu.Unlock()
+		return
+	}
 	now := s.now()
 	queued := map[workflowRun]bool{}
 	for _, j := range s.waiting {
@@ -639,9 +683,18 @@ func (s *Service) headroomLocked() map[string]plan.Headroom {
 // inUse sums what machine's places reserve while their runner or borrow
 // supervisor is alive, leaving out the place except. A runner waiting for its
 // job keeps its share, since the job will run there.
+// A departed place counts on the machine its runner runs on, not where the
+// setup has it now (reload.go).
 func (s *Service) inUse(machine, except string) config.Share {
 	used := config.Share{}
-	for _, q := range s.Cfg.Places() {
+	places := slices.DeleteFunc(s.Cfg.Places(), func(q config.Place) bool {
+		_, departed := s.departed[q.ID]
+		return departed
+	})
+	for _, id := range slices.Sorted(maps.Keys(s.departed)) {
+		places = append(places, s.departed[id])
+	}
+	for _, q := range places {
 		if q.ID != except && q.Machine == machine && s.runnerAlive(q.ID) {
 			sh := s.Reservation(q)
 			used.Cores += sh.Cores
@@ -817,7 +870,7 @@ func (s *Service) stopSpareLocked(ctx context.Context, target, pool string) {
 		run   PlaceRun
 	}
 	var idles []idle
-	for _, p := range s.Cfg.Places() {
+	for _, p := range s.placesLocked() {
 		dir := s.Cfg.PlaceDir(p.ID)
 		if held, err := lock.HeldBy(filepath.Join(dir, "busy.lock")); err != nil || !held {
 			continue
@@ -850,7 +903,7 @@ func (s *Service) stopSpareLocked(ctx context.Context, target, pool string) {
 func (s *Service) Tidy(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, p := range s.Cfg.Places() {
+	for _, p := range s.placesLocked() {
 		if held, err := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(p.ID), "busy.lock")); err == nil && !held {
 			s.retireLocked(p)
 		}
@@ -901,7 +954,7 @@ func runnerGone(err error) bool {
 func (s *Service) stopIdleLocked(ctx context.Context) {
 	limit := s.Cfg.Seconds(s.Cfg.StartTimeoutSeconds)
 	now := s.now()
-	for _, p := range s.Cfg.Places() {
+	for _, p := range s.placesLocked() {
 		dir := s.Cfg.PlaceDir(p.ID)
 		if held, err := lock.HeldBy(filepath.Join(dir, "busy.lock")); err != nil || !held {
 			continue
@@ -962,15 +1015,22 @@ func (s *Service) giveUpLocked(ctx context.Context, place string, run PlaceRun, 
 // in line from where it was: GitHub keeps an assigned job assigned to the
 // scale set and sends nothing more, so a job dropped here would never be
 // placed again. A run that could not reach its machine's agent rests the
-// machine.
+// machine. A departed place's run ran as the setup had the place then; once
+// it is retired the place is forgotten or, where the setup still has it,
+// takes jobs as the setup has it now.
 func (s *Service) retireLocked(p config.Place) {
+	if d, ok := s.departed[p.ID]; ok {
+		p = d
+		delete(s.departed, p.ID)
+		s.saveLocked()
+	}
 	dir := s.Cfg.PlaceDir(p.ID)
 	path := filepath.Join(dir, "place.json")
 	var run PlaceRun
 	if config.ReadJSON(path, &run) != nil {
 		return
 	}
-	if run.Unreachable {
+	if run.Unreachable && slices.ContainsFunc(s.Cfg.Machines, func(m config.Machine) bool { return m.Name == p.Machine }) {
 		s.restLocked(p.Machine)
 	}
 	removed := s.givenUp[run.RunnerName]
@@ -1062,6 +1122,9 @@ func (s *Service) saveLocked() {
 	}
 	for _, run := range s.unused {
 		st.Unused = append(st.Unused, run)
+	}
+	for _, id := range slices.Sorted(maps.Keys(s.departed)) {
+		st.Departed = append(st.Departed, departedPlace{Machine: s.departed[id].Machine, Place: s.departed[id]})
 	}
 	sort.Slice(st.Waiting, func(a, b int) bool { return st.Waiting[a].Key() < st.Waiting[b].Key() })
 	sort.Slice(st.Acquired, func(a, b int) bool { return st.Acquired[a].Job.Key() < st.Acquired[b].Job.Key() })
