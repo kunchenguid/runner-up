@@ -49,7 +49,7 @@ place's machine over SSH.
 - **Sign-in.** The coordinator uses the GitHub command line's sign-in. It
   stores no token: it asks `gh auth token` each time it opens a session.
 
-## How it is built
+## How it works
 
 <p align="center">
   <img src="docs/architecture.svg" width="750" alt="GitHub's job queue and runner scale sets talk to one coordinator on Linux or macOS. The coordinator reads the setup file and the GitHub sign-in, and holds scale set sessions, the planner, place runners and the updater. Over SSH, with the registration on standard input, it reaches an agent on each Linux machine (Docker, KVM or host places), Mac (tart, Apple container or host places) and Windows machine (account or Hyper-V places, through the Windows service). Each one-job runner then works with GitHub directly." />
