@@ -1,0 +1,80 @@
+=== RUN   TestLastPoolSharedBudgetThroughTheRunningCoordinator
+=== RUN   TestLastPoolSharedBudgetThroughTheRunningCoordinator/fifo-control
+    last_e2e_test.go:110: real CLI status (fifo-control):
+        place native on box (docker, 12 cores, 32768 MB) busy (cores 4 of 14 in use, 8 kept for the owner)
+        place linux-1 on box (docker, 2 cores, 8192 MB) busy (job): octo-org/app "verify / linux" waiting for its job
+        place linux-2 on box (docker, 2 cores, 8192 MB) busy (job): octo-org/app "verify / linux" waiting for its job
+        waiting octo-org/app ru-native "verify / linux" since 2026-11-03T01:10:34-08:00
+        starting octo-org/app ru-linux "verify / linux" in linux-1
+        starting octo-org/app ru-linux "verify / linux" in linux-2
+        
+        coordinator and agent transcript:
+        --- coordinator-1.log
+        time=2026-11-03T01:11:34.054-08:00 level=INFO msg="runner-up starting" version=dev targets=1 pools=2 machines=1 places=3
+        time=2026-11-03T01:11:34.056-08:00 level=INFO msg="scale set session open" target=octo-org/app pool=ru-linux scaleSetId=7
+        time=2026-11-03T01:11:34.056-08:00 level=INFO msg="scale set session open" target=octo-org/app pool=ru-native scaleSetId=8
+        time=2026-11-03T01:11:34.057-08:00 level=INFO msg="job waiting" repo=octo-org/app pool=ru-linux job="verify / linux" request=9101 assigned=false queued=2026-11-03T07:11:34Z
+        time=2026-11-03T01:11:34.057-08:00 level=INFO msg="job waiting" repo=octo-org/app pool=ru-linux job="verify / linux" request=9102 assigned=false queued=2026-11-03T07:12:34Z
+        time=2026-11-03T01:11:34.057-08:00 level=INFO msg="job waiting" repo=octo-org/app pool=ru-native job="verify / linux" request=9111 assigned=false queued=2026-11-03T09:10:34Z
+        time=2026-11-03T01:11:34.162-08:00 level=INFO msg=placed place=linux-1 machine=box repo=octo-org/app pool=ru-linux job="verify / linux" request=9101 runner=runner-up-linux-1-1793697094 waited=2h0m0s
+        time=2026-11-03T01:11:34.164-08:00 level=INFO msg=placed place=linux-2 machine=box repo=octo-org/app pool=ru-linux job="verify / linux" request=9102 runner=runner-up-linux-2-1793697094 waited=1h59m0s
+        --- linux-1-20261103T091134Z.log
+        time=2026-11-03T01:11:34.326-08:00 level=INFO msg="agent started" place=linux-1 machine=box provider=docker pool=ru-linux
+        runner-up agent: making place linux-1 with docker (2 cores, 8192 MB)
+        √ Connected to GitHub
+        Listening for Jobs
+        --- linux-2-20261103T091134Z.log
+        time=2026-11-03T01:11:34.326-08:00 level=INFO msg="agent started" place=linux-2 machine=box provider=docker pool=ru-linux
+        runner-up agent: making place linux-2 with docker (2 cores, 8192 MB)
+        √ Connected to GitHub
+        Listening for Jobs
+        --- ssh.log
+        -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '/var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a' 'agent' 'run' '--provider' 'docker' '--place' 'linux-2' '--cores' '2' '--memory' '8192' '--boot-timeout' '300'
+        -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '/var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a' 'agent' 'run' '--provider' 'docker' '--place' 'linux-1' '--cores' '2' '--memory' '8192' '--boot-timeout' '300'
+        --- docker.log
+        rm -f runner-up-linux-1
+        rm -f runner-up-linux-2
+        run --rm --name runner-up-linux-1 --label runner-up.place=linux-1 --cpus 2 --memory 8192m -e ACTIONS_RUNNER_INPUT_JITCONFIG -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a:/opt/runner-up/runner-up:ro -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/TestLastPoolSharedBudgetThroughTheRunningCoordinatorfifo-contro3720066787/001/machine/runner-up/agent/places/linux-1/fork-guard.sh:/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh -e RUNNER_UP_CORES=2 -e RUNNER_UP_MEMORY_MB=8192 --entrypoint ~/run.sh ghcr.io/actions/actions-runner:2.338.1
+        run --rm --name runner-up-linux-2 --label runner-up.place=linux-2 --cpus 2 --memory 8192m -e ACTIONS_RUNNER_INPUT_JITCONFIG -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a:/opt/runner-up/runner-up:ro -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/TestLastPoolSharedBudgetThroughTheRunningCoordinatorfifo-contro3720066787/001/machine/runner-up/agent/places/linux-2/fork-guard.sh:/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh -e RUNNER_UP_CORES=2 -e RUNNER_UP_MEMORY_MB=8192 --entrypoint ~/run.sh ghcr.io/actions/actions-runner:2.338.1
+=== RUN   TestLastPoolSharedBudgetThroughTheRunningCoordinator/linux-ranked-last
+    last_e2e_test.go:110: real CLI status (linux-ranked-last):
+        place native on box (docker, 12 cores, 32768 MB) busy (job): octo-org/app "verify / linux" waiting for its job
+        place linux-1 on box (docker, 2 cores, 8192 MB) busy (job): octo-org/app "verify / linux" waiting for its job
+        place linux-2 on box (docker, 2 cores, 8192 MB) busy (cores 14 of 14 in use, 8 kept for the owner)
+        waiting octo-org/app ru-linux "verify / linux" since 2026-11-02T23:12:36-08:00
+        starting octo-org/app ru-linux "verify / linux" in linux-1
+        starting octo-org/app ru-native "verify / linux" in native
+        
+        coordinator and agent transcript:
+        --- coordinator-1.log
+        time=2026-11-03T01:11:36.967-08:00 level=INFO msg="runner-up starting" version=dev targets=1 pools=2 machines=1 places=3
+        time=2026-11-03T01:11:36.968-08:00 level=INFO msg="scale set session open" target=octo-org/app pool=ru-linux scaleSetId=7
+        time=2026-11-03T01:11:36.968-08:00 level=INFO msg="scale set session open" target=octo-org/app pool=ru-native scaleSetId=8
+        time=2026-11-03T01:11:36.972-08:00 level=INFO msg="job waiting" repo=octo-org/app pool=ru-linux job="verify / linux" request=9101 assigned=false queued=2026-11-03T07:11:36Z
+        time=2026-11-03T01:11:36.972-08:00 level=INFO msg="job waiting" repo=octo-org/app pool=ru-linux job="verify / linux" request=9102 assigned=false queued=2026-11-03T07:12:36Z
+        time=2026-11-03T01:11:36.973-08:00 level=INFO msg="job waiting" repo=octo-org/app pool=ru-native job="verify / linux" request=9111 assigned=false queued=2026-11-03T09:10:36Z
+        time=2026-11-03T01:11:37.082-08:00 level=INFO msg=placed place=native machine=box repo=octo-org/app pool=ru-native job="verify / linux" request=9111 runner=runner-up-native-1793697097 waited=1m0s
+        time=2026-11-03T01:11:37.090-08:00 level=INFO msg=placed place=linux-1 machine=box repo=octo-org/app pool=ru-linux job="verify / linux" request=9101 runner=runner-up-linux-1-1793697097 waited=2h0m0s
+        --- linux-1-20261103T091137Z.log
+        time=2026-11-03T01:11:37.104-08:00 level=INFO msg="agent started" place=linux-1 machine=box provider=docker pool=ru-linux
+        runner-up agent: making place linux-1 with docker (2 cores, 8192 MB)
+        √ Connected to GitHub
+        Listening for Jobs
+        --- native-20261103T091137Z.log
+        time=2026-11-03T01:11:37.100-08:00 level=INFO msg="agent started" place=native machine=box provider=docker pool=ru-native
+        runner-up agent: making place native with docker (12 cores, 32768 MB)
+        √ Connected to GitHub
+        Listening for Jobs
+        --- ssh.log
+        -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '/var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a' 'agent' 'run' '--provider' 'docker' '--place' 'linux-1' '--cores' '2' '--memory' '8192' '--boot-timeout' '300'
+        -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=10 ci@box '/var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a' 'agent' 'run' '--provider' 'docker' '--place' 'native' '--cores' '12' '--memory' '32768' '--boot-timeout' '300'
+        --- docker.log
+        rm -f runner-up-native
+        rm -f runner-up-linux-1
+        run --rm --name runner-up-linux-1 --label runner-up.place=linux-1 --cpus 2 --memory 8192m -e ACTIONS_RUNNER_INPUT_JITCONFIG -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a:/opt/runner-up/runner-up:ro -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/TestLastPoolSharedBudgetThroughTheRunningCoordinatorlinux-ranke3775599240/001/machine/runner-up/agent/places/linux-1/fork-guard.sh:/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh -e RUNNER_UP_CORES=2 -e RUNNER_UP_MEMORY_MB=8192 --entrypoint ~/run.sh ghcr.io/actions/actions-runner:2.338.1
+        run --rm --name runner-up-native --label runner-up.place=native --cpus 12 --memory 32768m -e ACTIONS_RUNNER_INPUT_JITCONFIG -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/runner-up-test-354187764/runner-up-a:/opt/runner-up/runner-up:ro -v /var/folders/5x/4nqprlbx0518k3ybcb1sz6gr0000gn/T/TestLastPoolSharedBudgetThroughTheRunningCoordinatorlinux-ranke3775599240/001/machine/runner-up/agent/places/native/fork-guard.sh:/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh -e RUNNER_UP_CORES=12 -e RUNNER_UP_MEMORY_MB=32768 --entrypoint ~/run.sh ghcr.io/actions/actions-runner:2.338.1
+--- PASS: TestLastPoolSharedBudgetThroughTheRunningCoordinator (6.01s)
+    --- PASS: TestLastPoolSharedBudgetThroughTheRunningCoordinator/fifo-control (3.20s)
+    --- PASS: TestLastPoolSharedBudgetThroughTheRunningCoordinator/linux-ranked-last (2.81s)
+PASS
+ok  	github.com/kunchenguid/runner-up/cmd	6.263s

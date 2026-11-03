@@ -1,0 +1,50 @@
+## Apple container setup and shared budget accepted
+$ {run-worktree}/.local-test/runner-up check-config --config {run-worktree}/.local-test/config.json
+ok: 1 targets, 2 pools, 1 machines, 2 places
+synthetic-mini (this machine): mac tart 12 cores 32768 MB, linux container 2 cores 8192 MB; places may reserve 14 of 22 cores and 57344 of 65536 MB, all at once
+pool linux-mini: each job reserves 2 cores, 8192 MB; overrides place sizes
+pool mac: each job reserves 12 cores, 32768 MB; overrides place sizes
+exit: 0
+
+## Misspelled last pool is rejected
+$ {run-worktree}/.local-test/runner-up check-config --config {run-worktree}/.local-test/config.json
+{run-worktree}/.local-test/config.json: order rule "last:linxu-mini" names no pool of this setup
+exit: 2
+
+## Empty last pool is rejected
+$ {run-worktree}/.local-test/runner-up check-config --config {run-worktree}/.local-test/config.json
+{run-worktree}/.local-test/config.json: order rule "last:" names no pool of this setup
+exit: 2
+
+## Container setup without an image is rejected
+$ {run-worktree}/.local-test/runner-up check-config --config {run-worktree}/.local-test/config.json
+{run-worktree}/.local-test/config.json: place "linux": an Apple container place needs the image its guests start from, such as runner-up-linux:latest
+exit: 2
+
+## Container image with whitespace is rejected
+$ {run-worktree}/.local-test/runner-up check-config --config {run-worktree}/.local-test/config.json
+{run-worktree}/.local-test/config.json: place "linux": an Apple container place needs the image its guests start from, such as runner-up-linux:latest
+exit: 2
+
+## Earlier pool priority remains compatible with last
+$ {run-worktree}/.local-test/runner-up check-config --config {run-worktree}/.local-test/config.json
+ok: 1 targets, 2 pools, 1 machines, 2 places
+synthetic-mini (this machine): mac tart 12 cores 32768 MB, linux container 2 cores 8192 MB; places may reserve 14 of 22 cores and 57344 of 65536 MB, all at once
+pool linux-mini: each job reserves 2 cores, 8192 MB; overrides place sizes
+pool mac: each job reserves 12 cores, 32768 MB; overrides place sizes
+exit: 0
+
+## Guest stdin EOF fails before any download or runner starts (real Python guest)
+$ python3 -I {run-worktree}/internal/agent/hyperv-guest.py stdin
+runner-up guest: failed: the agent closed its input before the registration
+exit: 1
+
+## Real guest fork guard: pull-request-521-fork.json
+$ python3 -I {run-worktree}/internal/agent/hyperv-guest.py guard
+runner-up refuses this job: pull request from a-contributor/tool. Jobs from another repository's pull request never run on these runners.
+exit: 1
+
+## Real guest fork guard: pull-request-527-same-repo.json
+$ python3 -I {run-worktree}/internal/agent/hyperv-guest.py guard
+runner-up: pull_request job from this repository; allowed
+exit: 0
