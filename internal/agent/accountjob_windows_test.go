@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // Intent (README, "Windows machines" and "Pull requests from forks"; AGENTS.md,
@@ -17,7 +19,9 @@ import (
 // when its bytes match the pinned sum, hands the runner the registration it
 // read from standard input in its environment, and gives it the fork guard as
 // its job-started hook unless the place allows forks. The script runs in
-// Windows PowerShell on the command line the service starts it with; only
+// Windows PowerShell on the command line the service starts it with, in a
+// fresh environment block as the service gives it (not the test's own, which
+// under PowerShell 7 points Windows PowerShell at the wrong modules); only
 // the runner archive is a stand-in, whose run.cmd prints what it was given.
 func TestAccountJobStartScriptRunsOnlyThePinnedRunner(t *testing.T) {
 	powershell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
@@ -41,6 +45,10 @@ func TestAccountJobStartScriptRunsOnlyThePinnedRunner(t *testing.T) {
 		"exit /b 7\r\n"))
 	zw.Close()
 	f.Close()
+	env, err := windows.GetCurrentProcessToken().Environ(false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, err := os.ReadFile(archive)
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +67,7 @@ func TestAccountJobStartScriptRunsOnlyThePinnedRunner(t *testing.T) {
 		}
 		cmd := exec.Command(powershell)
 		cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: jobCommandLine(powershell, folder)}
+		cmd.Env = env
 		cmd.Stdin = strings.NewReader(registration + "\n")
 		b, err := cmd.CombinedOutput()
 		if _, exit := err.(*exec.ExitError); err != nil && !exit {
