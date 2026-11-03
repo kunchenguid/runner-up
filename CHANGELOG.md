@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.8](https://github.com/kunchenguid/runner-up/compare/v0.1.7...v0.1.8) (2026-11-03)
+
+
+### Bug Fixes
+
+* **agent:** relay a Windows account job's output while its agent is connected ([fab774a](https://github.com/kunchenguid/runner-up/commit/fab774a210fe6b22cc39486ad1bccbf408d5f5cb))
+* **coordinator:** remove a spare runner from its scale set before stopping it ([537afe0](https://github.com/kunchenguid/runner-up/commit/537afe027e820c9445fcca6dea529fca96ec2402))
+
 ## [0.1.7](https://github.com/kunchenguid/runner-up/compare/v0.1.6...v0.1.7) (2026-11-03)
 
 
