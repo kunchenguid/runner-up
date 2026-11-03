@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -105,9 +106,10 @@ func TestAccountJobStartScriptRunsOnlyThePinnedRunner(t *testing.T) {
 		t.Errorf("the runner's job-started hook %q is not the place's: %v", hook, err)
 	}
 
-	// A place that allows forks gives the runner no job-started hook.
+	// A place that allows forks gives the runner no job-started hook (a
+	// batch file expands an unset variable to nothing).
 	_, out, code = run(hex.EncodeToString(sum[:]), true)
-	if code != 7 || !strings.Contains(out, "hook=%ACTIONS_RUNNER_HOOK_JOB_STARTED%") {
+	if code != 7 || !strings.Contains(out, "registration="+registration) || !regexp.MustCompile(`(?m)^hook=\r?$`).MatchString(out) {
 		t.Errorf("a place that allows forks gave exit %d:\n%s", code, out)
 	}
 }
