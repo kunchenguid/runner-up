@@ -38,9 +38,13 @@ const (
 	// Windows machine, on a differencing disk over a base disk image, deleted
 	// after the job.
 	ProviderHyperV = "hyperv"
+	// ProviderContainer runs each job in a new Linux guest made with Apple's
+	// container tool on a Mac with Apple silicon, from an image with python3
+	// and a user named runner, removed after the job.
+	ProviderContainer = "container"
 )
 
-var providers = []string{ProviderDocker, ProviderKVM, ProviderTart, ProviderHost, ProviderAccount, ProviderHyperV}
+var providers = []string{ProviderDocker, ProviderKVM, ProviderTart, ProviderHost, ProviderAccount, ProviderHyperV, ProviderContainer}
 
 // WindowsProviders run on Windows machines, and only there.
 var WindowsProviders = []string{ProviderAccount, ProviderHyperV}
@@ -151,9 +155,9 @@ type Place struct {
 	Cores    int `json:"cores"`
 	MemoryMB int `json:"memoryMB"`
 	// Image is the runner image for a Docker place, the base disk image on
-	// the machine for a KVM or Hyper-V place, or the tart image a tart place
+	// the machine for a KVM or Hyper-V place, the tart image a tart place
 	// clones, such as ghcr.io/cirruslabs/macos-sequoia-base:latest or a local
-	// VM's name.
+	// VM's name, or the image an Apple container place's guests start from.
 	Image string `json:"image,omitempty"`
 	// PoolImages gives some of the place's pools their own image, by pool
 	// label: a job of a named pool runs on that image, any other job on
@@ -367,7 +371,8 @@ func (c *Config) Validate() error {
 	}
 	// A pool rule that names no pool would order nothing, and say nothing.
 	for _, r := range c.Order {
-		if l, ok := strings.CutPrefix(r, "pool:"); ok && !labels[l] {
+		kind, l, _ := strings.Cut(r, ":")
+		if (kind == "pool" || kind == "last") && !labels[l] {
 			return fmt.Errorf("order rule %q names no pool of this setup", r)
 		}
 	}
@@ -497,6 +502,8 @@ func checkImage(provider, image string) error {
 		return fmt.Errorf("a host place runs on the machine itself and takes no image")
 	case provider == ProviderHyperV && !winAbs.MatchString(image):
 		return fmt.Errorf(`a Hyper-V place needs the full path of its base disk image on the machine, such as C:\runner-up\noble.vhdx`)
+	case provider == ProviderContainer && (image == "" || strings.ContainsAny(image, " \t\n")):
+		return fmt.Errorf("an Apple container place needs the image its guests start from, such as runner-up-linux:latest")
 	case provider == ProviderAccount && image != "":
 		return fmt.Errorf("an account place runs on the machine itself and takes no image")
 	}

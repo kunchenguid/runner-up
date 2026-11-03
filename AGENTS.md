@@ -7,7 +7,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 
 - `main.go` calls `cmd.Main`; `cmd/` parses the command line, `init` and `machine add`, and holds the end-to-end tests
 - `internal/coordinator/` - scale set sessions, the planner, place runners, the macOS VM count
-- `internal/agent/` - the agent and its providers (`docker.go`, `kvm_linux.go`, `tart.go`, `host.go`, `hyperv*.go`, `account_*.go`), the fork guard, and the Windows service and job host
+- `internal/agent/` - the agent and its providers (`docker.go`, `kvm_linux.go`, `tart.go`, `container.go`, `host.go`, `hyperv*.go`, `account_*.go`), the fork guard, and the Windows service and job host
 - `internal/config/` (the setup file), `internal/plan/` (order rules), `internal/lock/`, `internal/proc/`, `internal/quote/`, `internal/version/`
 - `internal/testbin/` builds runner-up once per test binary for tests that run it as a program
 

@@ -16,7 +16,8 @@ every job's leftovers for the next one.
 
 runner-up runs GitHub Actions jobs on your own machines. Each job gets a fresh
 Docker container or KVM virtual machine on Linux, a fresh tart clone of a
-macOS image on a Mac, or a fresh Windows account or Hyper-V virtual machine on
+macOS image or a fresh Linux guest from Apple's container tool on a Mac, or a
+fresh Windows account or Hyper-V virtual machine on
 Windows, which is removed when the job ends. A place can also run its jobs on
 the machine itself.
 
@@ -58,7 +59,8 @@ runner-up is young. Read this before you trust it with your jobs.
   places on a Mac, a job running on through a coordinator restart, and a
   crashed place's cleanup.
 - **Proven only in part:** Hyper-V places have run only a check's test jobs,
-  not yet anyone's daily work. Account places on Windows pass their tests but
+  not yet anyone's daily work. Apple container places have run the runner
+  with a stand-in registration, not yet a real job. Account places on Windows pass their tests but
   have not yet run a real job.
 - **Order rules** are proven by tests that replay GitHub's recorded scale set
   messages. Within one pool of one repository GitHub picks which job a runner
@@ -166,6 +168,14 @@ places use:
   its makers (`brew install cirruslabs/cli/tart`), and a macOS image pulled on
   the Mac (see [macOS images](#macos-images)). runner-up runs the tart you
   install and never bundles it; tart's license is its makers' (FSL-1.1).
+- **Apple container places** (a Mac with Apple silicon): Apple's
+  [container](https://github.com/apple/container) tool with its service
+  started (`container system start`), and a Linux image built or pulled on the
+  Mac with `/usr/bin/python3`, Bash, tar, the Linux libraries GitHub's runner
+  needs, and a user and group named `runner` with `/home/runner` present.
+  GitHub's runner itself need not be in the image; the guest downloads the
+  pinned runner. The runner gets what the image sets in `/etc/environment`,
+  as on a Hyper-V place.
 - **host places** (Linux or a Mac): nothing more. The job runs as the SSH user
   (see [Trade-offs](#trade-offs)).
 
@@ -214,8 +224,11 @@ runner-up serve
 `machine add` reaches the machine over SSH. It copies runner-up there (to
 `~/.local/bin`) when it is missing, reads the machine's cores and memory, and
 checks that its provider works: Docker by default on Linux, tart on a Mac, or
-the one `--provider` names (`docker`, `kvm`, `tart` or `host`). It copies
-itself only to a machine of its own system and architecture; for another,
+the one `--provider` names (`docker`, `kvm`, `tart`, `host` or, on a Mac,
+`container` with `--image`). For Apple container places it checks only that
+the machine is a Mac and an image is named, not the tool, service or image's
+readiness; see [What you need](#what-you-need). It copies itself only to a
+machine of its own system and architecture; for another,
 download runner-up for it from the
 [releases](https://github.com/kunchenguid/runner-up/releases) and pass
 `--install FILE`. Both commands write the setup file,
@@ -455,8 +468,9 @@ change its configured reservation through a reading.
 
 ## Macs
 
-A Mac's places are tart places, a fresh clone of a macOS image per job, or a
-host place that runs jobs on the Mac itself.
+A Mac's places are tart places, a fresh clone of a macOS image per job, Apple
+container places, a fresh Linux guest per job, or a host place that runs jobs
+on the Mac itself.
 
 For each job, a tart place's agent clones the place's image as
 `runner-up-PLACE`, sizes the clone to the job pool's cores and memory (or the
@@ -480,6 +494,31 @@ go, the clone is stopped and deleted.
   ends its runner, but `tart exec` can go on waiting. While the job runs, the
   agent reads the clone's boot session every `guestCheckSeconds`, and ends the
   job once it changes. A reading that fails counts for nothing.
+
+### Linux guests on a Mac
+
+For each job, an Apple container place's agent starts a guest from the
+place's image as `runner-up-PLACE`, with the job pool's cores and memory (or
+the place's defaults), and `--rm`, so the guest is removed when it stops.
+runner-up's guest program runs in it as root: the agent sends the program on
+the guest's standard input, then the registration on one more line. The
+registration is never in the image, a file, an argument or the container
+configuration's environment, so `container inspect` never shows it. Inside
+the guest it reaches the runner through the runner's environment. The program
+checks the pinned runner's download, runs it as `runner` for one job with the
+[configured fork policy](#pull-requests-from-forks), and ends. When the place
+runner lets go, the agent deletes the guest; the next job on a place first
+deletes any guest an agent killed outright left.
+
+Apple container guests share the Mac's budget like its other places, and do
+not count against the two-macOS-VM limit. Linux guests reach the network
+through the container tool's own network; block what they should not reach
+on the Mac. Apple's tool gives a guest the cores it asks for as its CPU limit,
+but a guest may list one more processor (`nproc`); jobs should size their
+workers by `RUNNER_UP_CORES`.
+
+To prioritize a Mac's own jobs over its Linux guests, see `last:` in
+[Order rules](#order-rules).
 
 ### macOS images
 
@@ -557,12 +596,14 @@ command starts it under `BORROWED_VM`, the name runner-up reserves and cleans.
 ## Order rules
 
 When a place frees and several jobs it can take are waiting, the rules decide,
-in order. Each rule puts the jobs it matches first. The next rule orders each
-half, and the oldest job breaks a tie.
+in order. Each rule puts the jobs it matches first, except `last:`, which
+puts them last. Later rules order jobs tied by earlier rules, and the oldest
+job breaks a final tie.
 
 | Rule | Puts first |
 | --- | --- |
 | `pool:NAME` | jobs asking for the pool NAME, which must be one of the setup's pools |
+| `last:NAME` | jobs not asking for pool NAME, which must be one of the setup's pools |
 | `label:NAME` | jobs from an open pull request labeled NAME, in the same repository (not from forks), including runs on its branch |
 | `waited:DURATION` | jobs that have waited at least DURATION, oldest first |
 | `workflow:GLOB,...` | jobs whose top-level workflow file (without `.yml`) matches, such as `release` or `deploy-*` |
@@ -574,6 +615,13 @@ A `pool:` rule matters where places serve several pools. To let short jobs that
 a merge waits on go ahead of everything else, give them a pool of their own,
 have the same places serve it, and list `pool:` first:
 `["pool:quick", "label:urgent", "waited:60m", "shortest"]`.
+
+A `last:` rule matters where places of different pools share a machine's
+budget. The first-ranked job waiting only for room keeps it, so ranking a pool
+last lets a waiting job of another pool keep its room before that pool's jobs
+take what is left. List `last:` first to put the pool behind even jobs that
+waited an hour; a `pool:` rule listed before it still goes ahead:
+`["pool:release", "last:linux-mini", "waited:60m", "shortest"]`.
 
 GitHub picks which of a scale set's jobs a new runner takes. So the order is
 exact between pools and repositories, but only close within one pool of one
@@ -600,8 +648,9 @@ cannot read. It allows every other job from the repository itself. Set
   own sign-in on machines with KVM places.
 - **Every place but a Docker place downloads the runner.** Each machine
   downloads the runner release once, checks it against a pinned checksum, and
-  keeps it; a Hyper-V VM downloads and checks it afresh for each job. The
-  version is pinned (2.338.1), and runners never update themselves.
+  keeps it; a Hyper-V VM or an Apple container guest downloads and checks it
+  afresh for each job. The version is pinned (2.338.1), and runners never
+  update themselves.
 - **Host places are not fresh.** A host place runs its job as the SSH user,
   in a folder made for the job and removed after it, and ends every process
   the job started. Its tool cache is kept for the next job. Everything else
@@ -621,6 +670,9 @@ cannot read. It allows every other job from the repository itself. Set
   joins to a named pipe on the machine. Hyper-V may let only administrators
   open that pipe; if a Hyper-V place says it could not open the serial port,
   make the SSH account an administrator.
+- **Apple container guests are lightweight virtual machines.** For their
+  lifecycle, resource limits and network exposure, see
+  [Linux guests on a Mac](#linux-guests-on-a-mac).
 - **The coordinator does not run on Windows.** Run it on Linux or macOS.
 - **One coordinator per pool.** A second coordinator for the same pool waits
   until the first lets go of the scale set session.

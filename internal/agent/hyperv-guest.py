@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
-# runner-up's program inside a Hyper-V place's Linux VM. cloud-init writes it
-# to /opt/runner-up/guest.py and runs it as root once the VM has booted; the
-# agent fills in the @...@ values. It talks to the agent over the VM's second
+# runner-up's program inside a Linux guest: a Hyper-V place's VM or an Apple
+# container place's guest. The agent fills in the @...@ values.
+#
+# In a Hyper-V VM, cloud-init writes it to /opt/runner-up/guest.py and runs it
+# as root once the VM has booted. It talks to the agent over the VM's second
 # serial port (COM 2, /dev/ttyS1): it says it is ready until the agent sends
-# the runner's one-time registration on one line, then downloads GitHub's
-# runner, checks it against its pin, runs it as the user runner for one job
-# with its output on the port, and turns the VM off. The registration goes
-# into the runner's environment only, never into a file or an argument. The
-# runner also gets what the image sets in /etc/environment, as a login would,
-# such as RUNNER_TOOL_CACHE for tools the image carries, as GitHub's Ubuntu
-# images set it.
+# the runner's one-time registration on one line, and turns the VM off at the
+# end.
+#
+# In an Apple container guest (the argument stdin), the agent's bootstrap
+# writes it to the same path and runs it as root; the registration arrives on
+# one line of standard input, output goes to standard output, and the guest
+# stops when the program ends.
+#
+# Either way it downloads GitHub's runner, checks it against its pin and runs
+# it as the user runner for one job. The registration goes into the runner's
+# environment only, never into a file or an argument. The runner also gets
+# what the image sets in /etc/environment, as a login would, such as
+# RUNNER_TOOL_CACHE for tools the image carries, as GitHub's Ubuntu images set
+# it.
 #
 # With the argument guard it is instead the runner's fork guard, the same
 # decision as runner-up's own fork-guard command (forkguard.go), since the
-# Windows agent's program cannot run in a Linux VM.
+# agent's own program cannot run in a Linux guest.
 import hashlib
 import json
 import os
@@ -96,18 +105,23 @@ def run_guard():
     return 0
 
 
-def registration(fd):
-    """Says ready every two seconds until the agent sends a line."""
+def registration(fd, announce=True):
+    """Reads the agent's first line from fd; announcing, says ready on fd
+    every two seconds until the line comes."""
     got = b""
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
-        os.write(fd, READY)
+        if announce:
+            os.write(fd, READY)
         until = time.monotonic() + 2
         while time.monotonic() < until:
             r, _, _ = select.select([fd], [], [], max(until - time.monotonic(), 0))
             if not r:
                 continue
-            got += os.read(fd, 65536)
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                raise RuntimeError("the agent closed its input before the registration")
+            got += chunk
             if b"\n" in got:
                 return got.split(b"\n", 1)[0].strip().decode()
     raise RuntimeError("no registration from the agent")
@@ -179,14 +193,18 @@ def runner_env(jit, image=None):
 def main():
     if sys.argv[1:] == ["guard"]:
         return run_guard()
-    fd = os.open(PORT, os.O_RDWR | os.O_NOCTTY)
-    tty.setraw(fd)
+    container = sys.argv[1:] == ["stdin"]
+    if container:
+        rfd, wfd = 0, 1
+    else:
+        rfd = wfd = os.open(PORT, os.O_RDWR | os.O_NOCTTY)
+        tty.setraw(rfd)
 
     def say(msg):
-        os.write(fd, ("runner-up guest: %s\n" % msg).encode())
+        os.write(wfd, ("runner-up guest: %s\n" % msg).encode())
 
     try:
-        jit = registration(fd)
+        jit = registration(rfd, announce=not container)
         runner = prepare()
         env = runner_env(jit, image_environment())
         del jit
@@ -199,14 +217,19 @@ def main():
             group="runner",
             extra_groups=[],
             stdin=subprocess.DEVNULL,
-            stdout=fd,
+            stdout=wfd,
             stderr=subprocess.STDOUT,
         ).returncode
         say("the runner ended with %d" % code)
     except Exception as e:
         say("failed: %s" % e)
+        # A container guest's exit status is the agent's only sign that no
+        # runner ran; a VM turns off either way.
+        if container:
+            return 1
     finally:
-        subprocess.run(["systemctl", "poweroff"])
+        if not container:
+            subprocess.run(["systemctl", "poweroff"])
     return 0
 
 

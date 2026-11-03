@@ -8,11 +8,15 @@ import (
 )
 
 // The order rules decide which waiting job a free place takes. Each rule
-// splits the line in two, matching jobs first; the next rule orders each half,
-// and first-in, first-out breaks the last tie:
+// splits the line in two, matching jobs first except for last:, which puts
+// them last. Later rules order ties; first-in, first-out breaks the last tie:
 //
 //	pool:NAME         jobs asking for the pool NAME, such as short jobs a
 //	                  merge waits on, on the places it shares with other pools
+//	last:NAME         the one rule that puts its jobs last: jobs asking for
+//	                  the pool NAME, such as Linux guests sharing a Mac's
+//	                  budget, go behind other jobs tied by earlier rules, so
+//	                  a waiting job of another pool keeps its room first
 //	label:NAME        jobs from an open pull request labeled NAME, from the
 //	                  same repository, including runs on its head branch
 //	waited:DURATION   jobs waiting at least DURATION, oldest first among them,
@@ -51,7 +55,7 @@ func ParseOrder(order []string) ([]Rule, error) {
 				return nil, fmt.Errorf("order rule %q names no label", s)
 			}
 			r.label = arg
-		case "pool":
+		case "pool", "last":
 			if arg == "" {
 				return nil, fmt.Errorf("order rule %q names no pool", s)
 			}
@@ -75,7 +79,7 @@ func ParseOrder(order []string) ([]Rule, error) {
 				return nil, fmt.Errorf("order rule %q takes no argument", s)
 			}
 		default:
-			return nil, fmt.Errorf("unknown order rule %q: use pool:, label:, waited:, workflow: or shortest", s)
+			return nil, fmt.Errorf("unknown order rule %q: use pool:, last:, label:, waited:, workflow: or shortest", s)
 		}
 		out = append(out, r)
 	}
@@ -89,6 +93,10 @@ func before(x, y Job, rules []Rule, now time.Time) bool {
 		case "pool":
 			if a, b := x.Pool == r.pool, y.Pool == r.pool; a != b {
 				return a
+			}
+		case "last":
+			if a, b := x.Pool == r.pool, y.Pool == r.pool; a != b {
+				return b
 			}
 		case "label":
 			if a, b := x.Labels[r.label], y.Labels[r.label]; a != b {
