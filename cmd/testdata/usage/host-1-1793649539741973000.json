@@ -1,0 +1,20 @@
+{
+  "pool": "mac-journeys",
+  "machine": "mac-1",
+  "provider": "host",
+  "place": "host-1",
+  "runner": "runner-up-host-1-1793649539",
+  "startedAt": "2026-11-02T11:58:59.741973-08:00",
+  "finishedAt": "2026-11-02T11:59:58.5083-08:00",
+  "reservation": {
+    "cores": 6,
+    "memoryMB": 16384
+  },
+  "usage": {
+    "scope": "process-group",
+    "samples": 53,
+    "peakCores": 6.2260918511549335,
+    "peakMemoryMB": 3064.8125,
+    "seconds": 52.284266292
+  }
+}

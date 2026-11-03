@@ -336,8 +336,10 @@ func usageReport(cfg *config.Config, w io.Writer) int {
 		fmt.Fprintln(w, "could not read resource readings:", err)
 		return 1
 	}
-	fmt.Fprintln(w, "Sampled peaks, not guaranteed maxima; CPU is cores, memory is summed process RSS in MB.")
-	fmt.Fprintln(w, "Host groups can miss detached work; guest readings include all guest processes. Allow headroom before changing a size.")
+	fmt.Fprintln(w, "Sampled peaks, not guaranteed maxima; CPU is cores, memory is MB.")
+	fmt.Fprintln(w, "process-group: a host job's processes, memory as summed RSS; it can miss detached work.")
+	fmt.Fprintln(w, "guest: a whole tart guest, read from its kernel. guest-processes: older added-up guest readings.")
+	fmt.Fprintln(w, "A guest value above the guest's size cannot be its use and is not shown. Allow headroom before changing a size.")
 	for _, p := range cfg.Pools {
 		if p.Cores > 0 {
 			fmt.Fprintf(w, "pool %s: configured %d cores, %d MB\n", p.Label, p.Cores, p.MemoryMB)
@@ -356,9 +358,24 @@ func usageReport(cfg *config.Config, w io.Writer) int {
 				continue
 			}
 			u := r.Usage
-			fmt.Fprintf(w, "peak %.2f cores, %.1f MB (%s, %d samples, %.1fs", u.PeakCores, u.PeakMemoryMB, u.Scope, u.Samples, u.Seconds)
+			cores, memory := fmt.Sprintf("%.2f cores", u.PeakCores), fmt.Sprintf("%.1f MB", u.PeakMemoryMB)
+			// tart sizes a guest to its reservation, so a guest cannot use
+			// more; older guest readers could report more (RUU-34).
+			above := false
+			if u.Scope == "guest" || u.Scope == "guest-processes" {
+				if c := r.Reservation.Cores; c > 0 && u.PeakCores > float64(c) {
+					cores, above = "cores unavailable", true
+				}
+				if m := r.Reservation.MemoryMB; m > 0 && u.PeakMemoryMB > float64(m) {
+					memory, above = "memory unavailable", true
+				}
+			}
+			fmt.Fprintf(w, "peak %s, %s (%s, %d samples, %.1fs", cores, memory, u.Scope, u.Samples, u.Seconds)
 			if u.Incomplete {
 				fmt.Fprint(w, ", incomplete")
+			}
+			if above {
+				fmt.Fprint(w, "; read above the guest's size")
 			}
 			fmt.Fprintln(w, ")")
 		}

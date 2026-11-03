@@ -1,0 +1,21 @@
+{
+  "pool": "mac-sim",
+  "machine": "mac-1",
+  "provider": "tart",
+  "place": "vm-1",
+  "runner": "runner-up-vm-1-1793645604",
+  "startedAt": "2026-11-02T10:53:24.022121-08:00",
+  "finishedAt": "2026-11-02T11:24:12.647629-08:00",
+  "reservation": {
+    "cores": 4,
+    "memoryMB": 16384
+  },
+  "usage": {
+    "scope": "guest-processes",
+    "samples": 1435,
+    "peakCores": 147.69619204236315,
+    "peakMemoryMB": 83147.796875,
+    "seconds": 1823.525589083,
+    "incomplete": true
+  }
+}
