@@ -24,7 +24,7 @@ type processUse struct {
 }
 
 // readProcessUse reads numbers only, never another process's arguments or
-// environment. ps is available on the host and the macOS guest image.
+// environment. ps is available on macOS and Linux hosts.
 func readProcessUse(ctx context.Context) ([]processUse, error) {
 	c, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -75,63 +75,92 @@ func cpuSeconds(s string) (float64, error) {
 	return float64(days)*86400 + seconds, nil
 }
 
-// measureGroup samples one host runner's process group, or the whole guest
-// when group is zero. It stops before the caller releases the place. A
-// process that exits between samples, or escapes the host group, can be
-// missed: the report deliberately calls these sampled peaks.
+// sample is one reading: the memory in use now and, once the reader can
+// tell, the cores used since its previous reading.
+type sample struct {
+	cores    float64
+	hasCores bool
+	memoryMB float64
+}
+
+// measureGroup samples one host runner's process group. It stops before the
+// caller releases the place. A process that exits between samples, or escapes
+// the group, can be missed: the report deliberately calls these sampled peaks.
 func measureGroup(group int) func() Usage {
 	return measureGroupWith(group, readProcessUse)
 }
 
 func measureGroupWith(group int, read func(context.Context) ([]processUse, error)) func() Usage {
+	return measureWith("process-group", groupReader(group, read))
+}
+
+// groupReader adds up the group's processes: the CPU time they used since the
+// previous reading over the time between the two, and their RSS.
+func groupReader(group int, read func(context.Context) ([]processUse, error)) func(context.Context) (sample, error) {
+	var previous map[int]float64
+	var last time.Time
+	return func(ctx context.Context) (sample, error) {
+		rows, err := read(ctx)
+		if err != nil {
+			return sample{}, err
+		}
+		now := time.Now()
+		current := map[int]float64{}
+		var s sample
+		cpu := 0.0
+		for _, p := range rows {
+			if p.group != group {
+				continue
+			}
+			current[p.pid] = p.cpu
+			s.memoryMB += p.rss
+			if old, ok := previous[p.pid]; ok && p.cpu >= old {
+				cpu += p.cpu - old
+			}
+		}
+		if elapsed := now.Sub(last).Seconds(); previous != nil && elapsed > 0 {
+			s.cores, s.hasCores = cpu/elapsed, true
+		}
+		previous, last = current, now
+		return s, nil
+	}
+}
+
+// measureGuest samples the whole macOS guest a tart job runs in, until the
+// returned function stops it.
+func measureGuest() func() Usage {
+	return measureWith("guest", guestReader())
+}
+
+// measureWith keeps the peaks of read's samples, taken once a second until
+// the returned function stops it.
+func measureWith(scope string, read func(context.Context) (sample, error)) func() Usage {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan Usage, 1)
 	go func() {
 		start := time.Now()
-		last := start
-		scope := "process-group"
-		if group == 0 {
-			scope = "guest-processes"
-		}
 		u := Usage{Scope: scope}
-		previous := map[int]float64{}
-		sample := func() {
-			rows, err := read(ctx)
+		take := func() {
+			s, err := read(ctx)
 			if err != nil {
 				if ctx.Err() == nil {
 					u.Incomplete = true
 				}
 				return
 			}
-			now := time.Now()
-			elapsed := now.Sub(last).Seconds()
-			last = now
-			current := map[int]float64{}
-			cpu, rss := 0.0, 0.0
-			for _, p := range rows {
-				if group != 0 && p.group != group {
-					continue
-				}
-				current[p.pid] = p.cpu
-				rss += p.rss
-				if old, ok := previous[p.pid]; ok && p.cpu >= old {
-					cpu += p.cpu - old
-				}
+			if s.hasCores {
+				u.PeakCores = max(u.PeakCores, s.cores)
 			}
-			if u.Samples > 0 && elapsed > 0 {
-				u.PeakCores = max(u.PeakCores, cpu/elapsed)
-			}
-			u.PeakMemoryMB = max(u.PeakMemoryMB, rss)
+			u.PeakMemoryMB = max(u.PeakMemoryMB, s.memoryMB)
 			u.Samples++
-			previous = current
 		}
-		sample()
+		take()
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
 			select {
 			case <-tick.C:
-				sample()
+				take()
 			case <-ctx.Done():
 				u.Seconds = time.Since(start).Seconds()
 				if u.Samples < 2 {
@@ -156,10 +185,11 @@ func writeUsage(w io.Writer, u Usage) {
 	}
 }
 
-// MeasureMain runs inside a disposable tart guest. The guest's other
-// processes (including simulators started by launchd) belong to this job's
-// VM too. The wrapper takes the registration on stdin and gives only the
-// runner its required input variable; the wrapper's environment never holds it.
+// MeasureMain runs inside a disposable tart guest. The whole guest, including
+// simulators started by launchd, belongs to this job, so it reads the guest
+// rather than the runner's processes. The wrapper takes the registration on
+// stdin and gives only the runner its required input variable; the wrapper's
+// environment never holds it.
 func MeasureMain(args []string) int {
 	fs := flag.NewFlagSet("agent measure", flag.ContinueOnError)
 	if fs.Parse(args) != nil || len(fs.Args()) == 0 {
@@ -181,7 +211,7 @@ func MeasureMain(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	finish := measureGroup(0)
+	finish := measureGuest()
 	err := waitOrStop(ctx, cmd, func() { cmd.Process.Signal(syscall.SIGTERM) }, 30*time.Second)
 	writeUsage(os.Stdout, finish())
 	code := ExitCode(err)

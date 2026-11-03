@@ -5,9 +5,13 @@ import (
 	"math"
 )
 
-// Usage is an observation, not a limit or a recommendation. Peaks are sampled;
-// RSS sums resident process pages, including shared pages more than once.
-// Missing or failed readings are never represented as measured zero use.
+// Usage is an observation, not a limit or a recommendation. Peaks are sampled.
+// A "process-group" reading adds up a host job's processes; its RSS counts a
+// shared page once per process. A "guest" reading is a whole tart guest's
+// busy CPUs and memory in use, from its kernel, within the guest's size.
+// Agents before RUU-34 wrote "guest-processes": added-up guest processes,
+// which could read above the guest's size. Missing or failed readings are
+// never represented as measured zero use.
 type Usage struct {
 	Scope        string  `json:"scope"`
 	Samples      int     `json:"samples"`
@@ -27,6 +31,6 @@ func ParseUsage(line string) (Usage, bool) {
 		return u, false
 	}
 	valid := func(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 }
-	return u, (u.Scope == "process-group" || u.Scope == "guest-processes") && u.Samples > 0 &&
+	return u, (u.Scope == "process-group" || u.Scope == "guest" || u.Scope == "guest-processes") && u.Samples > 0 &&
 		valid(u.PeakCores) && valid(u.PeakMemoryMB) && valid(u.Seconds)
 }

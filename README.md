@@ -450,19 +450,29 @@ waiting for room.
 
 Use `runner-up usage` after representative jobs finish. It shows each pool's
 current size, each run's original reservation, and sampled peak cores and
-resident process memory. The initial readers cover host jobs on macOS and
-Linux and tart jobs in macOS guests. Other providers, interrupted readers and
-jobs too short to measure show unavailable or incomplete readings, never
-invented zero use.
+memory. The initial readers cover host jobs on macOS and Linux and tart jobs
+in macOS guests. Other providers, interrupted readers and jobs too short to
+measure show unavailable or incomplete readings, never invented zero use.
 
 Readings sample once a second over the one-job runner's lifetime, including
-its idle time and overhead. Host readings include its process group, not work
-that detaches from that group. Tart readings include all guest processes, so
-simulators started by the guest's system services count too. CPU comes from
-changes in sampled process CPU time; short-lived processes and peaks between
-samples can be missed. Memory is the sum of process RSS: it can count shared
-pages more than once and excludes kernel memory. These are observed samples,
-not hard maxima or a guarantee of available resources.
+its idle time and overhead. These are observed samples, not hard maxima or a
+guarantee of available resources.
+
+- **Host readings** (`process-group`) cover the runner's process group, not
+  work that detaches from it. CPU comes from changes in sampled process CPU
+  time, so short-lived processes and peaks between samples can be missed.
+  Memory is the sum of process RSS: it can count shared pages more than once
+  and excludes kernel memory.
+- **Tart readings** (`guest`) cover the whole guest, so simulators started by
+  the guest's system services count too. They come from the guest's kernel:
+  CPU is the busy share of the guest's CPUs over each second, as `iostat`
+  reports it, and memory is what the guest has in use (app memory, wired and
+  compressed, as Activity Monitor counts it), so a shared page counts once.
+  Neither can exceed the guest's own CPUs and memory.
+
+Older agents' tart readings (`guest-processes`) added up guest processes and
+could read far above the guest's size. `runner-up usage` shows any tart value
+above its reservation, which is the guest's size, as unavailable.
 
 Compare several representative runs on the same machine/provider, allow
 headroom, then edit the pool's size and restart the coordinator. Runner-up

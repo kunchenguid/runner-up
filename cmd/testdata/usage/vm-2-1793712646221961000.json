@@ -1,0 +1,20 @@
+{
+  "pool": "mac-phone",
+  "machine": "mac-2",
+  "provider": "tart",
+  "place": "vm-2",
+  "runner": "runner-up-vm-2-1793712646",
+  "startedAt": "2026-11-03T05:30:46.221961-08:00",
+  "finishedAt": "2026-11-03T05:32:03.313173-08:00",
+  "reservation": {
+    "cores": 5,
+    "memoryMB": 10240
+  },
+  "usage": {
+    "scope": "guest-processes",
+    "samples": 57,
+    "peakCores": 4.187989070040192,
+    "peakMemoryMB": 12130.71875,
+    "seconds": 56.292646125
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "pool": "mac-light",
+  "machine": "mac-1",
+  "provider": "tart",
+  "place": "vm-1",
+  "runner": "runner-up-vm-1-1793714653",
+  "startedAt": "2026-11-03T06:04:13.702895-08:00",
+  "finishedAt": "2026-11-03T06:07:23.039258-08:00",
+  "reservation": {
+    "cores": 4,
+    "memoryMB": 16384
+  },
+  "usage": {
+    "scope": "guest-processes",
+    "samples": 162,
+    "peakCores": 3.340310124432765,
+    "peakMemoryMB": 15951.453125,
+    "seconds": 161.093771625
+  }
+}
