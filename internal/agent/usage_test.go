@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// Intent (INF-2112 / RUU-28): sizes must be informed by readings of actual
+// Intent: sizes must be informed by readings of actual
 // work, not copied limits. This child uses one CPU and touches 32 MiB until
 // the parent has collected real OS readings. No fabricated ps fixture or
 // duration-dependent expectation stands in for a measurement.
@@ -45,7 +45,7 @@ func TestUsageWorkload(t *testing.T) {
 	}
 }
 
-// Intent (INF-2112 / RUU-28): the sampler reads this job's group, captures
+// Intent: the sampler reads this job's group, captures
 // nonzero CPU and resident memory, and emits a record the coordinator can
 // consume. Stopping readings completes without leaving a sampler behind.
 func TestUsageObservesActualJobProcesses(t *testing.T) {
@@ -102,7 +102,7 @@ func TestUsageObservesActualJobProcesses(t *testing.T) {
 	t.Logf("actual isolated job readings: %s", b)
 }
 
-// Intent (INF-2112 / RUU-28): absent and too-short readings must not look
+// Intent: absent and too-short readings must not look
 // like measured zero use. Exercise the actual reader with ps absent, then
 // with one real reading; the barrier models a job ending after that read.
 func TestUsageReportsUnavailableAndShortReadings(t *testing.T) {

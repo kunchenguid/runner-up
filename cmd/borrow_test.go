@@ -15,7 +15,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
-// Intent (INF-1823): the real borrow CLI waits beside jobs, passes the place
+// Intent: the real borrow CLI waits beside jobs, passes the place
 // and its size to the command, preserves stdio and exit status, survives a
 // coordinator restart, and cleans the named VM before releasing the place.
 // GitHub and the machine agent are isolated stand-ins; no real VM is started.
@@ -63,7 +63,7 @@ exit 23`
 	t.Logf("CLI transcript:\n%s\nRestart preserved the lock; cleanup removed the stand-in VM; exit=23.\n%s", transcript, borrowStatus(t, e))
 }
 
-// Intent (INF-1823): stopping a task ends its borrow and deletes its named VM;
+// Intent: stopping a task ends its borrow and deletes its named VM;
 // cancelling a queued task must never launch its command later.
 func TestBorrowCLICancellation(t *testing.T) {
 	for _, queued := range []bool{true, false} {
@@ -191,7 +191,7 @@ func borrowStatus(t *testing.T, e *e2e) string {
 	return string(b)
 }
 
-// Intent (INF-1823): borrowing requires an explicit label, declared positive
+// Intent: borrowing requires an explicit label, declared positive
 // minutes and a tart pool, rather than silently taking a non-VM place.
 func TestBorrowCLIRejectsInvalidInputs(t *testing.T) {
 	e := newE2E(t) // Its pool has only a Docker place.

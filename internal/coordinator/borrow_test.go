@@ -41,7 +41,7 @@ func enqueueBorrow(t *testing.T, cfg *config.Config, r borrowRequest) *os.File {
 	return live
 }
 
-// Intent (INF-1823): borrows rank among recorded jobs by the same rules,
+// Intent: borrows rank among recorded jobs by the same rules,
 // using declared minutes rather than the unknown or learned job estimate.
 // They may borrow only tart places, never a host or retired crew place.
 func TestBorrowRanksAmongRecordedJobs(t *testing.T) {
@@ -104,7 +104,7 @@ func TestBorrowRanksAmongRecordedJobs(t *testing.T) {
 	}
 }
 
-// Intent (INF-1823 and RUU-28): a borrow survives a service restart and counts
+// Intent: a borrow survives a service restart and counts
 // its pool's launch-time size and named VM once, even after a size edit and
 // when the agent reports that VM as running.
 func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
@@ -140,7 +140,7 @@ func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	t.Logf("restart after size edit: named VM plus held borrow keeps %+v once and leaves the second VM slot free", reservation)
 }
 
-// Intent (INF-1823): an abandoned waiter holds nothing and cannot later be
+// Intent: an abandoned waiter holds nothing and cannot later be
 // granted a place. Equal labels still identify independent requests.
 func TestBorrowAbandonedWaiterAndEqualLabels(t *testing.T) {
 	cfg := oneMac(t.TempDir())
@@ -160,7 +160,7 @@ func TestBorrowAbandonedWaiterAndEqualLabels(t *testing.T) {
 	}
 }
 
-// Intent (captain's written answer on INF-1823): max(1 hour, what crew asked).
+// Intent (a borrow's limit): max(1 hour, what crew asked).
 // The duration feeds the same command cancellation path exercised below.
 func TestBorrowLimit(t *testing.T) {
 	for _, minutes := range []int{1, 20, 60, 90, 180} {
@@ -170,7 +170,7 @@ func TestBorrowLimit(t *testing.T) {
 	}
 }
 
-// Intent (INF-1823): a stopped or expired borrow stops its command and returns
+// Intent: a stopped or expired borrow stops its command and returns
 // an explanation, and ordinary command exits retain their exit status.
 func TestBorrowCommandExitAndDeadline(t *testing.T) {
 	for _, deadline := range []bool{false, true} {
@@ -223,7 +223,7 @@ func TestBorrowCommandExitAndDeadline(t *testing.T) {
 	}
 }
 
-// Intent (INF-1823): a borrowed command that a signal ends reports the
+// Intent: a borrowed command that a signal ends reports the
 // shell-compatible status 128 plus the signal, not a lost status.
 func TestBorrowCommandSignalStatus(t *testing.T) {
 	out, err := os.CreateTemp(t.TempDir(), "output")
@@ -239,7 +239,7 @@ func TestBorrowCommandSignalStatus(t *testing.T) {
 	}
 }
 
-// Intent (INF-1823): a request enters the line only after its live lock is
+// Intent: a request enters the line only after its live lock is
 // held. A scheduling pass during caller initialization must not delete the
 // caller's folder before it can publish the request.
 func TestBorrowUnpublishedRequestIsNotCollected(t *testing.T) {

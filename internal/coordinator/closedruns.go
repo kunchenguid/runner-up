@@ -52,7 +52,7 @@ func quietFor(j plan.Job) (quiet, recheck time.Duration) {
 // at less its quiet time.
 func quietSince(j plan.Job, at time.Time) bool {
 	quiet, _ := quietFor(j)
-	return quiet > 0 && at.Sub(j.Heard()) >= quiet
+	return quiet > 0 && at.Sub(j.HeardAt) >= quiet
 }
 
 // forgetClosedRuns asks GitHub about the runs of waiting assigned jobs it

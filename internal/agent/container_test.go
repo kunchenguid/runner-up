@@ -2,7 +2,7 @@
 
 package agent
 
-// Intent (DOP-251's approved plan, piece 1: "an Apple container provider ...
+// Intent ("an Apple container provider ...
 // Pass the registration only on the guest's standard input, never with -e or
 // in a file"). An Apple container place starts one fresh Linux guest per job
 // from its image, sized to the job; the registration reaches the guest only on

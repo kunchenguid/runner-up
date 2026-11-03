@@ -11,7 +11,7 @@
     "memoryMB": 16384
   },
   "usage": {
-    "scope": "guest-processes",
+    "scope": "guest",
     "samples": 162,
     "peakCores": 3.340310124432765,
     "peakMemoryMB": 15951.453125,

@@ -29,7 +29,7 @@ func longPath(t *testing.T, path string) string {
 	return windows.UTF16ToString(b[:n])
 }
 
-// Intent (RUU-37, DOP-235's approved plan: "copy agents to the PC"): the
+// Intent ("copy agents to the PC"): the
 // coordinator sends a release's program to a Windows machine on standard
 // input of the line it hands the machine's SSH server, which runs it with
 // cmd.exe. The machine keeps the program byte for byte in the account's own

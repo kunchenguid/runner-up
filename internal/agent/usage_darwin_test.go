@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Intent (RUU-34 / DOP-252): a tart guest's reading stays within the guest's
+// Intent: a tart guest's reading stays within the guest's
 // own CPUs and memory, even when its readings return late as they do in a busy
 // guest. Adding up processes, a ps returning 1.9 s late on every second reading
 // read 70-93 cores on a 14-CPU Mac, and summed RSS read 41-97 GB in 10-16 GB

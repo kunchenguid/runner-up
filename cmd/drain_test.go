@@ -101,7 +101,7 @@ func (e *e2e) statusSays(want ...string) string {
 	return out
 }
 
-// Intent (RUU-31, the captain: "drain new job placement, let running jobs
+// Intent ("drain new job placement, let running jobs
 // finish, do the blocked step, then resume placement right away"; its goal:
 // "without stopping the coordinator or affecting other places"): with a
 // real coordinator serving, `runner-up drain` keeps two places from new
@@ -194,7 +194,7 @@ func TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet(t *testing.T) {
 	}
 }
 
-// Intent (RUU-31: "then resume placement right away"; README: "Stopping
+// Intent ("then resume placement right away"; README: "Stopping
 // runner-up drain ... ends it early"): stopping the drain mid-way exits 130,
 // gives its places back at once to a job it held, and the job running in a
 // drained place carries on.
@@ -235,7 +235,7 @@ func TestStoppingTheDrainResumesPlacementAndKeepsRunningJobs(t *testing.T) {
 	}
 }
 
-// Intent (RUU-31: the drain names places and jobs; a mistyped one must not
+// Intent (the drain names places and jobs; a mistyped one must not
 // pause anything): the drain refuses a place the setup lacks, a job named
 // twice and missing input, exiting 2 before it publishes anything.
 func TestDrainRefusesWhatItCannotDo(t *testing.T) {

@@ -26,7 +26,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/release"
 )
 
-// Intent (RUU-37, DOP-235's approved plan): "the setup names a runner-up
+// Intent: "the setup names a runner-up
 // version and a per-platform SHA-256; runner-up downloads, verifies and
 // restarts into it; it copies agents to the PC and the rented Macs; it rolls
 // back a version that stops within a minute" - "If a new version stops within

@@ -228,7 +228,7 @@ func TestPullRequestLabelsComeOnlyFromTheRepository(t *testing.T) {
 	}
 }
 
-// Intent (DOP-251's approved plan, direction A: "guests in the shared budget,
+// Intent ("guests in the shared budget,
 // ranked last"). last:NAME puts a pool's jobs behind every other job, so Linux
 // guests sharing a Mac's budget never take the room a waiting Mac job needs:
 // that job either starts or keeps its room first, and the guests use only

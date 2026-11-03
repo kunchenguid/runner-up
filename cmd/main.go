@@ -477,7 +477,7 @@ func usageReport(cfg *config.Config, w io.Writer) int {
 	}
 	fmt.Fprintln(w, "Sampled peaks, not guaranteed maxima; CPU is cores, memory is MB.")
 	fmt.Fprintln(w, "process-group: a host job's processes, memory as summed RSS; it can miss detached work.")
-	fmt.Fprintln(w, "guest: a whole tart guest, read from its kernel. guest-processes: older added-up guest readings.")
+	fmt.Fprintln(w, "guest: a whole tart guest, read from its kernel.")
 	fmt.Fprintln(w, "A guest value above the guest's size cannot be its use and is not shown. Allow headroom before changing a size.")
 	for _, p := range cfg.Pools {
 		if p.Cores > 0 {
@@ -499,9 +499,9 @@ func usageReport(cfg *config.Config, w io.Writer) int {
 			u := r.Usage
 			cores, memory := fmt.Sprintf("%.2f cores", u.PeakCores), fmt.Sprintf("%.1f MB", u.PeakMemoryMB)
 			// tart sizes a guest to its reservation, so a guest cannot use
-			// more; older guest readers could report more (RUU-34).
+			// more; a reading above it is not a measurement of the guest.
 			above := false
-			if u.Scope == "guest" || u.Scope == "guest-processes" {
+			if u.Scope == "guest" {
 				if c := r.Reservation.Cores; c > 0 && u.PeakCores > float64(c) {
 					cores, above = "cores unavailable", true
 				}

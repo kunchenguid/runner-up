@@ -23,9 +23,9 @@ import (
 
 func TestMain(m *testing.M) { testbin.Main(m) }
 
-// Intent (RUU-37: the captain's choice, "The service updates itself from
+// Intent ("The service updates itself from
 // signed runner-up releases; you create one signing key, and whoever holds
-// it controls the PC", and DOP-221's fixes to runner-up setup: install each
+// it controls the PC", and the setup's fixes: install each
 // version in a folder of its own, and leave the service alone when nothing
 // changed): runner-up setup installs the service from a folder of its
 // version and starts it; run again with the same program, it leaves the

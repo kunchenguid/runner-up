@@ -14,7 +14,7 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (RUU-15, found planning rented Macs: "When a machine's agent cannot
+// Intent ("When a machine's agent cannot
 // be reached (SSH refused or timing out), runner-up stops giving that
 // machine's places jobs until it answers again, makes no new runner
 // registration in the meantime, and the job it held goes to a healthy

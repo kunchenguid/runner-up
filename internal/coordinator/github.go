@@ -2,11 +2,9 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -231,9 +229,6 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 		if err != nil {
 			return fmt.Errorf("get message: %w", err)
 		}
-		if msg != nil {
-			record(svc.Setup(), target, label, msg)
-		}
 		if err := svc.Handle(ctx, target, label, msg); err != nil {
 			return err
 		}
@@ -248,22 +243,4 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 		}
 	}
 	return ctx.Err()
-}
-
-// record keeps a message for test fixtures when RecordMessagesDir is set.
-func record(cfg *config.Config, target, label string, msg *scaleset.RunnerScaleSetMessage) {
-	if cfg.RecordMessagesDir == "" {
-		return
-	}
-	b, err := json.MarshalIndent(struct {
-		Target  string                          `json:"target"`
-		Label   string                          `json:"label"`
-		Message *scaleset.RunnerScaleSetMessage `json:"message"`
-	}{target, label, msg}, "", "  ")
-	if err != nil {
-		return
-	}
-	name := fmt.Sprintf("%s-%s-%s-%06d.json", time.Now().UTC().Format("20060102T150405.000Z"), strings.ReplaceAll(target, "/", "_"), label, msg.MessageID)
-	os.MkdirAll(cfg.RecordMessagesDir, 0o700)
-	os.WriteFile(filepath.Join(cfg.RecordMessagesDir, name), b, 0o600)
 }

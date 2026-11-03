@@ -44,7 +44,7 @@ type Job struct {
 	HeardAt time.Time `json:"heardAt,omitempty"`
 
 	// Filled in before planning, never saved.
-	// Size is the pool's size, or zero to use each place's legacy size.
+	// Size is the pool's size, or zero to use each place's own size.
 	Size config.Share `json:"-"`
 	// Estimate is a borrow's declared duration, or a job's last successful wall
 	// time from runner assignment to finish; zero for a job with no successful run.
@@ -68,15 +68,6 @@ func RequestKey(target, pool string, requestID int64) string {
 
 func RunKey(target, pool string, runID int64, name string) string {
 	return fmt.Sprintf("%s|%s|run %d|%s", target, pool, runID, name)
-}
-
-// Heard is when GitHub last sent anything about the job; a job saved before
-// HeardAt was kept counts from when it was first seen.
-func (j Job) Heard() time.Time {
-	if j.HeardAt.IsZero() {
-		return j.SeenAt
-	}
-	return j.HeardAt
 }
 
 func (j Job) Key() string {

@@ -10,7 +10,7 @@ import (
 )
 
 // guestReader reads the whole macOS guest from its kernel's own counters
-// rather than adding up its processes (RUU-34). Adding them up read a guest
+// rather than adding up its processes. Adding them up reads a guest
 // above its size: one ps that returned late shrank the time the CPU it read
 // was divided by, and pages shared by many processes counted once per process.
 //
