@@ -36,7 +36,7 @@ func CheckSetup(b []byte) (*config.Config, []plan.Rule, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	rules, err := plan.ParseOrder(cfg.Order)
+	rules, err := plan.ParseOrder(cfg)
 	if err != nil {
 		return nil, nil, err
 	}

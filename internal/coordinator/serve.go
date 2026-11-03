@@ -108,7 +108,7 @@ func Serve(ctx context.Context, cfg *config.Config, o ServeOptions) int {
 		case <-launcher.Exited:
 		case <-up.Changed:
 			// A machine's agent changed: place runners start with it from now.
-			rules, err := plan.ParseOrder(base.Order)
+			rules, err := plan.ParseOrder(base)
 			if err == nil {
 				_, err = svc.Reload(up.Setup(base), rules)
 			}

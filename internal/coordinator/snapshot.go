@@ -164,28 +164,44 @@ func (s *Service) Reservation(p config.Place) config.Share {
 // also busy while its Mac runs as many macOS VMs as it may (vmlimit.go). A
 // lock that cannot be read counts busy, so a broken reader never starts a
 // second job in a place.
-func (s *Service) PlaceBusy(p config.Place) (bool, string) {
+func (s *Service) PlaceBusy(p config.Place) (bool, BusyReason) {
 	return s.snapshotLocked().busy(p, true)
 }
 
-func (v *snapshot) busy(p config.Place, resources bool) (bool, string) {
+// BusyReason says why a place is busy: one of the reasons below, or what
+// keeps it from fitting on its machine, such as "cores 4 of 6 in use".
+type BusyReason string
+
+const (
+	// BusyUnreadable: its lock could not be read.
+	BusyUnreadable BusyReason = "unreadable"
+	// BusyJob: a place runner holds it, for a job.
+	BusyJob BusyReason = "job"
+	// BusyBorrow: a borrow supervisor holds it.
+	BusyBorrow BusyReason = "borrow"
+)
+
+// Runs says whether a job or a borrow holds the place.
+func (r BusyReason) Runs() bool { return r == BusyJob || r == BusyBorrow }
+
+func (v *snapshot) busy(p config.Place, resources bool) (bool, BusyReason) {
 	st := v.place(p.ID)
 	if st.unreadable {
-		return true, "unreadable"
+		return true, BusyUnreadable
 	}
 	if st.alive {
 		if st.hasRun && st.run.BorrowID != "" {
-			return true, "borrow"
+			return true, BusyBorrow
 		}
-		return true, "job"
+		return true, BusyJob
 	}
 	if resources {
 		if why := v.tight(p); why != "" {
-			return true, why
+			return true, BusyReason(why)
 		}
 	}
 	if why := v.vmLimitFull(p); why != "" {
-		return true, why
+		return true, BusyReason(why)
 	}
 	return false, ""
 }

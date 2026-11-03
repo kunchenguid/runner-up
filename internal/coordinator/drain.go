@@ -19,7 +19,6 @@ import (
 	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/cli"
 	"github.com/kunchenguid/runner-up/internal/config"
-	"github.com/kunchenguid/runner-up/internal/lock"
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
@@ -64,9 +63,20 @@ type drainState struct {
 	Ran  map[string]drainRun `json:"ran,omitempty"`
 	Done time.Time           `json:"done,omitempty"`
 	// Phase and Detail say where the drain stands, for its caller and status.
-	Phase  string `json:"phase,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	Phase  DrainPhase `json:"phase,omitempty"`
+	Detail string     `json:"detail,omitempty"`
 }
+
+// DrainPhase is where a drain stands; the comment on drainRequest says what
+// each phase means.
+type DrainPhase string
+
+const (
+	DrainDraining  DrainPhase = "draining"
+	DrainAdmitting DrainPhase = "admitting"
+	DrainRunning   DrainPhase = "running"
+	DrainDone      DrainPhase = "done"
+)
 
 type drainRun struct {
 	Place  string `json:"place,omitempty"`
@@ -103,26 +113,14 @@ func (d *drain) admitted(place string, run PlaceRun) bool {
 	return slices.Contains(d.Places, place) && run.BorrowID == "" && !d.Drained.IsZero() && !run.LaunchedAt.Before(d.Drained)
 }
 
-// listDrains reads every published drain, in the order the drains were
-// made, and whether its caller still holds it. A directory whose caller has
-// not yet published its request is not a drain.
+// listDrains reads the published drains whose callers hold them, in the
+// order they were made, and names those whose callers let go (request.go).
 func listDrains(cfg *config.Config) (live []*drain, gone []string) {
-	entries, _ := os.ReadDir(drainsDir(cfg))
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := drainDir(cfg, e.Name())
+	held, gone := scanRequests(drainsDir(cfg), "request.json")
+	for _, id := range held {
+		dir := drainDir(cfg, id)
 		d := &drain{}
-		if config.ReadJSON(filepath.Join(dir, "request.json"), &d.drainRequest) != nil || d.ID != e.Name() {
-			continue
-		}
-		held, err := lock.HeldBy(filepath.Join(dir, "live.lock"))
-		if err != nil {
-			continue
-		}
-		if !held {
-			gone = append(gone, e.Name())
+		if config.ReadJSON(filepath.Join(dir, "request.json"), &d.drainRequest) != nil || d.ID != id {
 			continue
 		}
 		d.saved, _ = os.ReadFile(filepath.Join(dir, "state.json"))
@@ -187,7 +185,7 @@ func (s *Service) advanceDrainLocked(d *drain) {
 	}
 	if d.Drained.IsZero() {
 		if len(running) > 0 {
-			d.Phase, d.Detail = "draining", strings.Join(running, "; ")
+			d.Phase, d.Detail = DrainDraining, strings.Join(running, "; ")
 			s.saveDrainLocked(d)
 			return
 		}
@@ -220,15 +218,15 @@ func (s *Service) advanceDrainLocked(d *drain) {
 			states = append(states, strconv.Quote(name)+" waits")
 		}
 	}
-	d.Phase, d.Detail = "admitting", strings.Join(states, ", ")
+	d.Phase, d.Detail = DrainAdmitting, strings.Join(states, ", ")
 	if allRan {
 		// Every named job has its place; the places take nothing more until
 		// those jobs end.
-		d.Phase = "running"
+		d.Phase = DrainRunning
 	}
 	if finished {
 		d.Done = now
-		d.Phase, d.Detail = "done", d.Detail+"; placement resumed"
+		d.Phase, d.Detail = DrainDone, d.Detail+"; placement resumed"
 		s.Log.Info("drain done; placement resumes", "label", d.Label, "places", strings.Join(d.Places, ","),
 			"took", now.Sub(d.Queued).Round(time.Second).String())
 	}
@@ -358,7 +356,7 @@ type DrainStatus struct {
 	Jobs   []string
 	Repo   string
 	Queued time.Time
-	Phase  string
+	Phase  DrainPhase
 	Detail string
 }
 
@@ -446,10 +444,6 @@ func checkDrain(cfg *config.Config, places, jobs []string, repo string) error {
 // coordinator reports it done (0), the time limit passes (124) or the caller
 // is stopped (130). Every way out lets go of the drain.
 func runDrain(ctx context.Context, cfg *config.Config, req drainRequest, out io.Writer) (int, error) {
-	root := drainsDir(cfg)
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return 1, err
-	}
 	live, _ := listDrains(cfg)
 	for _, d := range live {
 		if d.active() {
@@ -460,28 +454,16 @@ func runDrain(ctx context.Context, cfg *config.Config, req drainRequest, out io.
 			}
 		}
 	}
-	dir, err := os.MkdirTemp(root, "drain-")
+	request, err := openRequest(drainsDir(cfg), "drain-")
 	if err != nil {
-		return 1, err
-	}
-	// Only a published request belongs to the coordinator; afterwards the
-	// live lock, not removing the directory, withdraws it.
-	published := false
-	defer func() {
-		if !published {
-			os.RemoveAll(dir)
-		}
-	}()
-	held, err := lock.Busy(filepath.Join(dir, "live.lock"))
-	if err != nil || held == nil {
 		return 1, fmt.Errorf("could not hold the drain: %v", err)
 	}
-	defer held.Close()
-	req.ID, req.Queued = filepath.Base(dir), time.Now()
-	if err := config.WriteJSON(filepath.Join(dir, "request.json"), req); err != nil {
+	defer request.close()
+	dir := request.dir
+	req.ID, req.Queued = request.id(), time.Now()
+	if err := request.publish(req); err != nil {
 		return 1, err
 	}
-	published = true
 	limit := time.NewTimer(time.Duration(req.Minutes) * time.Minute)
 	defer limit.Stop()
 	poll := time.NewTicker(time.Second)
@@ -491,7 +473,7 @@ func runDrain(ctx context.Context, cfg *config.Config, req drainRequest, out io.
 		var st drainState
 		message := "waiting for the coordinator"
 		if config.ReadJSON(filepath.Join(dir, "state.json"), &st) == nil && st.Phase != "" {
-			message = st.Phase
+			message = string(st.Phase)
 			if st.Detail != "" {
 				message += ": " + st.Detail
 			}

@@ -161,7 +161,7 @@ func Main() {
 	}
 	cfg, err := config.LoadConfig(*configPath)
 	if err == nil {
-		_, err = plan.ParseOrder(cfg.Order)
+		_, err = plan.ParseOrder(cfg)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -241,7 +241,7 @@ func status(cfg *config.Config, w io.Writer) int {
 	drains := coordinator.Drains(cfg)
 	drainedFor := map[string]string{}
 	for _, d := range slices.Backward(drains) {
-		if d.Phase != "done" {
+		if d.Phase != coordinator.DrainDone {
 			for _, id := range d.Places {
 				drainedFor[id] = d.Label
 			}
@@ -262,7 +262,7 @@ func status(cfg *config.Config, w io.Writer) int {
 		}
 		state := "free"
 		if busy {
-			state = "busy (" + why + ")"
+			state = "busy (" + string(why) + ")"
 		} else if since, ok := st.Unreachable[p.Machine]; ok {
 			state = "resting (agent unreachable since " + since.Local().Format(time.RFC3339) + ")"
 		} else if label, ok := drainedFor[p.ID]; ok {
@@ -270,7 +270,7 @@ func status(cfg *config.Config, w io.Writer) int {
 		}
 		job := ""
 		var run coordinator.PlaceRun
-		if (why == "job" || why == "borrow") && config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil {
+		if why.Runs() && config.ReadJSON(filepath.Join(cfg.PlaceDir(p.ID), "place.json"), &run) == nil {
 			started := "waiting for its job"
 			if run.Started {
 				started = "running"
@@ -280,7 +280,7 @@ func status(cfg *config.Config, w io.Writer) int {
 				job = fmt.Sprintf(": borrow %q since %s", run.JobName, run.LaunchedAt.Local().Format(time.RFC3339))
 			}
 		}
-		if why == "job" || why == "borrow" {
+		if why.Runs() {
 			sh := svc.Reservation(p)
 			p.Cores, p.MemoryMB = sh.Cores, sh.MemoryMB
 		}
@@ -296,7 +296,7 @@ func status(cfg *config.Config, w io.Writer) int {
 		}
 		phase := "waiting for the coordinator"
 		if d.Phase != "" {
-			phase = d.Phase
+			phase = string(d.Phase)
 			if d.Detail != "" {
 				phase += ": " + d.Detail
 			}

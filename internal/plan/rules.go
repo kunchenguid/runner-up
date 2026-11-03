@@ -3,8 +3,11 @@ package plan
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/kunchenguid/runner-up/internal/config"
 )
 
 // The order rules decide which waiting job a free place takes. Each rule
@@ -33,40 +36,59 @@ var defaultOrder = []string{"waited:60m", "shortest"}
 
 const unknownDuration = 15 * time.Minute
 
+// ruleKind is what an order rule compares, the part before its colon.
+type ruleKind string
+
+const (
+	rulePool     ruleKind = "pool"
+	ruleLast     ruleKind = "last"
+	ruleLabel    ruleKind = "label"
+	ruleWaited   ruleKind = "waited"
+	ruleWorkflow ruleKind = "workflow"
+	ruleShortest ruleKind = "shortest"
+)
+
 type Rule struct {
-	kind  string
+	kind  ruleKind
 	label string
 	pool  string
 	wait  time.Duration
 	globs []string
 }
 
-func ParseOrder(order []string) ([]Rule, error) {
+// ParseOrder reads and checks the setup's order rules, or the default order
+// when it has none. A pool or last rule must name a pool of the setup: one
+// that names no pool would order nothing, and say nothing.
+func ParseOrder(cfg *config.Config) ([]Rule, error) {
+	order := cfg.Order
 	if len(order) == 0 {
 		order = defaultOrder
 	}
 	var out []Rule
 	for _, s := range order {
 		kind, arg, _ := strings.Cut(s, ":")
-		r := Rule{kind: kind}
-		switch kind {
-		case "label":
+		r := Rule{kind: ruleKind(kind)}
+		switch r.kind {
+		case ruleLabel:
 			if arg == "" {
 				return nil, fmt.Errorf("order rule %q names no label", s)
 			}
 			r.label = arg
-		case "pool", "last":
+		case rulePool, ruleLast:
 			if arg == "" {
 				return nil, fmt.Errorf("order rule %q names no pool", s)
 			}
+			if !slices.ContainsFunc(cfg.Pools, func(p config.Pool) bool { return p.Label == arg }) {
+				return nil, fmt.Errorf("order rule %q names no pool of this setup", s)
+			}
 			r.pool = arg
-		case "waited":
+		case ruleWaited:
 			d, err := time.ParseDuration(arg)
 			if err != nil || d <= 0 {
 				return nil, fmt.Errorf("order rule %q needs a duration, such as waited:60m", s)
 			}
 			r.wait = d
-		case "workflow":
+		case ruleWorkflow:
 			for _, g := range strings.Split(arg, ",") {
 				g = strings.TrimSpace(g)
 				if _, err := path.Match(g, ""); err != nil || g == "" {
@@ -74,7 +96,7 @@ func ParseOrder(order []string) ([]Rule, error) {
 				}
 				r.globs = append(r.globs, g)
 			}
-		case "shortest":
+		case ruleShortest:
 			if arg != "" {
 				return nil, fmt.Errorf("order rule %q takes no argument", s)
 			}
@@ -90,19 +112,19 @@ func ParseOrder(order []string) ([]Rule, error) {
 func before(x, y Job, rules []Rule, now time.Time) bool {
 	for _, r := range rules {
 		switch r.kind {
-		case "pool":
+		case rulePool:
 			if a, b := x.Pool == r.pool, y.Pool == r.pool; a != b {
 				return a
 			}
-		case "last":
+		case ruleLast:
 			if a, b := x.Pool == r.pool, y.Pool == r.pool; a != b {
 				return b
 			}
-		case "label":
+		case ruleLabel:
 			if a, b := x.Labels[r.label], y.Labels[r.label]; a != b {
 				return a
 			}
-		case "waited":
+		case ruleWaited:
 			a := !x.QueueTime.IsZero() && now.Sub(x.QueueTime) >= r.wait
 			b := !y.QueueTime.IsZero() && now.Sub(y.QueueTime) >= r.wait
 			if a != b {
@@ -111,11 +133,11 @@ func before(x, y Job, rules []Rule, now time.Time) bool {
 			if a {
 				return fifo(x, y)
 			}
-		case "workflow":
+		case ruleWorkflow:
 			if a, b := r.matches(x), r.matches(y); a != b {
 				return a
 			}
-		case "shortest":
+		case ruleShortest:
 			dx, dy := x.Estimate, y.Estimate
 			if dx <= 0 {
 				dx = unknownDuration
@@ -156,8 +178,8 @@ func (r Rule) matches(j Job) bool {
 // run's top-level workflow.
 func Needs(rules []Rule) (labels, workflows bool) {
 	for _, r := range rules {
-		labels = labels || r.kind == "label"
-		workflows = workflows || r.kind == "workflow"
+		labels = labels || r.kind == ruleLabel
+		workflows = workflows || r.kind == ruleWorkflow
 	}
 	return
 }

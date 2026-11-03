@@ -110,7 +110,7 @@ type setName struct{ target, pool string }
 func setKey(target, pool string) string { return target + "|" + pool }
 
 func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Service, error) {
-	rules, err := plan.ParseOrder(cfg.Order)
+	rules, err := plan.ParseOrder(cfg)
 	if err != nil {
 		return nil, err
 	}

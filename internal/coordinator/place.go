@@ -105,26 +105,34 @@ func (l *ProcLauncher) setup() (*config.Config, string, error) {
 }
 
 func (l *ProcLauncher) Launch(p config.Place, pool string, lock *os.File, jit string) error {
+	log := fmt.Sprintf("%s-%s.log", p.ID, time.Now().UTC().Format("20060102T150405Z"))
+	return l.start(p, lock, log, strings.NewReader(jit+"\n"), "run-place", "--pool", pool)
+}
+
+// start runs this program as command, a place's detached supervisor: a
+// place runner or a borrow supervisor. It holds place p's locked busy.lock
+// as file descriptor 3 and reads the setup the coordinator runs, and its
+// output goes to log in the logs folder.
+func (l *ProcLauncher) start(p config.Place, busy *os.File, log string, stdin io.Reader, command string, args ...string) error {
 	cfg, setupPath, err := l.setup()
 	if err != nil {
 		return err
 	}
-	logPath := filepath.Join(cfg.LogsDir(), fmt.Sprintf("%s-%s.log", p.ID, time.Now().UTC().Format("20060102T150405Z")))
-	out, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	out, err := os.OpenFile(filepath.Join(cfg.LogsDir(), log), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	cmd := exec.Command(l.self, "run-place", "--config", setupPath, "--place", p.ID, "--pool", pool)
-	cmd.Stdin = strings.NewReader(jit + "\n")
+	cmd := exec.Command(l.self, append([]string{command, "--config", setupPath, "--place", p.ID}, args...)...)
+	cmd.Stdin = stdin
 	cmd.Stdout, cmd.Stderr = out, out
-	cmd.ExtraFiles = []*os.File{lock}
+	cmd.ExtraFiles = []*os.File{busy}
 	proc.Detach(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	if err := updatePlaceRun(cfg, p.ID, func(run *PlaceRun) { run.PID = cmd.Process.Pid }); err != nil {
-		l.log.Warn("could not record the place runner's process; stopping it waits for its job to end", "place", p.ID, "err", err)
+		l.log.Warn("could not record the place's supervisor process; stopping it waits for it to end", "place", p.ID, "err", err)
 	}
 	go func() {
 		err := cmd.Wait()

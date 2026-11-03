@@ -104,7 +104,7 @@ func reload(t *testing.T, svc *Service, next *config.Config) {
 	if err := next.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	rules, err := plan.ParseOrder(next.Order)
+	rules, err := plan.ParseOrder(next)
 	if err != nil {
 		t.Fatal(err)
 	}
