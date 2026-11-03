@@ -17,9 +17,8 @@ import (
 // machine add gives a machine as many places as fit its cores and memory less
 // the room kept for its owner, and no more tart places than macOS runs VMs at
 // once, refuses a machine that cannot run the places asked for, and writes a
-// setup that loads as written. A pool label GitHub's own runners, or every
-// self-hosted runner, answer to is refused, so pools stay apart from other
-// runners.
+// setup that loads as written. The setup checks themselves are owned by
+// internal/config (config_test.go).
 
 // limaProbe is what machine add read of the Linux test machine over SSH: a
 // Lima VM with 4 cores and 5910 MB running Ubuntu 24.04 on arm64, with Docker
@@ -123,28 +122,6 @@ func TestMachineAddRefusesMachinesThatCannotRunThePlaces(t *testing.T) {
 	}
 }
 
-func TestPoolLabelsOtherRunnersAnswerToAreRefused(t *testing.T) {
-	for _, label := range []string{"ubuntu-latest", "macos-14", "windows-2025", "self-hosted", "Linux", "x64", "two words", ""} {
-		cfg := initialSetup(t)
-		cfg.Pools = []config.Pool{{Label: label}}
-		if err := cfg.Validate(); err == nil {
-			t.Errorf("pool label %q was accepted", label)
-		}
-	}
-	if err := initialSetup(t).Validate(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestOwnersRoomMustLeaveThePlacesSomething(t *testing.T) {
-	cfg := initialSetup(t)
-	cfg.Machines = []config.Machine{{Name: "lima", SSH: []string{"ci@lima"}, Cores: 4, MemoryMB: 5910, RoomCores: 4,
-		Places: []config.Place{{ID: "lima-1", Provider: config.ProviderDocker, Pools: []string{"ru-linux"}, Cores: 2, MemoryMB: 2048}}}}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "the room kept for its owner") {
-		t.Fatalf("a machine whose owner keeps every core was accepted: %v", err)
-	}
-}
-
 func TestMachineAddGivesAMacNoMoreTartPlacesThanMacOSRunsVMs(t *testing.T) {
 	mac := config.Machine{Name: "mac", SSH: []string{"you@mac"}}
 	const image = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
@@ -229,77 +206,6 @@ func TestPoolImagesKeepThePlacesAndTheirShares(t *testing.T) {
 			if got := p.ImageFor(pool); got != want {
 				t.Errorf("place %s runs a %s job on %q, want %q", p.ID, pool, got, want)
 			}
-		}
-	}
-}
-
-// Intent (README, "Setup file", poolImages): a pool image no job could run on
-// is refused when the setup loads, not when a job reaches it.
-func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
-	// An absolute path on the system the test runs on, as the coordinator's
-	// own system reads the KVM rule.
-	noble := filepath.Join(t.TempDir(), "noble.img")
-	for _, tc := range []struct {
-		why  string
-		p    config.Place
-		want string
-	}{
-		{"a pool the place does not serve", config.Place{Provider: config.ProviderDocker, PoolImages: map[string]string{"ru-large": "runner:large"}},
-			`place "lima-1": poolImages names pool "ru-large", which the place does not serve`},
-		{"no image", config.Place{Provider: config.ProviderDocker, PoolImages: map[string]string{"ru-linux": ""}},
-			`place "lima-1": poolImages gives pool "ru-linux" no image`},
-		{"a host place", config.Place{Provider: config.ProviderHost, PoolImages: map[string]string{"ru-linux": "runner:2604"}},
-			`place "lima-1": pool "ru-linux"'s image: a host place runs on the machine itself and takes no image`},
-		{"a KVM disk that is not an absolute path", config.Place{Provider: config.ProviderKVM, Image: noble,
-			PoolImages: map[string]string{"ru-linux": "resolute.img"}},
-			`place "lima-1": pool "ru-linux"'s image: a KVM place needs the absolute path of its base disk image on the machine`},
-		{"a tart image with a space", config.Place{Provider: config.ProviderTart, Image: "ci-base",
-			PoolImages: map[string]string{"ru-linux": "ci base"}},
-			`place "lima-1": pool "ru-linux"'s image: a tart place needs the tart image it clones`},
-	} {
-		cfg := initialSetup(t)
-		cfg.Pools = append(cfg.Pools, config.Pool{Label: "ru-large"})
-		tc.p.ID, tc.p.Pools, tc.p.Cores, tc.p.MemoryMB = "lima-1", []string{"ru-linux"}, 2, 2048
-		big := config.Place{ID: "lima-2", Provider: config.ProviderDocker, Pools: []string{"ru-large"}, Cores: 2, MemoryMB: 2048}
-		cfg.Machines = []config.Machine{{Name: "lima", SSH: []string{"ci@lima"}, Places: []config.Place{tc.p, big}}}
-		if err := cfg.Validate(); err == nil || !strings.HasPrefix(err.Error(), tc.want) {
-			t.Errorf("%s: validate said %v, want %q", tc.why, err, tc.want)
-		}
-	}
-}
-
-// Intent (README, "Updating runner-up"): a release named as the release
-// workflow tags it, with each platform's archive SHA-256 as its checksums.txt
-// lists it, is accepted; a release the coordinator could not fetch or check is
-// refused when the setup loads.
-func TestTheSetupsReleaseNamesAVersionAndEachArchivesSHA256(t *testing.T) {
-	// runner-up-v9.0.2-windows-amd64.zip's line in the release fixture's
-	// checksums.txt.
-	const sum = "1a2dc4c30dbf507b3762d4a738564654c94213cb4879b801c2d994c62099f154"
-	cfg := initialSetup(t)
-	cfg.Release = &config.Release{Version: "v0.1.11", SHA256: map[string]string{"darwin-arm64": sum, "windows-amd64": sum}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("a release as the workflow publishes it was refused: %v", err)
-	}
-	for _, tc := range []struct {
-		why  string
-		r    config.Release
-		want string
-	}{
-		{"a version without its v", config.Release{Version: "0.1.11", SHA256: map[string]string{"darwin-arm64": sum}},
-			`release: version "0.1.11" is not a release version such as v0.1.11`},
-		{"no archive", config.Release{Version: "v0.1.11"}, "release: sha256 names no platform's archive"},
-		{"a platform no release has", config.Release{Version: "v0.1.11", SHA256: map[string]string{"macos-arm64": sum}},
-			`release: sha256 names platform "macos-arm64"`},
-		{"a SHA-256 in capitals", config.Release{Version: "v0.1.11", SHA256: map[string]string{"linux-amd64": strings.ToUpper(sum)}},
-			"release: linux-amd64's sha256 is not 64 lowercase hex digits"},
-		{"a URL that is not a web address", config.Release{Version: "v0.1.11", SHA256: map[string]string{"linux-amd64": sum}, URL: "file:///srv/releases"},
-			"release: url must be an http or https address"},
-	} {
-		cfg := initialSetup(t)
-		cfg.Release = &tc.r
-		if err := cfg.Validate(); err == nil || !strings.HasPrefix(err.Error(), tc.want) {
-			t.Errorf("%s: validate said %v, want %q", tc.why, err, tc.want)
 		}
 	}
 }

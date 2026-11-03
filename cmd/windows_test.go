@@ -12,8 +12,9 @@ import (
 // Intent (README, "Windows machines"): the coordinator reaches a Windows
 // machine over SSH, whose sign-in runs cmd or PowerShell, with a command line
 // both read the same way; machine add sets a Windows machine up with account
-// places, or Hyper-V places on a base disk; and a setup that a Windows
-// machine's shell could not pass unchanged is refused before any job.
+// places, or Hyper-V places on a base disk. A setup a Windows machine's shell
+// could not pass unchanged is refused by the setup checks (internal/config,
+// config_test.go).
 
 // windowsProbe is what `runner-up agent probe` reports on a Windows machine
 // set up with runner-up setup --hyperv.
@@ -54,54 +55,6 @@ func TestHyperVPlaceBootsThePoolsBaseDisk(t *testing.T) {
 		argv := coordinator.AgentCommand(winPC, coordinator.RunArgs(cfg, p, pool)...)
 		if line := argv[len(argv)-1]; line != head+image {
 			t.Errorf("a %s job runs\n%s\nwant\n%s", pool, line, head+image)
-		}
-	}
-}
-
-func TestWindowsSetupThatTheShellWouldChangeIsRefused(t *testing.T) {
-	place := func(p config.Place) config.Place {
-		if p.ID == "" {
-			p.ID = "win-pc-1"
-		}
-		if p.Provider == "" {
-			p.Provider = config.ProviderAccount
-		}
-		p.Cores, p.MemoryMB, p.Pools = 2, 4096, []string{"ru-linux"}
-		return p
-	}
-	for _, tc := range []struct {
-		why  string
-		m    config.Machine
-		want string
-	}{
-		{"a Windows machine without ssh", config.Machine{Name: "pc", OS: "windows", Places: []config.Place{place(config.Place{})}},
-			"a Windows machine needs ssh"},
-		{"an agent path with a space", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Agent: `C:\Program Files\runner-up\runner-up.exe`, Places: []config.Place{place(config.Place{})}},
-			"must be a plain program name or path"},
-		{"a Docker place on Windows", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderDocker})}},
-			"docker places do not run on Windows machines"},
-		{"an account place on Linux", config.Machine{Name: "lima", SSH: []string{"ci@lima"}, Places: []config.Place{place(config.Place{})}},
-			"account places run only on Windows machines"},
-		{"a Hyper-V image that is not a full path", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderHyperV, Image: `noble.vhdx`})}},
-			"a Hyper-V place needs the full path"},
-		{"an image with a variable cmd would expand", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderHyperV, Image: `C:\Users\%USERNAME%\noble.vhdx`})}},
-			"cannot pass to a Windows machine's shell unchanged"},
-		{"a pool's image with a variable cmd would expand", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderHyperV, Image: `C:\vm\noble.vhdx`, PoolImages: map[string]string{"ru-linux": `C:\Users\%USERNAME%\resolute.vhdx`}})}},
-			`pool "ru-linux"'s image: "C:\\Users\\%USERNAME%\\resolute.vhdx" cannot pass to a Windows machine's shell unchanged`},
-		{"a switch name PowerShell would expand", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Provider: config.ProviderHyperV, Image: `C:\vm\noble.vhdx`, Switch: "$env:x"})}},
-			"cannot pass to a Windows machine's shell unchanged"},
-		{"a place id that is a path", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{ID: `pc\1`})}},
-			"has only letters, digits"},
-		{"a switch on an account place", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Switch: "Default Switch"})}},
-			"switch"},
-		{"an image on an account place", config.Machine{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []config.Place{place(config.Place{Image: `C:\vm\noble.vhdx`})}},
-			"image"},
-	} {
-		cfg := initialSetup(t)
-		cfg.Machines = []config.Machine{tc.m}
-		err := cfg.Validate()
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: validate said %v, want %q", tc.why, err, tc.want)
 		}
 	}
 }
