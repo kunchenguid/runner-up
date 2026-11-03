@@ -192,18 +192,18 @@ func serve(cfg *config.Config, configPath string) int {
 		return 1
 	}
 	token := coordinator.GhToken(cfg.Gh())
-	return serveWith(cfg, configPath, self, coordinator.GhClients(token), coordinator.NewGitHubAPI(token))
+	return serveWith(cfg, configPath, self, coordinator.GhClients(token), coordinator.NewGitHubAPI(token), nil)
 }
 
 // serveWith runs the coordinator (coordinator.Serve) until a stop signal. It
 // lets a test serve a local stand-in for GitHub's Actions service, with no
 // sign-in and no reads of GitHub's API. self is the program place runners
 // run as.
-func serveWith(cfg *config.Config, configPath, self string, clients coordinator.ClientFactory, api *coordinator.GithubAPI) int {
+func serveWith(cfg *config.Config, configPath, self string, clients coordinator.ClientFactory, api *coordinator.GithubAPI, passed func()) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	return coordinator.Serve(ctx, cfg, coordinator.ServeOptions{ConfigPath: configPath, Self: self, Clients: clients, API: api,
-		Log: slog.New(slog.NewTextHandler(os.Stdout, nil))})
+		Log: slog.New(slog.NewTextHandler(os.Stdout, nil)), Passed: passed})
 }
 
 // updateProgram is `runner-up update`: it fetches and checks the setup's

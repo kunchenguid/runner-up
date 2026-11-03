@@ -377,7 +377,8 @@ func (e *e2e) serve() {
 	}
 	defer out.Close()
 	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(slices.Clone(e.env), serveEnv+"="+e.config, actionsEnv+"="+e.actions.URL, selfEnv+"="+runnerUp(e.t))
+	cmd.Env = append(slices.Clone(e.env), serveEnv+"="+e.config, actionsEnv+"="+e.actions.URL, selfEnv+"="+runnerUp(e.t),
+		passesEnv+"="+filepath.Join(e.dir, "passes"))
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Start(); err != nil {
 		e.t.Fatal(err)
@@ -429,6 +430,20 @@ func (e *e2e) eventually(what string, ok func() bool) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// passes waits until the coordinator has made n whole passes of its serve
+// loop since the call, each tidying and placing, so whatever those passes
+// would do is done. A pass under way at the call may have begun before it,
+// so it counts for none.
+func (e *e2e) passes(n int) {
+	e.t.Helper()
+	count := func() int {
+		data, _ := os.ReadFile(filepath.Join(e.dir, "passes"))
+		return strings.Count(string(data), "\n")
+	}
+	want := count() + n + 1
+	e.eventually(fmt.Sprintf("the coordinator makes %d more passes", n), func() bool { return count() >= want })
 }
 
 // logs gathers every log the run wrote, for a failure message.
@@ -807,7 +822,7 @@ func TestRunnerGivenAJobAtTheStartTimeoutKeepsRunning(t *testing.T) {
 	// GitHub refuses the removal; the runner keeps running through the next
 	// ticks, and is not asked about again.
 	e.eventually("GitHub refuses to remove the runner", func() bool { return len(e.actions.read().refused) > 0 })
-	time.Sleep(2 * time.Second)
+	e.passes(2)
 	if seen := e.actions.read(); !alive(pid) || !slices.Equal(seen.refused, []int64{1}) || len(seen.removed) != 0 {
 		t.Fatalf("container running %v, refused removals %v, removed runners %v; want it running, refused once\n%s",
 			alive(pid), seen.refused, seen.removed, e.logs())
@@ -861,7 +876,7 @@ func TestSpareRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
 	// The place frees, and stays free through the next ticks.
 	e.eventually("the place frees", func() bool { return !e.busy() })
 	e.eventually("the coordinator forgets the stopped run", func() bool { _, ok := e.placeRun(); return !ok })
-	time.Sleep(2 * time.Second)
+	e.passes(2)
 	if code := e.stop(); code != 0 {
 		t.Fatalf("the coordinator exited %d on SIGTERM", code)
 	}
@@ -891,7 +906,7 @@ func TestSpareRunnerGivenAJobAsItsJobIsCancelledKeepsRunning(t *testing.T) {
 	e.actions.giveJob(1)
 	e.actions.send(scaleset.JobAssigned{JobMessageBase: jobMessage(other, scaleset.MessageTypeJobAssigned)}, cancelled(job))
 	e.eventually("GitHub refuses to remove the runner", func() bool { return len(e.actions.read().refused) > 0 })
-	time.Sleep(2 * time.Second)
+	e.passes(2)
 	if seen := e.actions.read(); !alive(pid) || !slices.Equal(seen.refused, []int64{1}) || len(seen.removed) != 0 {
 		t.Fatalf("container running %v, refused removals %v, removed runners %v; want it running, refused once\n%s",
 			alive(pid), seen.refused, seen.removed, e.logs())
@@ -910,7 +925,7 @@ func TestSpareRunnerGivenAJobAsItsJobIsCancelledKeepsRunning(t *testing.T) {
 	e.actions.send(scaleset.JobCompleted{Result: "succeeded", RunnerID: 1, RunnerName: run.RunnerName,
 		JobMessageBase: jobMessage(other, scaleset.MessageTypeJobCompleted)})
 	e.eventually("the place frees", func() bool { return !e.busy() })
-	time.Sleep(2 * time.Second)
+	e.passes(2)
 	if code := e.stop(); code != 0 {
 		t.Fatalf("the coordinator exited %d on SIGTERM", code)
 	}

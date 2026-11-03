@@ -8,6 +8,7 @@ package agent
 // runner-up's fork-guard command does.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -217,14 +218,26 @@ func TestAVMThatNeverAnswersFailsAtTheBootTimeout(t *testing.T) {
 func TestStoppingThePlaceLetsGoOfTheVM(t *testing.T) {
 	agent, vm := net.Pipe()
 	defer vm.Close()
+	// The VM says it is ready and reads the registration: the job is under
+	// way when the place stops.
+	sent := make(chan string, 1)
 	go func() {
 		io.WriteString(vm, guestReady+"\n")
+		line, _ := bufio.NewReader(vm).ReadString('\n')
+		sent <- line
 		io.Copy(io.Discard, vm)
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error)
 	go func() { done <- talkToGuest(ctx, agent, registration, io.Discard, 5*time.Second) }()
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case l := <-sent:
+		if l != registration+"\n" {
+			t.Fatalf("the VM read %q, want the registration", l)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent never sent the VM its registration")
+	}
 	cancel()
 	select {
 	case err := <-done:

@@ -24,7 +24,9 @@ func TestSshGivesUpOnAMachineThatNeverAnswers(t *testing.T) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		t.Skip("needs ssh")
 	}
-	// The machine takes the connection and never says a word.
+	// The machine takes each connection, says it took it, and never says a
+	// word to ssh.
+	accepted := make(chan struct{}, 2)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -41,28 +43,44 @@ func TestSshGivesUpOnAMachineThatNeverAnswers(t *testing.T) {
 				return
 			}
 			held = append(held, c)
+			accepted <- struct{}{}
 		}
 	}()
 	port := fmt.Sprint(l.Addr().(*net.TCPAddr).Port)
+	// The default ssh connects first, then the one with the machine's own
+	// shorter timeout. That one ends first, while the default one still
+	// waits; then the default one ends. Both end before the allowance below
+	// would kill them, which makes no exit 255.
+	type ended struct {
+		name string
+		code int
+		out  []byte
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	order := make(chan ended, 2)
 	for _, tc := range []struct {
-		name   string
-		ssh    []string
-		within time.Duration
+		name string
+		ssh  []string
 	}{
-		{"by default", []string{"-F", "/dev/null", "-p", port, "far@127.0.0.1"}, 20 * time.Second},
-		{"with its own timeout", []string{"-o", "ConnectTimeout=1", "-F", "/dev/null", "-p", port, "far@127.0.0.1"}, 5 * time.Second},
+		{"by default", []string{"-F", "/dev/null", "-p", port, "far@127.0.0.1"}},
+		{"with its own timeout", []string{"-o", "ConnectTimeout=1", "-F", "/dev/null", "-p", port, "far@127.0.0.1"}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			argv := append(SshArgs(config.Machine{Name: "far", SSH: tc.ssh}), "true")
-			start := time.Now()
+		argv := append(SshArgs(config.Machine{Name: "far", SSH: tc.ssh}), "true")
+		go func() {
 			out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
-			took := time.Since(start)
-			if code := agent.ExitCode(err); code != sshFailed || took > tc.within {
-				t.Fatalf("ssh %v exited %d after %s, want %d within %s: %s", argv[1:], code, took.Round(time.Second), sshFailed, tc.within, out)
-			}
-		})
+			order <- ended{tc.name, agent.ExitCode(err), out}
+		}()
+		select {
+		case <-accepted:
+		case got := <-order:
+			t.Fatalf("ssh %s exited %d before it connected: %s", got.name, got.code, got.out)
+		}
+	}
+	for _, want := range []string{"with its own timeout", "by default"} {
+		got := <-order
+		if got.name != want || got.code != sshFailed {
+			t.Fatalf("ssh %s exited %d, want ssh %s to exit %d next: %s", got.name, got.code, want, sshFailed, got.out)
+		}
 	}
 }

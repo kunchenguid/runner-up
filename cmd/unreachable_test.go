@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/kunchenguid/runner-up/internal/config"
@@ -82,9 +81,9 @@ func TestUnreachableMachineRestsUntilItsAgentAnswers(t *testing.T) {
 		t.Errorf("no ssh to far ran far-1's agent with a connect timeout:\n%s", e.logs())
 	}
 
-	// The far machine rests: over several ticks its free place takes no
+	// The far machine rests: over several passes its free place takes no
 	// job and nothing more is registered.
-	time.Sleep(3 * time.Second)
+	e.passes(3)
 	if seen := e.actions.read(); len(seen.jits) != 2 || len(seen.acquired) != 2 {
 		t.Fatalf("while far rests the coordinator acquired %v and made %d registrations, want 2 of each\n%s",
 			seen.acquired, len(seen.jits), e.logs())

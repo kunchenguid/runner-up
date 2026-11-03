@@ -32,6 +32,9 @@ type ServeOptions struct {
 	Clients ClientFactory
 	API     *GithubAPI
 	Log     *slog.Logger
+	// Passed, when set, is called after each pass of the serve loop, so a
+	// test can wait for the passes after an event rather than for a time.
+	Passed func()
 }
 
 // Serve runs the coordinator under cfg until ctx ends, and returns the
@@ -81,6 +84,11 @@ func Serve(ctx context.Context, cfg *config.Config, o ServeOptions) int {
 	sessions.Match(cfg)
 	setups := WatchSetup(serving, o.ConfigPath, SetupPoll, SetupQuiet)
 	up.Tick(serving, base)
+	passed := func() {
+		if o.Passed != nil {
+			o.Passed()
+		}
+	}
 	var next *Restart
 	refused := false
 	tick := time.NewTicker(cfg.Seconds(cfg.TickSeconds))
@@ -136,6 +144,7 @@ func Serve(ctx context.Context, cfg *config.Config, o ServeOptions) int {
 		svc.Tidy(serving)
 		svc.Place(serving)
 		up.Tick(serving, base)
+		passed()
 	}
 }
 
