@@ -50,9 +50,10 @@ type borrowCommand struct {
 	Dir       string
 }
 
-func borrowDir(cfg *config.Config, id string) string {
-	return filepath.Join(cfg.StateDir, "borrows", id)
-}
+func borrowsDir(cfg *config.Config) string { return filepath.Join(cfg.StateDir, "borrows") }
+
+func borrowDir(cfg *config.Config, id string) string { return filepath.Join(borrowsDir(cfg), id) }
+
 func validBorrowID(id string) bool {
 	return id != "" && filepath.Base(id) == id && id != "." && id != ".."
 }
@@ -112,28 +113,11 @@ func borrow(ctx context.Context, cfg *config.Config, pool, label string, minutes
 		return 1, err
 	}
 	args = append([]string{executable}, args[1:]...)
-	root := filepath.Join(cfg.StateDir, "borrows")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return 1, err
-	}
-	dir, err := os.MkdirTemp(root, "request-")
+	req, err := openRequest(borrowsDir(cfg), "request-")
 	if err != nil {
 		return 1, err
 	}
-	// Only published directories belong to the coordinator. Before publication
-	// it ignores this directory, so early setup errors can remove it safely.
-	// Afterwards the live lock, not file removal, withdraws the request.
-	published := false
-	defer func() {
-		if !published {
-			os.RemoveAll(dir)
-		}
-	}()
-	live, err := lock.Busy(filepath.Join(dir, "live.lock"))
-	if err != nil {
-		return 1, err
-	}
-	defer live.Close()
+	defer req.close()
 	// macOS limits Unix socket addresses to 104 bytes; the state folder can be
 	// much longer. This private temporary folder contains only the socket.
 	sockets, err := os.MkdirTemp("", "ru-b-")
@@ -147,11 +131,10 @@ func borrow(ctx context.Context, cfg *config.Config, pool, label string, minutes
 		return 1, err
 	}
 	defer listener.Close()
-	req := borrowRequest{ID: filepath.Base(dir), Pool: pool, Label: label, Minutes: minutes, Queued: time.Now(), Socket: socket}
-	if err := config.WriteJSON(filepath.Join(dir, "request.json"), req); err != nil {
+	dir := req.dir
+	if err := req.publish(borrowRequest{ID: req.id(), Pool: pool, Label: label, Minutes: minutes, Queued: time.Now(), Socket: socket}); err != nil {
 		return 1, err
 	}
-	published = true
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -231,30 +214,15 @@ func (s *Service) refreshBorrowsLocked() {
 			delete(s.waiting, k)
 		}
 	}
-	entries, _ := os.ReadDir(filepath.Join(s.Cfg.StateDir, "borrows"))
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := borrowDir(s.Cfg, e.Name())
-		// MkdirTemp and opening live.lock precede taking its lock. Nothing is
-		// queued until the caller atomically publishes request.json, so never
-		// collect an incompletely initialized request directory.
-		if _, err := os.Stat(filepath.Join(dir, "request.json")); err != nil {
-			if _, err := os.Stat(filepath.Join(dir, "granted.json")); err != nil {
-				continue
-			}
-		}
-		held, err := lock.HeldBy(filepath.Join(dir, "live.lock"))
-		if err != nil {
-			continue
-		}
-		if !held {
-			os.RemoveAll(dir)
-			continue
-		}
+	// A granted request has left the queue, but its folder is removed only
+	// once its caller lets go.
+	live, gone := scanRequests(borrowsDir(s.Cfg), "request.json", "granted.json")
+	for _, id := range gone {
+		os.RemoveAll(borrowDir(s.Cfg, id))
+	}
+	for _, id := range live {
 		var r borrowRequest
-		if config.ReadJSON(filepath.Join(dir, "request.json"), &r) != nil || r.ID != e.Name() || r.Minutes <= 0 {
+		if config.ReadJSON(filepath.Join(borrowDir(s.Cfg, id), "request.json"), &r) != nil || r.ID != id || r.Minutes <= 0 {
 			continue
 		}
 		j := plan.Job{BorrowID: r.ID, Target: "borrow", Pool: r.Pool, Name: r.Label, QueueTime: r.Queued, SeenAt: r.Queued, Estimate: time.Duration(r.Minutes) * time.Minute}
@@ -278,7 +246,7 @@ func (s *Service) refreshBorrowsLocked() {
 				if d := s.drainOf(p.ID); d != nil {
 					r.Reason = p.ID + ": drained for " + strconv.Quote(d.Label)
 				} else if busy, why := s.PlaceBusy(p); busy {
-					r.Reason = p.ID + ": " + why
+					r.Reason = p.ID + ": " + string(why)
 				} else {
 					r.Reason = "waiting for placement"
 					break
@@ -297,8 +265,7 @@ func (s *Service) assignBorrowLocked(p config.Place, j plan.Job, busy *os.File) 
 		return false
 	}
 	dir := borrowDir(s.Cfg, j.BorrowID)
-	live, err := lock.HeldBy(filepath.Join(dir, "live.lock"))
-	if err != nil || !live {
+	if held, err := requestHeld(dir); err != nil || !held {
 		delete(s.waiting, j.Key())
 		return true
 	}
@@ -317,7 +284,7 @@ func (s *Service) assignBorrowLocked(p config.Place, j plan.Job, busy *os.File) 
 		return false
 	}
 	run := PlaceRun{BorrowID: j.BorrowID, Pool: j.Pool, JobName: j.Name, Started: true, LaunchedAt: s.now(), Reservation: share(p)}
-	err = writePlaceRun(s.Cfg, p.ID, run)
+	err := writePlaceRun(s.Cfg, p.ID, run)
 	if err == nil {
 		err = l.LaunchBorrow(p, busy, j.BorrowID)
 	}
@@ -333,27 +300,7 @@ func (s *Service) assignBorrowLocked(p config.Place, j plan.Job, busy *os.File) 
 }
 
 func (l *ProcLauncher) LaunchBorrow(p config.Place, busy *os.File, id string) error {
-	cfg, setupPath, err := l.setup()
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(l.self, "run-borrow", "--config", setupPath, "--place", p.ID, "--borrow", id)
-	out, err := os.OpenFile(filepath.Join(cfg.LogsDir(), "borrow-"+id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	cmd.Stdout, cmd.Stderr = out, out
-	cmd.ExtraFiles = []*os.File{busy}
-	proc.Detach(cmd)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	if err := updatePlaceRun(cfg, p.ID, func(run *PlaceRun) { run.PID = cmd.Process.Pid }); err != nil {
-		l.log.Warn("could not record the borrow supervisor's process", "place", p.ID, "err", err)
-	}
-	go func() { cmd.Wait(); l.Exited <- p.ID }()
-	return nil
+	return l.start(p, busy, "borrow-"+id+".log", nil, "run-borrow", "--borrow", id)
 }
 
 // RunBorrow holds the place while the command and cleanup run. Only the

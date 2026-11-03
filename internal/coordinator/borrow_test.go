@@ -97,7 +97,7 @@ func TestBorrowRanksAmongRecordedJobs(t *testing.T) {
 		})
 	}
 	cfg := oneMac(t.TempDir())
-	rules, _ := plan.ParseOrder(nil)
+	rules, _ := plan.ParseOrder(&config.Config{})
 	host := cfg.Machines[0].Places[3]
 	if got := plan.Plan([]plan.Job{{BorrowID: "request-host", Pool: "ru-mac"}}, []plan.PlaceView{{Place: host}}, nil, rules, time.Now()); len(got) != 0 {
 		t.Fatal("borrow took a host place")

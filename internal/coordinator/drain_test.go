@@ -42,7 +42,7 @@ func drainStateOf(t *testing.T, cfg *config.Config, id string) drainState {
 	return st
 }
 
-func (h *harness) wantDrain(id, phase, detail string) {
+func (h *harness) wantDrain(id string, phase DrainPhase, detail string) {
 	h.t.Helper()
 	if st := drainStateOf(h.t, h.cfg, id); st.Phase != phase || st.Detail != detail {
 		h.t.Fatalf("drain %s is %s: %s\nwant %s: %s", id, st.Phase, st.Detail, phase, detail)

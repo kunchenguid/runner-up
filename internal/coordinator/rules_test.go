@@ -123,10 +123,10 @@ func TestPoolGoesFirstAheadOfLabelsAndHourOldJobs(t *testing.T) {
 // A pool rule naming a pool the setup does not have would order nothing and
 // say nothing, so the setup is refused.
 func TestPoolRuleMustNameAPoolOfTheSetup(t *testing.T) {
-	if err := onePlace(t.TempDir(), "pool:ru-large").Validate(); err != nil {
+	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "pool:ru-large")); err != nil {
 		t.Fatal(err)
 	}
-	if err := onePlace(t.TempDir(), "pool:ru-lagre").Validate(); err == nil || !strings.Contains(err.Error(), `"pool:ru-lagre"`) {
+	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "pool:ru-lagre")); err == nil || !strings.Contains(err.Error(), `"pool:ru-lagre"`) {
 		t.Fatalf("a pool rule for a misspelled pool: %v", err)
 	}
 }
@@ -181,11 +181,11 @@ func TestShortestLearnedJobGoesFirstUnlessAnotherWaitedAnHour(t *testing.T) {
 
 func TestOrderRulesAreChecked(t *testing.T) {
 	for _, bad := range [][]string{{"label:"}, {"pool:"}, {"waited:soon"}, {"workflow:["}, {"shortest:yes"}, {"fastest"}} {
-		if _, err := plan.ParseOrder(bad); err == nil {
+		if _, err := plan.ParseOrder(onePlace("", bad...)); err == nil {
 			t.Errorf("order %v was accepted", bad)
 		}
 	}
-	if _, err := plan.ParseOrder([]string{"pool:ru-large", "label:urgent", "waited:30m", "workflow:release,deploy-*", "shortest"}); err != nil {
+	if _, err := plan.ParseOrder(onePlace("", "pool:ru-large", "label:urgent", "waited:30m", "workflow:release,deploy-*", "shortest")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -278,13 +278,13 @@ func TestLastPoolLeavesRoomForOtherJobsFirst(t *testing.T) {
 // A last rule naming a pool the setup does not have would order nothing, so
 // the setup is refused, as with pool:.
 func TestLastRuleMustNameAPoolOfTheSetup(t *testing.T) {
-	if err := onePlace(t.TempDir(), "last:ru-linux").Validate(); err != nil {
+	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "last:ru-linux")); err != nil {
 		t.Fatal(err)
 	}
-	if err := onePlace(t.TempDir(), "last:ru-linx").Validate(); err == nil || !strings.Contains(err.Error(), `"last:ru-linx"`) {
+	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "last:ru-linx")); err == nil || !strings.Contains(err.Error(), `"last:ru-linx"`) {
 		t.Fatalf("a last rule for a misspelled pool: %v", err)
 	}
-	if _, err := plan.ParseOrder([]string{"last:"}); err == nil {
+	if _, err := plan.ParseOrder(onePlace(t.TempDir(), "last:")); err == nil {
 		t.Error("a last rule naming no pool was accepted")
 	}
 }

@@ -156,9 +156,10 @@ func (s *Service) removeUnused(ctx context.Context, unused []removal) (removed [
 	return removed
 }
 
-// runnerGone says a removal found no such runner at GitHub.
+// runnerGone says a removal found no such runner at GitHub: GitHub named
+// the runner missing, or answered 404 Not Found.
 func runnerGone(err error) bool {
-	return errors.Is(err, scaleset.RunnerNotFoundError) || strings.Contains(err.Error(), "404")
+	return errors.Is(err, scaleset.RunnerNotFoundError) || errors.Is(err, scaleset.NotFoundError)
 }
 
 // idleRunner is a place's waiting runner to give up on, and why. spare names

@@ -65,7 +65,8 @@ type Config struct {
 	Pools    []Pool    `json:"pools"`
 	Machines []Machine `json:"machines"`
 	// Order is the rules that pick which waiting job a free place takes, in
-	// order (internal/plan). Empty means defaultOrder.
+	// order. Empty means the default order. plan.ParseOrder reads and checks
+	// them.
 	Order []string `json:"order,omitempty"`
 	// AllowForkPullRequests lets jobs from another repository's pull request
 	// run. Off by default: every runner starts with the fork guard as its
@@ -406,13 +407,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("pool %q: set positive cores and memoryMB together, or leave both out", p.Label)
 		}
 		labels[p.Label] = true
-	}
-	// A pool rule that names no pool would order nothing, and say nothing.
-	for _, r := range c.Order {
-		kind, l, _ := strings.Cut(r, ":")
-		if (kind == "pool" || kind == "last") && !labels[l] {
-			return fmt.Errorf("order rule %q names no pool of this setup", r)
-		}
 	}
 	machines := map[string]bool{}
 	ids := map[string]bool{}
