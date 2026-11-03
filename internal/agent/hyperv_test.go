@@ -25,10 +25,7 @@ import (
 )
 
 func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
-	bsdtar, err := exec.LookPath("bsdtar")
-	if err != nil {
-		t.Skip("no bsdtar to read the disc with")
-	}
+	bsdtar := discReader(t)
 	seed, err := hypervSeed("win-pc-1", "x64", hypervPlaceLaunch(), time.Unix(1793230000, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +60,34 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 	if label := strings.TrimSpace(string(iso[16*2048+40 : 16*2048+72])); label != "cidata" {
 		t.Errorf("the disc is labelled %q, want cidata", label)
 	}
+}
+
+// discReader finds libarchive's tar, which reads an ISO disc. Windows, where
+// runner-up writes the seed disc, ships it as tar.exe rather than bsdtar, so
+// looking only for bsdtar skipped the test there; on Windows a missing reader
+// now fails the test instead of skipping it.
+func discReader(t *testing.T) string {
+	t.Helper()
+	if path, err := exec.LookPath("bsdtar"); err == nil {
+		return path
+	}
+	// A GNU tar, such as Git for Windows', can come first on the PATH.
+	tars := []string{"tar"}
+	if runtime.GOOS == "windows" {
+		tars = append(tars, filepath.Join(os.Getenv("SystemRoot"), "System32", "tar.exe"))
+	}
+	for _, tar := range tars {
+		if path, err := exec.LookPath(tar); err == nil {
+			if out, _ := exec.Command(path, "--version").Output(); strings.HasPrefix(string(out), "bsdtar") {
+				return path
+			}
+		}
+	}
+	if runtime.GOOS == "windows" {
+		t.Fatal("no bsdtar or libarchive tar.exe to read the disc with")
+	}
+	t.Skip("no bsdtar to read the disc with")
+	return ""
 }
 
 func TestSeedHoldsNoSecretAndPinsTheRunner(t *testing.T) {

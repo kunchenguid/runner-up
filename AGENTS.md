@@ -17,6 +17,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 - `make build`, `make test` (`go test ./...`), `make lint`
 - `GOOS=windows go vet ./...` and `GOOS=linux go vet ./...` before shipping; CI tests on Linux, macOS, and Windows
 - `go test -short ./...` skips the tests that run runner-up as a program
+- `make test-real-tart` on a Mac with Tart before merging a release PR: the real-Tart tests, which CI skips (CONTRIBUTING.md, "Before a release")
 - `nix build .#default` after changing `go.mod` or `go.sum`; `vendorHash` in `package.nix` must match
 
 ## Invariants

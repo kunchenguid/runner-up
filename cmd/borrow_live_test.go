@@ -23,7 +23,7 @@ import (
 // invokes the real Tart agent in a private store, deletes a VM left by the
 // caller, and kills stray command descendants. Creating an empty Linux VM
 // exercises Tart's storage without an OS download.
-func TestBorrowCLIRealTartCleanup(t *testing.T) {
+func TestRealTartBorrowCleanup(t *testing.T) {
 	e := realTartBorrowE2E(t)
 	e.serve()
 	client, output := startBorrow(t, e, `set -eu
@@ -48,7 +48,7 @@ exit 23`)
 // Intent (README, "Borrowing a virtual Mac"): losing the caller without a
 // graceful signal still disconnects its private socket, stops the command,
 // cleans the VM, and frees the place.
-func TestBorrowCLIRealTartDisconnect(t *testing.T) {
+func TestRealTartBorrowDisconnect(t *testing.T) {
 	e := realTartBorrowE2E(t)
 	e.serve()
 	client, output := startBorrow(t, e, `set -eu
@@ -75,7 +75,7 @@ exec sleep 120`)
 // Intent (README, "Borrowing a virtual Mac"): a granted borrow's persisted
 // grant time bounds the real supervisor, stopping a live foreground command and
 // cleaning its VM before exit 124.
-func TestBorrowSupervisorLiveDeadline(t *testing.T) {
+func TestRealTartBorrowDeadline(t *testing.T) {
 	e := realTartBorrowE2E(t)
 	// The short socket address also works with macOS's 104-byte limit.
 	socketDir, err := os.MkdirTemp("", "ru-deadline-")
@@ -290,9 +290,17 @@ func TestBorrowCLILiveOwnerRoom(t *testing.T) {
 	}
 }
 
+// realTartBorrowE2E is the harness of the real-Tart tests. CI installs no
+// Tart, so there they skip; make test-real-tart, the check run before a
+// release (CONTRIBUTING.md, "Before a release"), sets RUNNER_UP_REAL_TART so a
+// missing Tart fails them instead of letting them pass unrun. Every test that
+// uses it is named TestRealTart, which is how that check selects them.
 func realTartBorrowE2E(t *testing.T) *e2e {
 	t.Helper()
 	if _, err := exec.LookPath("tart"); err != nil {
+		if os.Getenv("RUNNER_UP_REAL_TART") != "" {
+			t.Fatal("RUNNER_UP_REAL_TART is set, but Tart is not installed")
+		}
 		t.Skip("requires Tart")
 	}
 	e := borrowE2E(t)
