@@ -10,11 +10,10 @@
 
 <h3 align="center">Your machines, GitHub's queue, one fresh place per job.</h3>
 
-You have spare machines: a Linux box, a Mac, a Windows PC. Your GitHub Actions
-jobs wait in line for hosted runners, or run on a self-hosted runner that keeps
-every job's leftovers for the next one.
+You have spare machines: a Linux box, a Mac, a Windows PC. Yet your GitHub Actions
+jobs wait in line for hosted runners, or burn a hole in your wallet.
 
-runner-up runs GitHub Actions jobs on your own machines. Each job gets a fresh
+runner-up self-hosts GitHub Actions runners across your machines. Each job gets a 
 Docker container or KVM virtual machine on Linux, a fresh tart clone of a
 macOS image or a fresh Linux guest from Apple's container tool on a Mac, or a
 fresh Windows account or Hyper-V virtual machine on
