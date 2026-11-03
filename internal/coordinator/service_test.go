@@ -492,37 +492,67 @@ func TestRestartKeepsWaitingJobsAndRunningPlaces(t *testing.T) {
 	h2.want(map[string]string{"box-1": suite, "box-2": pr184, "box-large": publish})
 }
 
-func TestCancelledBeforeRunnerStopsTheSpareRunner(t *testing.T) {
+// Intent (RUU-19: "When a job is cancelled before its runner took it,
+// runner-up removes the spare runner's GitHub registration first and stops
+// it only once GitHub accepts"): a runner whose job was cancelled before it
+// started keeps its place while GitHub cannot be reached, and is asked about
+// again at the next tick. Once GitHub removes it, its place is stopped, once;
+// when the place ends the runner is not removed a second time, and the place
+// takes the next job.
+func TestCancelledBeforeRunnerStopsTheSpareRunnerOnceGitHubRemovesIt(t *testing.T) {
 	h := newHarness(t, oneBox(t.TempDir()), newFakeLauncher(), map[string]*fakeSet{})
-	stopSpareRunner(h)
-	// Its runner ends; the place is free and the unused runner is removed.
+	set := h.sets[setKey("octo-org/app", "ru-linux")]
+	spare := spareRunner(h)
+
+	// PR #184 is cancelled while GitHub cannot be reached: its runner keeps
+	// its place.
+	set.unreachable = 1
+	cancelBeforeRunner(h)
+	if len(set.removed) != 0 || len(h.launcher.stopped) != 0 {
+		t.Fatalf("while GitHub could not be reached removed %v and stopped %v", set.removed, h.launcher.stopped)
+	}
+	// At the next tick GitHub removes it, and its place is stopped once.
+	tick := func(d time.Duration) {
+		h.now = h.now.Add(d)
+		h.svc.Tidy(context.Background())
+	}
+	tick(10 * time.Second)
+	tick(10 * time.Second)
+	if !slices.Equal(set.removed, []int64{int64(spare.RunnerID)}) || !slices.Equal(h.launcher.stopped, []string{"box-2"}) {
+		t.Fatalf("removed %v and stopped %v, want runner %d removed and box-2 stopped, once each", set.removed,
+			h.launcher.stopped, spare.RunnerID)
+	}
+
+	// Its place ends. The runner is gone at GitHub already, and the place
+	// takes the suite.
 	h.launcher.giveUp(t, "box-2")
-	h.now = h.now.Add(time.Minute)
-	h.svc.Tidy(context.Background())
+	tick(time.Minute)
 	h.svc.Place(context.Background())
-	if got := h.sets[setKey("octo-org/app", "ru-linux")].removed; len(got) != 1 {
-		t.Fatalf("removed runners %v, want the one unused runner", got)
+	tick(10 * time.Second)
+	if len(set.removed) != 1 {
+		t.Fatalf("removed %v, want the runner removed once", set.removed)
 	}
 	h.want(map[string]string{"box-1": verify, "box-2": suite, "box-large": publish})
 }
 
-// A runner stopped before its job started stays in the repository's runner
-// list, offline, unless the coordinator removes it, even when its place takes
-// a new job before Tidy reads the stopped runner.
+// A runner that ended before its job reached it, as a virtual machine that
+// never boots does, stays in the repository's runner list, offline, unless the
+// coordinator removes it, even when its place takes a new job before Tidy
+// reads the ended runner.
 func TestUnusedRunnerIsRemovedWhenItsPlaceIsTakenBeforeTidy(t *testing.T) {
 	h := newHarness(t, oneBox(t.TempDir()), newFakeLauncher(), map[string]*fakeSet{})
-	spare := stopSpareRunner(h)
+	ended := spareRunner(h)
 	takeFreedPlaceBeforeTidy(h)
 
-	// The next Tidy still removes the stopped runner, and only it.
+	// The next Tidy still removes the ended runner, and only it.
 	h.svc.Tidy(context.Background())
 	set := h.sets[setKey("octo-org/app", "ru-linux")]
-	if !slices.Equal(set.removed, []int64{int64(spare.RunnerID)}) {
-		t.Fatalf("removed runners %v, want box-2's stopped runner %d", set.removed, spare.RunnerID)
+	if !slices.Equal(set.removed, []int64{int64(ended.RunnerID)}) {
+		t.Fatalf("removed runners %v, want box-2's ended runner %d", set.removed, ended.RunnerID)
 	}
 	h.svc.Tidy(context.Background())
 	if len(set.removed) != 1 {
-		t.Fatalf("removed runners %v, want the stopped runner removed once", set.removed)
+		t.Fatalf("removed runners %v, want the ended runner removed once", set.removed)
 	}
 }
 
@@ -532,7 +562,7 @@ func TestUnusedRunnerOutlivesAFailedRemovalAndARestart(t *testing.T) {
 	dir := t.TempDir()
 	launcher, sets := newFakeLauncher(), map[string]*fakeSet{}
 	h := newHarness(t, oneBox(dir), launcher, sets)
-	spare := stopSpareRunner(h)
+	ended := spareRunner(h)
 	set := h.sets[setKey("octo-org/app", "ru-linux")]
 	set.unreachable = 1
 	takeFreedPlaceBeforeTidy(h)
@@ -544,8 +574,8 @@ func TestUnusedRunnerOutlivesAFailedRemovalAndARestart(t *testing.T) {
 	h2 := newHarness(t, oneBox(dir), launcher, sets)
 	h2.now = h.now.Add(time.Minute)
 	h2.svc.Tidy(context.Background())
-	if !slices.Equal(set.removed, []int64{int64(spare.RunnerID)}) {
-		t.Fatalf("removed runners %v after the restart, want box-2's stopped runner %d", set.removed, spare.RunnerID)
+	if !slices.Equal(set.removed, []int64{int64(ended.RunnerID)}) {
+		t.Fatalf("removed runners %v after the restart, want box-2's ended runner %d", set.removed, ended.RunnerID)
 	}
 }
 
@@ -640,33 +670,40 @@ func TestRefusedRemovalOfAnEndedRunnerNamesTheStrandedJob(t *testing.T) {
 	}
 }
 
-// stopSpareRunner places the waiting jobs, starts verify in box-1, and
-// cancels PR #184 before its runner in box-2 took it, so the service stops
-// that runner. It returns the stopped runner's run.
-func stopSpareRunner(h *harness) PlaceRun {
+// spareRunner places the waiting jobs and has box-1's runner start verify,
+// leaving PR #184's runner in box-2 waiting for its job. It returns that
+// runner's run.
+func spareRunner(h *harness) PlaceRun {
 	h.t.Helper()
 	f := loadFixture(h.t, "waiting-jobs.json")
 	h.now = f.Now
 	h.feed(f)
-	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 2,
-		JobStartedMessages: []*scaleset.JobStarted{{RunnerName: "x", JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 9101}}}})
-	markStarted(h.t, h.cfg, "box-1")
-	var spare PlaceRun
+	var first, spare PlaceRun
+	if err := config.ReadJSON(filepath.Join(h.cfg.PlaceDir("box-1"), "place.json"), &first); err != nil {
+		h.t.Fatal(err)
+	}
 	if err := config.ReadJSON(filepath.Join(h.cfg.PlaceDir("box-2"), "place.json"), &spare); err != nil {
 		h.t.Fatal(err)
 	}
-	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 3,
-		JobCompletedMessages: []*scaleset.JobCompleted{{Result: "canceled", JobMessageBase: scaleset.JobMessageBase{
-			RunnerRequestID: 9102, JobDisplayName: "affected-journeys",
-			JobMessageType: scaleset.JobMessageType{MessageType: scaleset.MessageTypeJobCompleted}}}}})
-	if !slices.Equal(h.launcher.stopped, []string{"box-2"}) {
-		h.t.Fatalf("stopped %v, want the spare runner in box-2", h.launcher.stopped)
-	}
+	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 2,
+		JobStartedMessages: []*scaleset.JobStarted{{RunnerName: first.RunnerName, JobMessageBase: scaleset.JobMessageBase{RunnerRequestID: 9101}}}})
+	markStarted(h.t, h.cfg, "box-1")
 	return spare
 }
 
-// takeFreedPlaceBeforeTidy ends box-2's stopped runner, and a scale set's
-// next poll places the suite there before Tidy runs.
+// cancelBeforeRunner has GitHub say PR #184 was cancelled before its runner
+// in box-2 took it.
+func cancelBeforeRunner(h *harness) {
+	h.t.Helper()
+	h.svc.Handle(context.Background(), "octo-org/app", "ru-linux", &scaleset.RunnerScaleSetMessage{MessageID: 3,
+		JobCompletedMessages: []*scaleset.JobCompleted{{Result: "canceled", JobMessageBase: scaleset.JobMessageBase{
+			RunnerRequestID: 9102, JobDisplayName: "affected-journeys", FinishTime: h.now,
+			JobMessageType: scaleset.JobMessageType{MessageType: scaleset.MessageTypeJobCompleted}}}}})
+}
+
+// takeFreedPlaceBeforeTidy ends box-2's runner before its job reached it, as
+// a virtual machine that never boots does, and a scale set's next poll places
+// the suite there before Tidy runs.
 func takeFreedPlaceBeforeTidy(h *harness) {
 	h.t.Helper()
 	h.launcher.giveUp(h.t, "box-2")

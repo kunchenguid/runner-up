@@ -354,6 +354,12 @@ asked at once. `runner-up status` shows a resting machine's places as resting.
 
 ### When GitHub closes a job
 
+When GitHub says a job was cancelled before a runner took it, the job's scale
+set has a runner left waiting for nothing. The coordinator removes the newest
+such runner from its scale set and stops it once GitHub accepts. A runner
+GitHub says is running a job keeps it, and one whose removal GitHub does not
+answer is asked about again at the next tick.
+
 GitHub does not always tell the scale set that a job it assigned is gone,
 for example when a run is cancelled while one of its jobs waits for its next
 assignment, or when the cancellation is lost with a session. GitHub takes an

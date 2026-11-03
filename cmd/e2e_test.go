@@ -459,7 +459,15 @@ func alive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) == nil }
 
 // verifyJob is the first job of a recorded waiting-jobs message: octo-org/app's
 // "verify / linux" in the ru-linux pool, request 9101, queued a minute ago.
-func verifyJob(t *testing.T) scaleset.JobMessageBase {
+func verifyJob(t *testing.T) scaleset.JobMessageBase { return waitingJob(t, 0) }
+
+// journeysJob is the second job of the same message: octo-org/app's
+// "affected-journeys" in the ru-linux pool, request 9102, queued a minute ago.
+func journeysJob(t *testing.T) scaleset.JobMessageBase { return waitingJob(t, 1) }
+
+// waitingJob is job i of the recorded waiting-jobs message, queued a minute
+// ago.
+func waitingJob(t *testing.T, i int) scaleset.JobMessageBase {
 	var f struct {
 		Messages []struct {
 			Message scaleset.RunnerScaleSetMessage `json:"message"`
@@ -472,9 +480,17 @@ func verifyJob(t *testing.T) scaleset.JobMessageBase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := f.Messages[0].Message.JobAvailableMessages[0].JobMessageBase
+	job := f.Messages[0].Message.JobAvailableMessages[i].JobMessageBase
 	job.QueueTime = time.Now().Add(-time.Minute).UTC()
 	return job
+}
+
+// cancelled is GitHub's message that job was cancelled before a runner took
+// it, as it recorded one: no runner, and a finish time.
+func cancelled(job scaleset.JobMessageBase) scaleset.JobCompleted {
+	job = jobMessage(job, scaleset.MessageTypeJobCompleted)
+	job.FinishTime = time.Now().UTC()
+	return scaleset.JobCompleted{Result: "canceled", JobMessageBase: job}
 }
 
 func jobMessage(base scaleset.JobMessageBase, kind scaleset.MessageType) scaleset.JobMessageBase {
@@ -745,6 +761,98 @@ func TestRunnerGivenAJobAtTheStartTimeoutKeepsRunning(t *testing.T) {
 		scaleset.JobCompleted{Result: "succeeded", RunnerID: 1, RunnerName: run.RunnerName,
 			JobMessageBase: jobMessage(job, scaleset.MessageTypeJobCompleted)})
 	e.eventually("the place frees", func() bool { return !e.busy() })
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+	seen := e.actions.read()
+	if len(e.registrations()) != 1 || len(seen.removed) != 0 || !slices.Equal(seen.refused, []int64{1}) || len(seen.stray) != 0 {
+		t.Errorf("%d containers ran, removed %v, refused %v, unknown requests %v; want one container, one refusal",
+			len(e.registrations()), seen.removed, seen.refused, seen.stray)
+	}
+	e.noSecrets(seen.jits)
+}
+
+// Intent (RUU-19: "When a job is cancelled before its runner took it,
+// runner-up removes the spare runner's GitHub registration first and stops
+// it only once GitHub accepts"): GitHub can give a scale set's waiting runner
+// another of the set's jobs until the runner is removed, so the runner of a
+// job cancelled before it started is removed from its scale set while it
+// still runs, and only then stopped. The cancelled job gets no new runner,
+// and the runner is not removed again once its place ends.
+func TestSpareRunnerIsRemovedFromItsScaleSetBeforeItStops(t *testing.T) {
+	e := newE2E(t)
+	e.actions.containerUp = func() bool { pid, _ := e.container(); return alive(pid) }
+	job := verifyJob(t)
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(job, scaleset.MessageTypeJobAvailable)})
+	e.serve()
+	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
+	first, _ := e.container()
+
+	// The run is cancelled before the job reached the runner: the runner is
+	// removed, with its container still running, and then its container
+	// stops.
+	e.actions.send(cancelled(job))
+	e.eventually("the spare runner is removed", func() bool { return len(e.actions.read().removed) > 0 })
+	e.eventually("the spare runner's container stops", func() bool { return !alive(first) })
+	if seen := e.actions.read(); seen.removed[0] != 1 || !seen.up[0] {
+		t.Fatalf("removed runners %v with the container running %v, want runner 1 removed while it ran\n%s",
+			seen.removed, seen.up, e.logs())
+	}
+
+	// The place frees, and stays free through the next ticks.
+	e.eventually("the place frees", func() bool { return !e.busy() })
+	e.eventually("the coordinator forgets the stopped run", func() bool { _, ok := e.placeRun(); return !ok })
+	time.Sleep(2 * time.Second)
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+	seen := e.actions.read()
+	if !slices.Equal(seen.removed, []int64{1}) || len(seen.stray) != 0 {
+		t.Errorf("removed runners %v, unknown requests %v; want runner 1 removed once", seen.removed, seen.stray)
+	}
+	if len(e.registrations()) != 1 || !slices.Equal(seen.acquired, []int64{9101}) {
+		t.Errorf("%d containers ran and acquired %v, want one container for 9101", len(e.registrations()), seen.acquired)
+	}
+	e.noSecrets(seen.jits)
+}
+
+// Intent (RUU-19: "keeping it if GitHub says it is running a job"): GitHub
+// assigns the scale set a second job and gives it to the waiting runner just
+// as the runner's own job is cancelled. GitHub refuses to remove that runner,
+// so it keeps running, is not asked about again, and runs the job; no second
+// runner starts.
+func TestSpareRunnerGivenAJobAsItsJobIsCancelledKeepsRunning(t *testing.T) {
+	e := newE2E(t)
+	job, other := verifyJob(t), journeysJob(t)
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(job, scaleset.MessageTypeJobAvailable)})
+	e.serve()
+	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
+	pid, _ := e.container()
+	run, _ := e.placeRun()
+
+	e.actions.giveJob(1)
+	e.actions.send(scaleset.JobAssigned{JobMessageBase: jobMessage(other, scaleset.MessageTypeJobAssigned)}, cancelled(job))
+	e.eventually("GitHub refuses to remove the runner", func() bool { return len(e.actions.read().refused) > 0 })
+	time.Sleep(2 * time.Second)
+	if seen := e.actions.read(); !alive(pid) || !slices.Equal(seen.refused, []int64{1}) || len(seen.removed) != 0 {
+		t.Fatalf("container running %v, refused removals %v, removed runners %v; want it running, refused once\n%s",
+			alive(pid), seen.refused, seen.removed, e.logs())
+	}
+
+	// The second job starts on the runner and ends; the place frees.
+	e.startJob(pid)
+	e.eventually("the place runner sees the job start", func() bool { run, ok := e.placeRun(); return ok && run.Started })
+	started := jobMessage(other, scaleset.MessageTypeJobStarted)
+	started.RunnerAssignTime = time.Now().UTC()
+	e.actions.send(scaleset.JobStarted{RunnerID: 1, RunnerName: run.RunnerName, JobMessageBase: started})
+	e.eventually("the coordinator hears the second job started", func() bool {
+		return strings.Contains(e.logs(), `msg="job started" repo=octo-org/app job=affected-journeys`)
+	})
+	e.endJob(pid)
+	e.actions.send(scaleset.JobCompleted{Result: "succeeded", RunnerID: 1, RunnerName: run.RunnerName,
+		JobMessageBase: jobMessage(other, scaleset.MessageTypeJobCompleted)})
+	e.eventually("the place frees", func() bool { return !e.busy() })
+	time.Sleep(2 * time.Second)
 	if code := e.stop(); code != 0 {
 		t.Fatalf("the coordinator exited %d on SIGTERM", code)
 	}
