@@ -222,6 +222,10 @@ jobs:
     needs: [release-please, build-and-upload]
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
+    # The release signing key's private half is a secret of this environment.
+    # runner-up's Windows service installs only a release whose checksums.txt
+    # it signed (internal/release), so only main should reach it.
+    environment: release
     steps:
       - uses: actions/checkout@v4
 
@@ -234,9 +238,22 @@ jobs:
       - name: Generate checksums
         run: sha256sum runner-up-v* > checksums.txt
 
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::warning::No release signing key: runner-up's Windows service will not install this release."
+            exit 0
+          fi
+          # A raw Ed25519 signature of the file, as internal/release checks it.
+          openssl pkeyutl -sign -rawin -inkey <(printf '%s\n' "$RELEASE_SIGNING_KEY") -in checksums.txt -out checksums.txt.sig
+
       - name: Upload checksums
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release upload "${TAG_NAME}" checksums.txt
+        run: |
+          gh release upload "${TAG_NAME}" checksums.txt
+          if [ -f checksums.txt.sig ]; then gh release upload "${TAG_NAME}" checksums.txt.sig; fi
         working-directory: ${{ github.workspace }}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -47,6 +48,28 @@ func accountReady() string {
 		return err.Error()
 	}
 	return "ok"
+}
+
+// serviceVersion asks the service here its version.
+func serviceVersion(ctx context.Context) (string, error) {
+	conn, err := dialService()
+	if err != nil {
+		return "", err
+	}
+	var answer strings.Builder
+	if err := askService(ctx, conn, JobRequest{Version: jobRequestVersion, Op: "probe"}, &answer); err != nil {
+		return "", err
+	}
+	return readyVersion(answer.String())
+}
+
+// updateService hands the service here a release.
+func updateService(ctx context.Context, u ServiceUpdate, archive io.Reader, out io.Writer) error {
+	conn, err := dialService()
+	if err != nil {
+		return err
+	}
+	return askServiceWith(ctx, conn, JobRequest{Version: jobRequestVersion, Op: "update", ServiceUpdate: u}, archive, out)
 }
 
 // dialService opens the service's pipe and checks SYSTEM owns it: any

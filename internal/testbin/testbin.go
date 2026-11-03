@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -34,6 +35,10 @@ func Build(t *testing.T, ldflags string) string {
 		dir = d
 	}
 	path := filepath.Join(dir, "runner-up-"+string(rune('a'+len(builds))))
+	if runtime.GOOS == "windows" {
+		// Windows runs only a program whose name ends in .exe.
+		path += ".exe"
+	}
 	args := []string{"build", "-o", path}
 	if ldflags != "" {
 		args = append(args, "-ldflags", ldflags)

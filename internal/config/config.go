@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/quote"
+	"github.com/kunchenguid/runner-up/internal/release"
 )
 
 // Providers make a fresh place for each job on a machine.
@@ -86,6 +87,31 @@ type Config struct {
 	// RecordMessagesDir, when set, keeps every scale set message as JSON for
 	// test fixtures. Messages carry no token.
 	RecordMessagesDir string `json:"recordMessagesDir,omitempty"`
+	// Release, when set, is the runner-up release the coordinator runs and
+	// copies to every machine as its agent (internal/coordinator/program.go).
+	Release *Release `json:"release,omitempty"`
+}
+
+// Release names a runner-up release and each of its archives' SHA-256.
+type Release struct {
+	// Version is the release's version, such as v0.1.11.
+	Version string `json:"version"`
+	// SHA256 is each platform's archive's SHA-256, by platform, such as
+	// darwin-arm64 or windows-amd64, as the release's checksums.txt lists it.
+	// A platform left out is one no machine of the setup needs.
+	SHA256 map[string]string `json:"sha256"`
+	// URL is where the archives are: each at URL/<version>/<archive>.
+	// GitHub's runner-up releases when empty.
+	URL string `json:"url,omitempty"`
+}
+
+// ArchiveURL is where the release's file named name is.
+func (r *Release) ArchiveURL(name string) string {
+	base := r.URL
+	if base == "" {
+		base = release.DefaultURL
+	}
+	return strings.TrimRight(base, "/") + "/" + r.Version + "/" + name
 }
 
 // GitHub names what the coordinator serves. The sign-in is the GitHub command
@@ -497,6 +523,30 @@ func (c *Config) Validate() error {
 		if len(c.Machines) > 0 && !served[p.Label] {
 			return fmt.Errorf("pool %q: no place serves it", p.Label)
 		}
+	}
+	if c.Release != nil {
+		return c.Release.check()
+	}
+	return nil
+}
+
+func (r *Release) check() error {
+	if !release.ValidVersion(r.Version) {
+		return fmt.Errorf("release: version %q is not a release version such as v0.1.11", r.Version)
+	}
+	if len(r.SHA256) == 0 {
+		return fmt.Errorf("release: sha256 names no platform's archive")
+	}
+	for _, platform := range slices.Sorted(maps.Keys(r.SHA256)) {
+		if !slices.Contains(release.Platforms, platform) {
+			return fmt.Errorf("release: sha256 names platform %q; a release has %v", platform, release.Platforms)
+		}
+		if !release.ValidSHA256(r.SHA256[platform]) {
+			return fmt.Errorf("release: %s's sha256 is not 64 lowercase hex digits", platform)
+		}
+	}
+	if r.URL != "" && !strings.HasPrefix(r.URL, "https://") && !strings.HasPrefix(r.URL, "http://") {
+		return fmt.Errorf("release: url must be an http or https address")
 	}
 	return nil
 }

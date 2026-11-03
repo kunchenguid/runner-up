@@ -3,19 +3,25 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/version"
 )
 
 // Intent (the design: "the Windows agent
@@ -594,5 +600,105 @@ func TestAccountJobFiles(t *testing.T) {
 	forks, _ := testFiles(JobRequest{AllowForks: true})
 	if _, ok := forks[guardFile]; ok || strings.Contains(string(forks[startFile]), "ACTIONS_RUNNER_HOOK_JOB_STARTED") {
 		t.Errorf("a place that allows forks still has the fork guard")
+	}
+}
+
+// signedRelease is release's test fixture: checksums.txt for runner-up
+// v9.0.2, signed by a throwaway key whose public half is test-key.pub, and
+// the archives it lists.
+func signedRelease(t *testing.T) (key ed25519.PublicKey, checksums, sig []byte, archive func(name string) []byte) {
+	t.Helper()
+	read := func(name string) []byte {
+		b, err := os.ReadFile(filepath.Join("..", "release", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	k, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(read("test-key.pub"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ed25519.PublicKey(k), read("checksums.txt"), read("checksums.txt.sig"), read
+}
+
+// Intent (RUU-37, the captain's choice: "The service updates itself from
+// signed runner-up releases; you create one signing key, and whoever holds it
+// controls the PC"): handed a release the way the coordinator hands it to
+// `runner-up agent update-service`, the service installs it only when the
+// signing key vouches for that very archive for its own platform, only when
+// it is newer than the service, and never while a place runs a job; once it
+// installs one, it takes no job until it restarts as it.
+func TestTheServiceInstallsOnlyANewerReleaseTheSigningKeySigned(t *testing.T) {
+	key, checksums, sig, archive := signedRelease(t)
+	var installed []string
+	h := newFakeHost()
+	s := NewServer(Options{Records: filepath.Join(t.TempDir(), "job-accounts.json"), Files: testFiles, CleanWait: time.Second,
+		Platform: "windows-amd64", Keys: []ed25519.PublicKey{key},
+		Update: func(v string, b []byte) error {
+			if !bytes.Equal(b, archive("runner-up-v9.0.2-windows-amd64.zip")) {
+				t.Errorf("the service installed %d bytes that are not the signed archive", len(b))
+			}
+			installed = append(installed, v)
+			return nil
+		}}, h, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// What the coordinator writes to the agent: a line describing the
+	// release, then the archive.
+	hand := func(name string, body, sig []byte) (string, int) {
+		head, err := json.Marshal(ServiceUpdate{Archive: name, Size: int64(len(body)), Checksums: string(checksums),
+			Signature: base64.StdEncoding.EncodeToString(sig)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		code := updateServiceMain(bytes.NewReader(append(append(head, '\n'), body...)), &out,
+			func(ctx context.Context, u ServiceUpdate, body io.Reader, out io.Writer) error {
+				agent, service := net.Pipe()
+				go func() { s.Serve(context.Background(), service, service); service.Close() }()
+				return askServiceWith(ctx, agent, JobRequest{Version: jobRequestVersion, Op: "update", ServiceUpdate: u}, body, out)
+			})
+		return out.String(), code
+	}
+	zip := archive("runner-up-v9.0.2-windows-amd64.zip")
+	refused := func(what, name string, body, sig []byte, why string) {
+		t.Helper()
+		out, code := hand(name, body, sig)
+		if code == ExitDone || !strings.Contains(out, why) {
+			t.Errorf("%s: the agent exited %d, want a refusal saying %q:\n%s", what, code, why, out)
+		}
+		if len(installed) != 0 {
+			t.Fatalf("%s: the service installed %v", what, installed)
+		}
+	}
+	tampered := bytes.Clone(zip)
+	tampered[len(tampered)/2] ^= 1
+	refused("an archive changed after signing", "runner-up-v9.0.2-windows-amd64.zip", tampered, sig, "the signed checksums list")
+	forged := bytes.Clone(sig)
+	forged[0] ^= 1
+	refused("checksums the key did not sign", "runner-up-v9.0.2-windows-amd64.zip", zip, forged, "did not sign these checksums")
+	refused("another platform's signed archive", "runner-up-v9.0.2-linux-amd64.tar.gz", archive("runner-up-v9.0.2-linux-amd64.tar.gz"), sig, "windows-amd64")
+	running := version.Version
+	version.Version = "v9.0.2"
+	refused("the version the service runs", "runner-up-v9.0.2-windows-amd64.zip", zip, sig, "installs only a newer release")
+	version.Version = running
+
+	// A place running a job keeps the service as it is.
+	h.block = true
+	b, _ := runRequest("win-pc-1").encode()
+	in, w := io.Pipe()
+	go w.Write(b)
+	done := make(chan error)
+	go func() { done <- s.Serve(context.Background(), in, io.Discard) }()
+	waitStarted(t, h)
+	refused("a release while a job runs", "runner-up-v9.0.2-windows-amd64.zip", zip, sig, "1 places run or clean up a job")
+	w.Close()
+	<-done
+
+	out, code := hand("runner-up-v9.0.2-windows-amd64.zip", zip, sig)
+	if code != ExitDone || !strings.Contains(out, "updating to v9.0.2") || !slices.Equal(installed, []string{"v9.0.2"}) {
+		t.Fatalf("a newer signed release: the agent exited %d and the service installed %v:\n%s", code, installed, out)
+	}
+	if out, err := askJobHost(t, s, runRequest("win-pc-2")); err == nil || !strings.Contains(out, "the service is updating") {
+		t.Errorf("the service took a job after installing a release: %v %s", err, out)
 	}
 }

@@ -270,8 +270,17 @@ and installs the runner-up service, which makes and deletes the job accounts.
 account. `--ssh` turns on Windows' OpenSSH server, and `--ssh-key` lets the
 coordinator's key sign in as that account. `--hyperv` turns Hyper-V on and lets
 the account make virtual machines; leave it out for account places only.
-Running `setup` again is harmless and updates runner-up. Restart the machine
-if it says so.
+Restart the machine if it says so.
+
+Running `setup` again is harmless and installs the runner-up it is run with.
+Each version goes in a folder of its own, such as
+`C:\Program Files\runner-up\v0.1.11-1a2dc4c30dbf`, before anything stops, so
+a running job keeps its program. `setup` restarts the service only when its
+program or account changed, and first waits, up to 30 minutes, for the
+service's running Windows jobs to end, since a stop ends them; Ctrl+C while it
+waits changes nothing. Whatever stops `setup` partway, it starts the service
+again. Once the setup names a `release`, the service also updates itself (see
+[Updating runner-up](#updating-runner-up)).
 
 Then, on the coordinator:
 
@@ -289,7 +298,10 @@ another.
 
 ### Running as a service
 
-For example, as a systemd user service on the coordinator's machine:
+For example, as a systemd user service on the coordinator's machine. With a
+`release` in the setup, run `runner-up update` once and start
+`stateDir/program/current` instead, so the supervisor starts the version the
+coordinator updated itself to (see [Updating runner-up](#updating-runner-up)).
 
 ```ini
 # ~/.config/systemd/user/runner-up.service
@@ -392,6 +404,7 @@ Besides what `init` and `machine add` write, you can set:
 | `guestCheckSeconds` | 30 | how often a tart place checks its clone has not restarted |
 | `maxJobSeconds` | 21600 | the longest a job may run |
 | `logKeepDays` | 30 | how long place logs are kept |
+| `release` | none | the runner-up the coordinator and its machines run: see [Updating runner-up](#updating-runner-up) |
 
 Each machine's `cores`, `memoryMB`, `roomCores` and `roomMemoryMB` set its
 budget. Each pool may set `cores` and `memoryMB` together: every job of that
@@ -461,6 +474,67 @@ Place runners never read the setup file. Each reads the setup the coordinator
 was running when it started the place, kept under `stateDir/setups`, so a
 half-written or refused file never reaches a job. `runner-up status` and
 `runner-up usage` read the setup file itself.
+
+### Updating runner-up
+
+The setup can name the runner-up release the coordinator and its machines run,
+with the SHA-256 of each platform's archive as the release's `checksums.txt`
+lists it:
+
+```json
+"release": {
+  "version": "v0.1.11",
+  "sha256": {
+    "darwin-arm64": "<runner-up-v0.1.11-darwin-arm64.tar.gz's SHA-256>",
+    "linux-amd64": "<runner-up-v0.1.11-linux-amd64.tar.gz's SHA-256>",
+    "windows-amd64": "<runner-up-v0.1.11-windows-amd64.zip's SHA-256>"
+  }
+}
+```
+
+Name each platform your coordinator and machines run. `url` may name another
+place to download releases from, as `<url>/<version>/<archive>`; by default
+they come from this repository's GitHub releases.
+
+When the setup names another version, the coordinator downloads its archive
+for its own platform, checks the SHA-256, and asks the new program its version
+and to check the setup. If all holds, it stops as a stop signal would, so
+running jobs carry on, and replaces itself with the new version in the same
+process, so launchd or systemd keeps supervising it. The new version is on
+trial for a minute. If it stops sooner, the supervisor starts the version it
+always starts, which sees the trial left behind, refuses that version and runs
+on. A refused version stays refused, in `stateDir/program/refused.json`, until
+the setup names another version or SHA-256. Once the new version has run for a
+minute, `stateDir/program/current` points at it.
+
+`stateDir/program/current` is what the supervisor should start. To make it
+before the coordinator first runs, run `runner-up update`: it downloads and
+checks the setup's release and points `current` at it.
+
+Once the coordinator runs the setup's version, it copies it to each machine it
+reaches over SSH, as the machine's agent: into `.local/share/runner-up/<version>`
+in the SSH account's home, or `%LOCALAPPDATA%\runner-up\<version>` on Windows,
+where the machine checks the SHA-256 before keeping it. Jobs started after that
+run with the copy; running jobs keep their agent. `stateDir/agents.json`
+records each machine's copy. A machine that cannot be reached keeps its agent
+and is tried again ten minutes later. On Windows the copy's path must hold no
+spaces, so the SSH account's name may not have any.
+
+A Windows machine's runner-up service runs as SYSTEM, so it takes a release
+only when the release signing key signed its `checksums.txt`. Whoever holds
+that key's private half controls every Windows machine running the service:
+it is kept as a secret of this repository's `release` environment, which only
+`main` may use, and the release workflow signs each release with it into
+`checksums.txt.sig`. A runner-up built without the key's public half refuses
+every release. To update a machine's service, the coordinator holds its
+account places from new jobs, waits for their jobs to end, and has the
+machine's agent hand the service the Windows archive, `checksums.txt` and its
+signature. The service checks the signature, the archive's SHA-256 and that
+the release is newer than itself, installs it beside its own program, and
+restarts as it. A new service that stops within a minute goes back to the
+version before and refuses that version. An administrator's `runner-up setup`
+installs any version. A service that `setup` installed from runner-up v0.1.10
+or earlier cannot take a release: run a newer `setup` once.
 
 ### Job sizes and readings
 

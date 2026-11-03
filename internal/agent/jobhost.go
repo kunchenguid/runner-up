@@ -3,13 +3,16 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/quote"
+	"github.com/kunchenguid/runner-up/internal/release"
 	"github.com/kunchenguid/runner-up/internal/version"
 
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -107,8 +110,9 @@ var errAccountExists = errors.New("the account already exists")
 type JobRequest struct {
 	Version string `json:"version"`
 	// Op is run, clean (delete whatever the place's earlier jobs left,
-	// waiting for a job still cleaning up) or probe (answer that the service
-	// is there).
+	// waiting for a job still cleaning up), probe (answer that the service
+	// is there, and its version) or update (replace the service with a
+	// signed release).
 	Op         string `json:"op"`
 	Place      string `json:"place,omitempty"`
 	Cores      int    `json:"cores,omitempty"`
@@ -116,6 +120,20 @@ type JobRequest struct {
 	AllowForks bool   `json:"allowForks,omitempty"`
 	// Registration is the runner's one-time registration, for run only.
 	Registration string `json:"registration,omitempty"`
+	// An update request's release: the archive's name and size - its bytes
+	// follow the request line - and the release's checksums.txt and its
+	// signature, in base64.
+	ServiceUpdate
+}
+
+// ServiceUpdate is a release handed to the service, as the agent's
+// update-service command reads it: this, as one line of JSON, then the
+// archive.
+type ServiceUpdate struct {
+	Archive   string `json:"archive,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+	Checksums string `json:"checksums,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 const jobRequestVersion = "runner-up/1"
@@ -129,6 +147,15 @@ func (r JobRequest) check() error {
 		return fmt.Errorf("not a %s request", jobRequestVersion)
 	}
 	if r.Op == "probe" {
+		return nil
+	}
+	if r.Op == "update" {
+		if r.Archive == "" || strings.ContainsAny(r.Archive, `/\:`) || r.Size <= 0 || r.Size > release.MaxArchive || r.Checksums == "" {
+			return errors.New("an update names a release archive, its size and the release's checksums")
+		}
+		if sig, err := base64.StdEncoding.DecodeString(r.Signature); err != nil || len(sig) != ed25519.SignatureSize {
+			return errors.New("an update's signature is not a base64 Ed25519 signature")
+		}
 		return nil
 	}
 	if r.Op != "run" && r.Op != "clean" {
@@ -199,6 +226,12 @@ type Options struct {
 	// CleanWait is how long a clean request waits for the place's job to
 	// finish cleaning up.
 	CleanWait time.Duration
+	// Update installs version, whose archive for this machine's Platform the
+	// release signing Keys vouched for, and has the service restart as it.
+	// A service with no Update refuses updates.
+	Update   func(version string, archive []byte) error
+	Platform string
+	Keys     []ed25519.PublicKey
 }
 
 // Server runs jobs, one per place at a time.
@@ -209,6 +242,8 @@ type Server struct {
 	mu    sync.Mutex
 	held  map[string]chan struct{}
 	dirty map[string]bool
+	// updating: the service is replacing itself and takes no job.
+	updating bool
 }
 
 func NewServer(opts Options, host Host, log *slog.Logger) *Server {
@@ -236,9 +271,19 @@ func (s *Server) hold(place string, wait time.Duration) func() {
 	}
 	s.mu.Unlock()
 	release := func() { <-ch }
+	// An update that began while this waited keeps the place.
+	held := func() func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.updating {
+			release()
+			return nil
+		}
+		return release
+	}
 	select {
 	case ch <- struct{}{}:
-		return release
+		return held()
 	default:
 	}
 	if wait <= 0 {
@@ -246,10 +291,34 @@ func (s *Server) hold(place string, wait time.Duration) func() {
 	}
 	select {
 	case ch <- struct{}{}:
-		return release
+		return held()
 	case <-time.After(wait):
 		return nil
 	}
+}
+
+// pause stops the service taking jobs, unless one runs or cleans up now.
+func (s *Server) pause() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.updating {
+		return errors.New("the service is updating already")
+	}
+	n := 0
+	for _, ch := range s.held {
+		n += len(ch)
+	}
+	if n > 0 {
+		return fmt.Errorf("%d places run or clean up a job; update once they end", n)
+	}
+	s.updating = true
+	return nil
+}
+
+func (s *Server) resume() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updating = false
 }
 
 // accountName is rujob-<8 hex>: 14 characters, inside the 20 a local account
@@ -454,10 +523,12 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	case "probe":
 		fmt.Fprintf(out, "%s %s\n", serviceReady, version.Version)
 		return nil
+	case "update":
+		return s.update(req, br, out)
 	case "clean":
 		release := s.hold(req.Place, s.opts.CleanWait)
 		if release == nil {
-			return s.refuse(out, fmt.Errorf("place %s is still running a job", req.Place))
+			return s.refuse(out, fmt.Errorf("place %s is still running a job, or the service is updating", req.Place))
 		}
 		defer release()
 		if err := s.Sweep(req.Place); err != nil {
@@ -468,7 +539,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	}
 	release := s.hold(req.Place, 0)
 	if release == nil {
-		return s.refuse(out, fmt.Errorf("place %s already runs a job", req.Place))
+		return s.refuse(out, fmt.Errorf("place %s already runs a job, or the service is updating", req.Place))
 	}
 	defer release()
 	if err := s.Sweep(req.Place); err != nil {
@@ -486,6 +557,39 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		fmt.Fprintf(out, "%sstart script ended with %d\n", servicePrefix, code)
 	}
 	return err
+}
+
+// update reads a release from in, after the request line, and installs it
+// once the release signing key vouches for it and it is newer than the
+// service. No job runs meanwhile, and none starts once the service is to
+// restart as the new version.
+func (s *Server) update(req JobRequest, in io.Reader, out io.Writer) error {
+	if s.opts.Update == nil {
+		return s.refuse(out, errors.New("this service does not update itself"))
+	}
+	archive := make([]byte, req.Size)
+	if _, err := io.ReadFull(in, archive); err != nil {
+		return s.refuse(out, fmt.Errorf("the archive ended early: %w", err))
+	}
+	sig, _ := base64.StdEncoding.DecodeString(req.Signature)
+	signed := release.Signed{Name: req.Archive, Archive: archive, Checksums: []byte(req.Checksums), Signature: sig}
+	v, err := signed.Verify(s.opts.Platform, s.opts.Keys)
+	if err != nil {
+		return s.refuse(out, err)
+	}
+	if release.Compare(v, version.Version) <= 0 {
+		return s.refuse(out, fmt.Errorf("the service runs %s and installs only a newer release, not %s; an administrator's runner-up setup installs any", version.Version, v))
+	}
+	if err := s.pause(); err != nil {
+		return s.refuse(out, err)
+	}
+	if err := s.opts.Update(v, archive); err != nil {
+		s.resume()
+		return s.refuse(out, err)
+	}
+	s.log.Info("installed a signed release; restarting as it", "version", v)
+	fmt.Fprintf(out, "%supdating to %s\n", servicePrefix, v)
+	return nil
 }
 
 func (s *Server) refuse(out io.Writer, err error) error {
@@ -671,6 +775,11 @@ var errServiceDone = errors.New("done")
 // the service said the request was done; a refusal or any other end is an
 // error.
 func askService(ctx context.Context, conn io.ReadWriteCloser, req JobRequest, out io.Writer) error {
+	return askServiceWith(ctx, conn, req, nil, out)
+}
+
+// askServiceWith is askService sending body after the request line.
+func askServiceWith(ctx context.Context, conn io.ReadWriteCloser, req JobRequest, body io.Reader, out io.Writer) error {
 	b, err := req.encode()
 	if err != nil {
 		conn.Close()
@@ -683,6 +792,11 @@ func askService(ctx context.Context, conn io.ReadWriteCloser, req JobRequest, ou
 	}()
 	if _, err := conn.Write(b); err != nil {
 		return fmt.Errorf("could not reach runner-up's service: %w", err)
+	}
+	if body != nil {
+		if _, err := io.Copy(conn, body); err != nil {
+			return fmt.Errorf("could not send runner-up's service the release: %w", err)
+		}
 	}
 	r := bufio.NewReader(conn)
 	result := errors.New("runner-up's service ended without an answer")
@@ -710,6 +824,53 @@ func askService(ctx context.Context, conn io.ReadWriteCloser, req JobRequest, ou
 	return result
 }
 
+// readyVersion is the version in the service's answer to a probe.
+func readyVersion(answer string) (string, error) {
+	for _, line := range strings.Split(answer, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), serviceReady+" "); ok && v != "" {
+			return v, nil
+		}
+	}
+	return "", errors.New("runner-up's service answered with no version")
+}
+
+// updateServiceMain is `agent update-service`: it hands the service the
+// release on in - a ServiceUpdate line, then the archive - and relays its
+// answer to out.
+func updateServiceMain(in io.Reader, out io.Writer, ask func(context.Context, ServiceUpdate, io.Reader, io.Writer) error) int {
+	r := bufio.NewReaderSize(in, 64<<10)
+	var head []byte
+	for {
+		line, more, err := r.ReadLine()
+		if err != nil {
+			fmt.Fprintln(out, "runner-up agent: no release on input:", err)
+			return ExitFailed
+		}
+		head = append(head, line...)
+		if len(head) > maxJobRequest {
+			fmt.Fprintln(out, "runner-up agent: the release's description is too long")
+			return ExitFailed
+		}
+		if !more {
+			break
+		}
+	}
+	var u ServiceUpdate
+	dec := json.NewDecoder(strings.NewReader(string(head)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&u); err != nil {
+		fmt.Fprintln(out, "runner-up agent: unreadable release description:", err)
+		return ExitFailed
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := ask(ctx, u, io.LimitReader(r, u.Size), out); err != nil {
+		fmt.Fprintln(out, "runner-up agent:", err)
+		return ExitFailed
+	}
+	return ExitDone
+}
+
 // serviceAnswer reads one of the service's own lines: errServiceDone when it
 // ends the request well, nil for a line that ends nothing, or the error.
 func serviceAnswer(op, line string) error {
@@ -717,6 +878,8 @@ func serviceAnswer(op, line string) error {
 	case strings.HasPrefix(line, "refused: "):
 		return errors.New(strings.TrimPrefix(line, "refused: "))
 	case op == "probe" && strings.HasPrefix(line, "ready"):
+		return errServiceDone
+	case op == "update" && strings.HasPrefix(line, "updating to "):
 		return errServiceDone
 	case op == "clean" && strings.HasSuffix(line, " is clean"):
 		return errServiceDone

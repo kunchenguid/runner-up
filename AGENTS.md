@@ -6,9 +6,9 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 ## Layout
 
 - `main.go` calls `cmd.Main`; `cmd/` parses the command line, `init` and `machine add`, and holds the end-to-end tests
-- `internal/coordinator/` - scale set sessions, the planner, place runners, the macOS VM count
+- `internal/coordinator/` - scale set sessions, the planner, place runners, the macOS VM count, updating to the setup's release (`program.go`, `update.go`)
 - `internal/agent/` - the agent and its providers (`docker.go`, `kvm_linux.go`, `tart.go`, `container.go`, `host.go`, `hyperv*.go`, `account_*.go`), the fork guard, and the Windows service and job host
-- `internal/config/` (the setup file), `internal/plan/` (order rules), `internal/lock/`, `internal/proc/`, `internal/quote/`, `internal/version/`
+- `internal/config/` (the setup file), `internal/plan/` (order rules), `internal/release/` (release archives and their signature), `internal/lock/`, `internal/proc/`, `internal/quote/`, `internal/version/`
 - `internal/testbin/` builds runner-up once per test binary for tests that run it as a program
 
 ## Commands
@@ -25,6 +25,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 - A place is busy exactly while some process holds its lock; running jobs outlive a coordinator stop.
 - Resource reservations: see README.md, "Setup file" and "Borrowing a virtual Mac".
 - The coordinator stores no token; it asks `gh auth token` for each session.
+- The Windows service installs only a release whose `checksums.txt` the release signing key signed; its public half is in `internal/release/key.go`, its private half only in the `release` environment's secret.
 - Recorded GitHub payloads in `testdata/` are renamed; keep them free of real repository, account and machine names.
 
 ## Windows compatibility

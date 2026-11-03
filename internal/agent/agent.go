@@ -96,10 +96,24 @@ func providerFor(name string) (provider, error) {
 
 func AgentMain(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: runner-up agent probe|vms|run|clean")
+		fmt.Fprintln(os.Stderr, "usage: runner-up agent probe|vms|run|clean|service-version|update-service")
 		return 2
 	}
 	switch args[0] {
+	case "service-version":
+		// The version of runner-up's Windows service here.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		v, err := serviceVersion(ctx)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return ExitFailed
+		}
+		fmt.Println(v)
+		return 0
+	case "update-service":
+		// Hand runner-up's Windows service here a signed release.
+		return updateServiceMain(os.Stdin, os.Stdout, updateService)
 	case "measure":
 		return MeasureMain(args[1:])
 	case "probe":

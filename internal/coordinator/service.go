@@ -152,6 +152,10 @@ type Service struct {
 
 	// drains are the live drains, reread on every placement (drain.go).
 	drains []*drain
+
+	// held are the places that take no new job, by id, and why: account
+	// places while their machine's service updates (update.go).
+	held map[string]string
 }
 
 type workflowRun struct {
@@ -648,7 +652,7 @@ func (s *Service) viewsLocked() []plan.PlaceView {
 	for _, p := range places {
 		// Resource fit depends on the job, not the place's fallback size.
 		busy, _ := s.placeBusy(p, false)
-		if !busy && (now.Before(s.cooling[p.ID]) || s.restingLocked(p.Machine)) {
+		if !busy && (now.Before(s.cooling[p.ID]) || s.restingLocked(p.Machine) || s.held[p.ID] != "") {
 			busy = true
 		}
 		view := plan.PlaceView{Place: p, Busy: busy}
@@ -659,6 +663,30 @@ func (s *Service) viewsLocked() []plan.PlaceView {
 		out = append(out, view)
 	}
 	return out
+}
+
+// Hold keeps places from taking new jobs, for why, until Unhold. Jobs they
+// run carry on.
+func (s *Service) Hold(ids []string, why string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held == nil {
+		s.held = map[string]string{}
+	}
+	for _, id := range ids {
+		s.held[id] = why
+	}
+	s.Log.Info("places take no new jobs for now", "places", strings.Join(ids, ","), "why", why)
+}
+
+// Unhold lets places Hold held take jobs again.
+func (s *Service) Unhold(ids []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		delete(s.held, id)
+	}
+	s.Log.Info("places take jobs again", "places", strings.Join(ids, ","))
 }
 
 func share(p config.Place) config.Share { return config.Share{Cores: p.Cores, MemoryMB: p.MemoryMB} }

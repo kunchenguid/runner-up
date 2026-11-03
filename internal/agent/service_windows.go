@@ -7,13 +7,20 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/kunchenguid/runner-up/internal/config"
+	"github.com/kunchenguid/runner-up/internal/release"
 	"github.com/kunchenguid/runner-up/internal/version"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 // runner-up's Windows service: the job host (jobhost.go) under Windows'
@@ -198,6 +205,11 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 		log.Error("cannot make its own folder", "path", stateDir(), "err", stateErr)
 		return true, 1
 	}
+	if beginServiceTrial(log) {
+		// The service manager starts the version before, which the service
+		// now names, as it starts a service that failed.
+		return true, 2
+	}
 	settings, self, err := prepare(log)
 	if err != nil {
 		log.Error("cannot start", "err", err)
@@ -222,7 +234,10 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 		}
 		return accountJobFiles(zip, runnerWindowsSHA256[runnerArch()], self, req.AllowForks, req.Cores, req.MemoryMB), nil
 	}
-	server := NewServer(Options{Records: filepath.Join(stateDir(), "job-accounts.json"), Files: files}, host, log)
+	restart := make(chan string, 1)
+	update := func(v string, archive []byte) error { return installService(log, self, v, archive, restart) }
+	server := NewServer(Options{Records: filepath.Join(stateDir(), "job-accounts.json"), Files: files,
+		Update: update, Platform: release.Platform("windows", runtime.GOARCH), Keys: release.SigningKeys()}, host, log)
 	// After a restart or a power cut, delete whatever a cut-off job left
 	// before taking another.
 	if err := server.Sweep(""); err != nil {
@@ -238,13 +253,22 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 	go ln.serve(ctx, server, log, &jobs)
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	log.Info("runner-up service running", "version", version.Version, "user", settings.User)
-	for c := range requests {
-		if c.Cmd == svc.Interrogate {
-			status <- c.CurrentStatus
-			continue
-		}
-		if c.Cmd == svc.Stop || c.Cmd == svc.Shutdown {
-			break
+	kept := time.AfterFunc(serviceTrialWindow, func() { keepServiceTrial(log) })
+	defer kept.Stop()
+	restarting := ""
+serving:
+	for {
+		select {
+		case c := <-requests:
+			if c.Cmd == svc.Interrogate {
+				status <- c.CurrentStatus
+				continue
+			}
+			if c.Cmd == svc.Stop || c.Cmd == svc.Shutdown {
+				break serving
+			}
+		case restarting = <-restart:
+			break serving
 		}
 	}
 	status <- svc.Status{State: svc.StopPending, WaitHint: 180000}
@@ -257,8 +281,193 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 	case <-time.After(170 * time.Second):
 		log.Error("jobs were still cleaning up at stop; the next start sweeps them")
 	}
+	if restarting != "" {
+		// A stop that is not asked for is a failure to the service manager,
+		// which starts the service again, now as the new version.
+		log.Info("runner-up service stopped to restart as the new version", "version", restarting)
+		return true, 3
+	}
+	endServiceTrial(log)
 	log.Info("runner-up service stopped")
 	return false, 0
+}
+
+// The service on trial: runner-up's service replaces itself with a signed
+// release (Server.update, installService), and the new version is on trial
+// for serviceTrialWindow. If it stops in that time other than when asked -
+// it fails or crashes, and the service manager starts it again - it names
+// the version before as the service's program again, refuses its own
+// version, and stops for the service manager to start the version before.
+// update.json in the service's folder holds the trial and the refused
+// versions.
+
+const serviceTrialWindow = time.Minute
+
+type serviceTrial struct {
+	// Version is on trial, replacing the program at From; Started is when
+	// it began serving.
+	Version string    `json:"version,omitempty"`
+	From    string    `json:"from,omitempty"`
+	Started time.Time `json:"started,omitzero"`
+	// Refused are the versions that stopped on trial.
+	Refused []string `json:"refused,omitempty"`
+}
+
+func serviceTrialPath() string { return filepath.Join(stateDir(), "update.json") }
+
+func readServiceTrial() serviceTrial {
+	var t serviceTrial
+	config.ReadJSON(serviceTrialPath(), &t)
+	return t
+}
+
+func writeServiceTrial(t serviceTrial) error {
+	if err := config.WriteJSON(serviceTrialPath(), t); err != nil {
+		return err
+	}
+	return protectFile(serviceTrialPath())
+}
+
+// beginServiceTrial starts this version's trial, or, when this version
+// stopped on trial before, goes back to the version before and says so.
+func beginServiceTrial(log *slog.Logger) bool {
+	t := readServiceTrial()
+	switch {
+	case t.Version == "":
+		return false
+	case t.Version != version.Version:
+		// Set up again by an administrator, or back on the version before.
+		t.Version, t.From, t.Started = "", "", time.Time{}
+	case t.Started.IsZero():
+		t.Started = time.Now()
+		log.Info("runner-up service runs a new version on trial", "version", t.Version, "before", t.From, "trial", serviceTrialWindow)
+	default:
+		log.Error("runner-up service stopped on trial; going back to the version before", "version", t.Version, "before", t.From)
+		err := setServiceProgram(t.From)
+		if err != nil {
+			log.Error("could not go back to the version before; the new version runs on", "err", err)
+		}
+		t.Refused = append(slices.DeleteFunc(t.Refused, func(v string) bool { return v == t.Version }), t.Version)
+		t.Version, t.From, t.Started = "", "", time.Time{}
+		if werr := writeServiceTrial(t); werr != nil {
+			log.Error("could not record the refused version", "err", werr)
+		}
+		return err == nil
+	}
+	if err := writeServiceTrial(t); err != nil {
+		log.Error("could not record the trial", "err", err)
+	}
+	return false
+}
+
+// keepServiceTrial keeps this version once it has served its trial.
+func keepServiceTrial(log *slog.Logger) {
+	if t := readServiceTrial(); t.Version == version.Version && !t.Started.IsZero() {
+		t.Version, t.From, t.Started = "", "", time.Time{}
+		if err := writeServiceTrial(t); err == nil {
+			log.Info("runner-up service kept the new version after its trial", "version", version.Version)
+		}
+	}
+}
+
+// endServiceTrial ends this version's trial when it was asked to stop:
+// nothing was wrong with it.
+func endServiceTrial(log *slog.Logger) {
+	if t := readServiceTrial(); t.Version == version.Version && !t.Started.IsZero() {
+		t.Version, t.From, t.Started = "", "", time.Time{}
+		writeServiceTrial(t)
+	}
+}
+
+// programDir holds the service's programs, each in a folder of its version
+// and its SHA-256, as runner-up setup installs them: only SYSTEM and
+// Administrators change it.
+func programDir() string {
+	d := os.Getenv("ProgramFiles")
+	if d == "" {
+		d = `C:\Program Files`
+	}
+	return filepath.Join(d, "runner-up")
+}
+
+// installService installs v, from archive, beside the service's program,
+// names it the service's program, starts its trial and has the service
+// restart.
+func installService(log *slog.Logger, self, v string, archive []byte, restart chan<- string) error {
+	t := readServiceTrial()
+	if slices.Contains(t.Refused, v) {
+		return fmt.Errorf("runner-up service %s stopped on trial here before and is not tried again; an administrator's runner-up setup installs it", v)
+	}
+	prog, err := release.Program(archive, release.Platform("windows", runtime.GOARCH))
+	if err != nil {
+		return err
+	}
+	sum := release.SHA256(prog)
+	dir := filepath.Join(programDir(), v+"-"+sum[:12])
+	exe := filepath.Join(dir, "runner-up.exe")
+	if mine, err := ownedBySystemAt(programDir()); err != nil || !mine {
+		return fmt.Errorf("%s is not the service's own folder; run runner-up setup", programDir())
+	}
+	if b, err := os.ReadFile(exe); err != nil || release.SHA256(b) != sum {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(exe+".new", prog, 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(exe+".new", exe); err != nil {
+			return err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, exe, "version").Output()
+	if got := strings.TrimSpace(string(out)); err != nil || got != v {
+		return fmt.Errorf("the new program does not run as %s: %q, %v", v, got, err)
+	}
+	if err := writeServiceTrial(serviceTrial{Version: v, From: self, Refused: t.Refused}); err != nil {
+		return err
+	}
+	if err := setServiceProgram(exe); err != nil {
+		t.Version, t.From = "", ""
+		writeServiceTrial(t)
+		return err
+	}
+	log.Info("installed the new version as the service's program", "version", v, "path", exe)
+	select {
+	case restart <- v:
+	default:
+	}
+	return nil
+}
+
+// setServiceProgram names exe the service's program, which the service
+// manager starts again 10 seconds after any stop it did not ask for.
+func setServiceProgram(exe string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	bin, err := windows.UTF16PtrFromString(`"` + exe + `" service`)
+	if err != nil {
+		return err
+	}
+	if err := windows.ChangeServiceConfig(s.Handle, windows.SERVICE_NO_CHANGE, windows.SERVICE_NO_CHANGE, windows.SERVICE_NO_CHANGE,
+		bin, nil, nil, nil, nil, nil, nil); err != nil {
+		return fmt.Errorf("could not name the service's program: %w", err)
+	}
+	actions := []mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second}, {Type: mgr.ServiceRestart, Delay: time.Minute}}
+	if err := s.SetRecoveryActions(actions, 86400); err != nil {
+		return err
+	}
+	return s.SetRecoveryActionsOnNonCrashFailures(true)
 }
 
 func openLog(ok bool) (*slog.Logger, func()) {
