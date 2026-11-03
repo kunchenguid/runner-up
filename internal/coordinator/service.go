@@ -94,10 +94,14 @@ type Service struct {
 	// unused are runners that ended before a job reached them, by unusedKey:
 	// each is still registered with its scale set until Tidy removes it.
 	unused map[string]PlaceRun
-	// timedOut are the runners no job reached in time that GitHub has
-	// answered for, by name (stopIdleLocked): true once GitHub removed the
+	// givenUp are the runners the coordinator gave up on that GitHub has
+	// answered for, by name (giveUpLocked): true once GitHub removed the
 	// runner and its place is stopping, false when GitHub said it runs a job.
-	timedOut map[string]bool
+	givenUp map[string]bool
+	// spare are the scale sets a job of which was cancelled before a runner
+	// took it, while a runner left waiting for nothing is still to go
+	// (stopSpareLocked).
+	spare map[setName]bool
 	// unreachable are the resting machines, by name, with when each was found
 	// unreachable, and reachAsked when each was last asked (reach.go).
 	unreachable map[string]time.Time
@@ -132,6 +136,9 @@ type workflowRun struct {
 	repo string
 	id   int64
 }
+
+// setName names one runner scale set: a target's, for one pool.
+type setName struct{ target, pool string }
 
 type runWorkflow struct {
 	path      string
@@ -172,7 +179,8 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 		wasted:       map[string]time.Time{},
 		timings:      map[string]time.Duration{},
 		unused:       map[string]PlaceRun{},
-		timedOut:     map[string]bool{},
+		givenUp:      map[string]bool{},
+		spare:        map[setName]bool{},
 		unreachable:  map[string]time.Time{},
 		reachAsked:   map[string]time.Time{},
 		Reach:        ReachAgent,
@@ -303,6 +311,10 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 		s.Log.Info("job completed", "repo", repoOf(target, m.JobMessageBase), "job", m.JobDisplayName, "run", m.WorkflowRunID,
 			"runner", m.RunnerName, "result", m.Result)
 	}
+	if cancelledBeforeRunner {
+		s.spare[setName{target, pool}] = true
+		s.stopSpareLocked(ctx, target, pool)
+	}
 	if msg.Statistics != nil {
 		known := 0
 		for _, j := range s.waiting {
@@ -318,9 +330,6 @@ func (s *Service) Handle(ctx context.Context, target, pool string, msg *scaleset
 	s.saveLocked()
 	s.mu.Unlock()
 
-	if cancelledBeforeRunner {
-		s.stopSurplus(target, pool)
-	}
 	s.Place(ctx)
 	return nil
 }
@@ -771,13 +780,14 @@ func (s *Service) assignLocked(ctx context.Context, a plan.Assignment) bool {
 	return true
 }
 
-// stopSurplus stops runners nobody will use: when a job acquired for this
-// scale set was cancelled before a runner took it, the scale set has more
-// runners waiting for a job than jobs on their way, and the newest waiting
-// runner would otherwise hold its place until the start timeout.
-func (s *Service) stopSurplus(target, pool string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// stopSpareLocked gives up on the runners of a scale set nobody will use:
+// when a job acquired for the set was cancelled before a runner took it, the
+// set has more runners waiting for a job than jobs on their way, and the
+// newest waiting runners would otherwise hold their places until the start
+// timeout. A runner given up on before, which is stopping or which GitHub
+// says is running a job, is no longer waiting. While a removal GitHub did not
+// answer leaves a spare runner, Tidy asks again at every tick.
+func (s *Service) stopSpareLocked(ctx context.Context, target, pool string) {
 	pending := 0
 	for _, a := range s.acquired {
 		if a.Job.Target == target && a.Job.Pool == pool {
@@ -786,34 +796,39 @@ func (s *Service) stopSurplus(target, pool string) {
 	}
 	type idle struct {
 		place string
-		at    time.Time
+		run   PlaceRun
 	}
 	var idles []idle
 	for _, p := range s.Cfg.Places() {
-		held, _ := lock.HeldBy(filepath.Join(s.Cfg.PlaceDir(p.ID), "busy.lock"))
-		if !held {
+		dir := s.Cfg.PlaceDir(p.ID)
+		if held, err := lock.HeldBy(filepath.Join(dir, "busy.lock")); err != nil || !held {
 			continue
 		}
 		var run PlaceRun
-		if config.ReadJSON(filepath.Join(s.Cfg.PlaceDir(p.ID), "place.json"), &run) != nil {
+		if config.ReadJSON(filepath.Join(dir, "place.json"), &run) != nil || run.Started || run.Target != target ||
+			run.Pool != pool {
 			continue
 		}
-		if run.Target == target && run.Pool == pool && !run.Started {
-			idles = append(idles, idle{p.ID, run.LaunchedAt})
+		if _, answered := s.givenUp[run.RunnerName]; !answered {
+			idles = append(idles, idle{p.ID, run})
 		}
 	}
-	sort.Slice(idles, func(a, b int) bool { return idles[a].at.After(idles[b].at) })
-	for i := 0; i < len(idles)-pending; i++ {
-		s.Log.Info("stopping a runner whose job was cancelled before it started", "place", idles[i].place)
-		if err := s.launcher.Stop(idles[i].place); err != nil {
-			s.Log.Warn("stop failed", "place", idles[i].place, "err", err)
+	sort.Slice(idles, func(a, b int) bool { return idles[a].run.LaunchedAt.After(idles[b].run.LaunchedAt) })
+	done := true
+	for _, r := range idles[:max(len(idles)-pending, 0)] {
+		if !s.giveUpLocked(ctx, r.place, r.run, "the runner's job was cancelled before it started") {
+			done = false
 		}
+	}
+	if done {
+		delete(s.spare, setName{target, pool})
 	}
 }
 
 // Tidy runs on every tick: it forgets the last run of every free place,
 // removes the registration of every runner that ended without a job, and
-// gives up on every runner no job reached in time.
+// gives up on every runner no job reached in time and every spare runner
+// still to go.
 func (s *Service) Tidy(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -851,6 +866,9 @@ func (s *Service) Tidy(ctx context.Context) {
 		s.saveLocked()
 	}
 	s.stopIdleLocked(ctx)
+	for set := range s.spare {
+		s.stopSpareLocked(ctx, set.target, set.pool)
+	}
 	pruneLogs(s.Cfg.LogsDir(), s.now().Add(-time.Duration(s.Cfg.LogKeepDays)*24*time.Hour))
 	pruneLogs(usageDir(s.Cfg), s.now().Add(-time.Duration(s.Cfg.LogKeepDays)*24*time.Hour))
 }
@@ -861,13 +879,7 @@ func runnerGone(err error) bool {
 }
 
 // stopIdleLocked gives up on every runner that has waited the start timeout
-// with no job. GitHub can give a scale set's idle runner a job at any moment
-// until the runner is removed, and a runner stopped first would leave that
-// job to fail when GitHub stops hearing from it. So the runner's registration
-// goes first, and its place is stopped only once GitHub has accepted that. A
-// runner GitHub will not remove because it is running a job keeps running
-// it. One whose removal GitHub did not answer, or whose scale set has no live
-// session, keeps its place until a later tick removes it.
+// with no job.
 func (s *Service) stopIdleLocked(ctx context.Context) {
 	limit := s.Cfg.Seconds(s.Cfg.StartTimeoutSeconds)
 	now := s.now()
@@ -881,45 +893,58 @@ func (s *Service) stopIdleLocked(ctx context.Context) {
 			now.Sub(run.LaunchedAt) < limit {
 			continue
 		}
-		if _, answered := s.timedOut[run.RunnerName]; answered {
+		if _, answered := s.givenUp[run.RunnerName]; answered {
 			continue
 		}
-		if run.RunnerID > 0 {
-			set := s.sets[setKey(run.Target, run.Pool)]
-			if set == nil {
-				continue
-			}
-			err := set.RemoveRunner(ctx, int64(run.RunnerID))
-			if errors.Is(err, scaleset.JobStillRunningError) {
-				s.timedOut[run.RunnerName] = false
-				s.Log.Info("no job reached the runner in time, but GitHub says it is running one; keeping it",
-					"place", p.ID, "runner", run.RunnerName)
-				continue
-			}
-			if err != nil && !runnerGone(err) {
-				s.Log.Warn("could not remove a runner no job reached in time; it keeps its place until GitHub answers",
-					"place", p.ID, "runner", run.RunnerName, "err", err)
-				continue
-			}
-		}
-		s.Log.Info("no job reached the runner in time; removed it from its scale set, stopping it", "place", p.ID,
-			"runner", run.RunnerName)
-		if err := s.launcher.Stop(p.ID); err != nil {
-			s.Log.Warn("stop failed", "place", p.ID, "err", err)
-			continue
-		}
-		s.timedOut[run.RunnerName] = true
+		s.giveUpLocked(ctx, p.ID, run, "no job reached the runner in time")
 	}
+}
+
+// giveUpLocked gives up on a place's waiting runner, saying why. GitHub can
+// give a scale set's waiting runner a job at any moment until the runner is
+// removed, and a runner stopped first would leave that job to fail when
+// GitHub stops hearing from it. So the runner's registration goes first, and
+// its place is stopped only once GitHub has accepted that. A runner GitHub
+// will not remove because it is running a job keeps running it. It reports
+// whether GitHub answered: a runner whose removal GitHub did not answer, or
+// whose scale set has no live session, keeps its place, to be asked about
+// again at a later tick.
+func (s *Service) giveUpLocked(ctx context.Context, place string, run PlaceRun, why string) bool {
+	if run.RunnerID > 0 {
+		set := s.sets[setKey(run.Target, run.Pool)]
+		if set == nil {
+			return false
+		}
+		err := set.RemoveRunner(ctx, int64(run.RunnerID))
+		if errors.Is(err, scaleset.JobStillRunningError) {
+			s.givenUp[run.RunnerName] = false
+			s.Log.Info(why+", but GitHub says it is running a job; keeping it", "place", place, "runner", run.RunnerName)
+			return true
+		}
+		if err != nil && !runnerGone(err) {
+			s.Log.Warn(why+"; could not remove it from its scale set, so it keeps its place until GitHub answers",
+				"place", place, "runner", run.RunnerName, "err", err)
+			return false
+		}
+	}
+	s.Log.Info(why+"; removed it from its scale set, stopping it", "place", place, "runner", run.RunnerName)
+	if err := s.launcher.Stop(place); err != nil {
+		s.Log.Warn("stop failed", "place", place, "err", err)
+		return false
+	}
+	s.givenUp[run.RunnerName] = true
+	return true
 }
 
 // retireLocked forgets the last run of a free place, which Tidy or the next
 // placement there may reach first. A runner that ended before its job reached
-// it is still registered with its scale set, unless stopIdleLocked removed it
-// there, so it joins the unused runners, saved before its place.json goes.
-// The job it was started for waits again, in line from where it was: GitHub
-// keeps an assigned job assigned to the scale set and sends nothing more, so
-// a job dropped here would never be placed again. A run that could not reach
-// its machine's agent rests the machine.
+// it is still registered with its scale set, unless the coordinator removed it
+// there when it gave up on it (giveUpLocked), so it joins the unused runners,
+// saved before its place.json goes. The job it was started for waits again,
+// in line from where it was: GitHub keeps an assigned job assigned to the
+// scale set and sends nothing more, so a job dropped here would never be
+// placed again. A run that could not reach its machine's agent rests the
+// machine.
 func (s *Service) retireLocked(p config.Place) {
 	dir := s.Cfg.PlaceDir(p.ID)
 	path := filepath.Join(dir, "place.json")
@@ -930,8 +955,8 @@ func (s *Service) retireLocked(p config.Place) {
 	if run.Unreachable {
 		s.restLocked(p.Machine)
 	}
-	removed := s.timedOut[run.RunnerName]
-	delete(s.timedOut, run.RunnerName)
+	removed := s.givenUp[run.RunnerName]
+	delete(s.givenUp, run.RunnerName)
 	if !run.Started {
 		if run.RunnerID > 0 && !removed {
 			s.unused[unusedKey(run)] = run
