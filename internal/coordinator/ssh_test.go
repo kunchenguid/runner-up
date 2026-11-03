@@ -14,12 +14,12 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent ("add a connect timeout in SshArgs"). A machine that takes
-// SSH's connection but never answers held its place runner for as long as
-// ssh waited, which is for good; one that drops the connection silently held
-// it for the system's own connect timeout. ssh to a machine now gives up
-// after ten seconds, and says so by exiting 255, which rests the machine
-// (reach.go). A machine's own ssh options may set another timeout.
+// Intent (README, "When a machine is down"). A machine that takes SSH's
+// connection but never answers held its place runner for as long as ssh waited,
+// which is for good; one that drops the connection silently held it for the
+// system's own connect timeout. ssh to a machine now gives up after ten
+// seconds, and says so by exiting 255, which rests the machine (reach.go). A
+// machine's own ssh options may set another timeout.
 func TestSshGivesUpOnAMachineThatNeverAnswers(t *testing.T) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		t.Skip("needs ssh")

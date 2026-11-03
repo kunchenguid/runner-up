@@ -41,9 +41,10 @@ func enqueueBorrow(t *testing.T, cfg *config.Config, r borrowRequest) *os.File {
 	return live
 }
 
-// Intent: borrows rank among recorded jobs by the same rules,
-// using declared minutes rather than the unknown or learned job estimate.
-// They may borrow only tart places, never a host or retired crew place.
+// Intent (README, "Borrowing a virtual Mac"): borrows rank among recorded jobs
+// by the same rules, using declared minutes rather than the unknown or learned
+// job estimate. They may borrow only tart places, never a host or retired crew
+// place.
 func TestBorrowRanksAmongRecordedJobs(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -104,9 +105,9 @@ func TestBorrowRanksAmongRecordedJobs(t *testing.T) {
 	}
 }
 
-// Intent: a borrow survives a service restart and counts
-// its pool's launch-time size and named VM once, even after a size edit and
-// when the agent reports that VM as running.
+// Intent (README, "Borrowing a virtual Mac"): a borrow survives a service
+// restart and counts its pool's launch-time size and named VM once, even after
+// a size edit and when the agent reports that VM as running.
 func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	cfg := oneMac(t.TempDir())
 	cfg.Pools[0].Cores, cfg.Pools[0].MemoryMB = 3, 6144
@@ -140,8 +141,9 @@ func TestBorrowCountsOnceAcrossRestart(t *testing.T) {
 	t.Logf("restart after size edit: named VM plus held borrow keeps %+v once and leaves the second VM slot free", reservation)
 }
 
-// Intent: an abandoned waiter holds nothing and cannot later be
-// granted a place. Equal labels still identify independent requests.
+// Intent (README, "Borrowing a virtual Mac"): an abandoned waiter holds nothing
+// and cannot later be granted a place. Equal labels still identify independent
+// requests.
 func TestBorrowAbandonedWaiterAndEqualLabels(t *testing.T) {
 	cfg := oneMac(t.TempDir())
 	l := newFakeLauncher()
@@ -160,8 +162,9 @@ func TestBorrowAbandonedWaiterAndEqualLabels(t *testing.T) {
 	}
 }
 
-// Intent (a borrow's limit): max(1 hour, what crew asked).
-// The duration feeds the same command cancellation path exercised below.
+// Intent (README, "Borrowing a virtual Mac"): a borrow ends after max(1 hour,
+// declared minutes). The duration feeds the same command cancellation path
+// exercised below.
 func TestBorrowLimit(t *testing.T) {
 	for _, minutes := range []int{1, 20, 60, 90, 180} {
 		if got, want := borrowLimit(minutes), time.Duration(max(60, minutes))*time.Minute; got != want {
@@ -170,8 +173,9 @@ func TestBorrowLimit(t *testing.T) {
 	}
 }
 
-// Intent: a stopped or expired borrow stops its command and returns
-// an explanation, and ordinary command exits retain their exit status.
+// Intent (README, "Borrowing a virtual Mac"): a stopped or expired borrow stops
+// its command and returns an explanation, and ordinary command exits retain
+// their exit status.
 func TestBorrowCommandExitAndDeadline(t *testing.T) {
 	for _, deadline := range []bool{false, true} {
 		t.Run(map[bool]string{false: "exit", true: "deadline"}[deadline], func(t *testing.T) {
@@ -223,8 +227,9 @@ func TestBorrowCommandExitAndDeadline(t *testing.T) {
 	}
 }
 
-// Intent: a borrowed command that a signal ends reports the
-// shell-compatible status 128 plus the signal, not a lost status.
+// Intent (README, "Borrowing a virtual Mac"): a borrowed command that a signal
+// ends reports the shell-compatible status 128 plus the signal, not a lost
+// status.
 func TestBorrowCommandSignalStatus(t *testing.T) {
 	out, err := os.CreateTemp(t.TempDir(), "output")
 	if err != nil {
@@ -239,9 +244,9 @@ func TestBorrowCommandSignalStatus(t *testing.T) {
 	}
 }
 
-// Intent: a request enters the line only after its live lock is
-// held. A scheduling pass during caller initialization must not delete the
-// caller's folder before it can publish the request.
+// Intent (README, "Borrowing a virtual Mac"): a request enters the line only
+// after its live lock is held. A scheduling pass during caller initialization
+// must not delete the caller's folder before it can publish the request.
 func TestBorrowUnpublishedRequestIsNotCollected(t *testing.T) {
 	cfg := oneMac(t.TempDir())
 	h := newHarness(t, cfg, newFakeLauncher(), map[string]*fakeSet{})

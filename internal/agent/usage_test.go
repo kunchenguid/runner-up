@@ -17,9 +17,9 @@ import (
 	"time"
 )
 
-// Intent: sizes must be informed by readings of actual
-// work, not copied limits. This child uses one CPU and touches 32 MiB until
-// the parent has collected real OS readings. No fabricated ps fixture or
+// Intent (README, "Job sizes and readings"): sizes must be informed by readings
+// of actual work, not copied limits. This child uses one CPU and touches 32 MiB
+// until the parent has collected real OS readings. No fabricated ps fixture or
 // duration-dependent expectation stands in for a measurement.
 func TestUsageWorkload(t *testing.T) {
 	if os.Getenv("RUNNER_UP_USAGE_WORKLOAD") != "1" {
@@ -45,9 +45,10 @@ func TestUsageWorkload(t *testing.T) {
 	}
 }
 
-// Intent: the sampler reads this job's group, captures
-// nonzero CPU and resident memory, and emits a record the coordinator can
-// consume. Stopping readings completes without leaving a sampler behind.
+// Intent (README, "Job sizes and readings"): the sampler reads this job's
+// group, captures nonzero CPU and resident memory, and emits a record the
+// coordinator can consume. Stopping readings completes without leaving a
+// sampler behind.
 func TestUsageObservesActualJobProcesses(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestUsageWorkload$")
 	cmd.Env = append(os.Environ(), "RUNNER_UP_USAGE_WORKLOAD=1")
@@ -102,9 +103,9 @@ func TestUsageObservesActualJobProcesses(t *testing.T) {
 	t.Logf("actual isolated job readings: %s", b)
 }
 
-// Intent: absent and too-short readings must not look
-// like measured zero use. Exercise the actual reader with ps absent, then
-// with one real reading; the barrier models a job ending after that read.
+// Intent (README, "Job sizes and readings"): absent and too-short readings must
+// not look like measured zero use. Exercise the actual reader with ps absent,
+// then with one real reading; the barrier models a job ending after that read.
 func TestUsageReportsUnavailableAndShortReadings(t *testing.T) {
 	group, err := syscall.Getpgid(os.Getpid())
 	if err != nil {

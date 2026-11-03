@@ -18,15 +18,15 @@ import (
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
-// Intent (the design: "configurable priority rules, learned
-// estimates"): a freed place goes to the job the configured order rules pick.
-// label:NAME puts a labeled pull request's jobs first, from the same
-// repository only; workflow:GLOB puts a workflow's jobs first; waited:D keeps
-// a job that waited D from being passed over; shortest runs the job with the
-// shortest learned runtime first, and learns it from GitHub's completion
-// messages. pool:NAME puts a pool's jobs first, so short jobs a merge waits
-// on, given a pool of their own, go ahead even of jobs that waited an hour and
-// of labeled pull requests on the places they share with other pools.
+// Intent (README, "Order rules"): a freed place goes to the job the configured
+// order rules pick. label:NAME puts a labeled pull request's jobs first, from
+// the same repository only; workflow:GLOB puts a workflow's jobs first;
+// waited:D keeps a job that waited D from being passed over; shortest runs the
+// job with the shortest learned runtime first, and learns it from GitHub's
+// completion messages. pool:NAME puts a pool's jobs first, so short jobs a
+// merge waits on, given a pool of their own, go ahead even of jobs that waited
+// an hour and of labeled pull requests on the places they share with other
+// pools.
 
 // onePlace is one machine with one place for every pool, so the order the
 // place takes waiting jobs in is the order the rules pick.
@@ -226,12 +226,11 @@ func TestPullRequestLabelsComeOnlyFromTheRepository(t *testing.T) {
 	}
 }
 
-// Intent ("guests in the shared budget,
-// ranked last"). last:NAME puts a pool's jobs behind every other job, so Linux
-// guests sharing a Mac's budget never take the room a waiting Mac job needs:
-// that job either starts or keeps its room first, and the guests use only
-// what is left. The 14-core budget, 12-core Mac pool and 2-core guests are
-// the plan's own figures for the Mac mini.
+// Intent (README, "Order rules", last:NAME). last:NAME puts a pool's jobs
+// behind every other job, so Linux guests sharing a Mac's budget never take the
+// room a waiting Mac job needs: that job either starts or keeps its room first,
+// and the guests use only what is left. The 14-core budget, 12-core Mac pool
+// and 2-core guests are the README's illustration in "Job sizes and readings".
 func TestLastPoolLeavesRoomForOtherJobsFirst(t *testing.T) {
 	mini := func(order ...string) *config.Config {
 		cfg := onePlace(t.TempDir(), order...)

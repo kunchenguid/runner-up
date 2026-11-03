@@ -26,11 +26,10 @@ import (
 	"github.com/kunchenguid/runner-up/internal/release"
 )
 
-// Intent: "the setup names a runner-up
-// version and a per-platform SHA-256; runner-up downloads, verifies and
-// restarts into it; it copies agents to the PC and the rented Macs; it rolls
-// back a version that stops within a minute" - "If a new version stops within
-// a minute, runner-up returns to the previous one."
+// Intent (README, "Updating runner-up"): the setup names a runner-up version
+// and a per-platform SHA-256; runner-up downloads, verifies and restarts into
+// it; it copies agents to its machines; and if a new version stops within a
+// minute, runner-up returns to the previous one.
 //
 // The coordinator, its place runners and the agent are the real programs, and
 // GitHub, ssh and docker the stand-ins of e2e_test.go. The releases are this

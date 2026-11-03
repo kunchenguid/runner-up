@@ -17,13 +17,10 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent ("When a machine's agent cannot
-// be reached (SSH refused or timing out), runner-up stops giving that
-// machine's places jobs until it answers again, makes no new runner
-// registration in the meantime, and the job it held goes to a healthy
-// place"). Without it, a place runner whose SSH was refused ended at once,
-// and the coordinator gave the same place the same job again, registering a
-// runner with GitHub for each try as fast as SSH refused.
+// Intent (README, "When a machine is down"). Without it, a place runner whose
+// SSH was refused ended at once, and the coordinator gave the same place the
+// same job again, registering a runner with GitHub for each try as fast as SSH
+// refused.
 //
 // The far machine is reached with the real ssh, at a port of this computer
 // nothing listens on; the box is reached through the stand-in ssh.

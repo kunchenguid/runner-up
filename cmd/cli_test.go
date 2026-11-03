@@ -15,11 +15,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (the audit before sharing runner-up publicly, its command-line fix):
-// every command has its own flags and shows only those on -h, exiting 0;
-// a command refuses arguments it does not take; errors go to standard error;
-// a missing setup file points at runner-up init; and the usage names every
-// agent command.
+// Intent (the fix that gave each command its own flags, clean -h exits and
+// clear errors): every command has its own flags and shows only those on -h,
+// exiting 0; a command refuses arguments it does not take; errors go to
+// standard error; a missing setup file points at runner-up init; and the usage
+// names every agent command.
 
 // cliRun runs the built runner-up with args and returns what it wrote and its
 // exit code.

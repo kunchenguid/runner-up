@@ -10,13 +10,12 @@ import (
 	"github.com/kunchenguid/runner-up/internal/testbin"
 )
 
-// Intent (the design: "fork PR jobs refused by default on every
-// provider"): every place's runner starts the job only after its job-started
-// hook allows it. The hook refuses a job from another repository's pull
-// request, its follow-on run, a deleted fork's pull request and an event it
-// cannot read, and allows every job from the repository itself. The events
-// are GitHub payloads saved from a real fork's pull request, renamed
-// (testdata/events).
+// Intent (README, "Pull requests from forks"): every place's runner starts the
+// job only after its job-started hook allows it. The hook refuses a job from
+// another repository's pull request, its follow-on run, a deleted fork's pull
+// request and an event it cannot read, and allows every job from the repository
+// itself. The events are GitHub payloads saved from a real fork's pull request,
+// renamed (testdata/events).
 
 // hook writes the job-started hook a place gives its runner and returns a
 // runner for it that sets the job's event as the runner does.

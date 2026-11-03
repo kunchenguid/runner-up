@@ -32,11 +32,10 @@ func signedFixture(t *testing.T) (Signed, []ed25519.PublicKey) {
 		[]ed25519.PublicKey{pub}
 }
 
-// Intent ("The service updates itself from signed
-// runner-up releases; you create one signing key, and whoever holds it
-// controls the PC"): the Windows service accepts a release whose checksums
-// the release signing key signed with openssl, as the release workflow does,
-// and only for its own platform; it learns the version from the archive.
+// Intent (README, "Updating runner-up"): the Windows service accepts a release
+// whose checksums the release signing key signed with openssl, as the release
+// workflow does, and only for its own platform; it learns the version from the
+// archive.
 func TestASignedReleaseIsAcceptedForItsOwnPlatform(t *testing.T) {
 	s, keys := signedFixture(t)
 	v, err := s.Verify("windows-amd64", keys)
@@ -48,10 +47,10 @@ func TestASignedReleaseIsAcceptedForItsOwnPlatform(t *testing.T) {
 	}
 }
 
-// Intent (the same choice: only the key's holder controls the PC): anything
-// the key did not vouch for is refused - another key, changed checksums, a
-// changed archive, an archive the checksums do not list, and every release
-// when the program was built with no key at all.
+// Intent (README, "Updating runner-up": only the key's holder controls the PC):
+// anything the key did not vouch for is refused - another key, changed
+// checksums, a changed archive, an archive the checksums do not list, and every
+// release when the program was built with no key at all.
 func TestAnythingTheSigningKeyDidNotVouchForIsRefused(t *testing.T) {
 	s, keys := signedFixture(t)
 	other, _, _ := ed25519.GenerateKey(nil)
@@ -86,9 +85,9 @@ func TestAnythingTheSigningKeyDidNotVouchForIsRefused(t *testing.T) {
 	}
 }
 
-// Intent (the setup names a version and a per-platform SHA-256 the release
-// lists): the program comes out of each platform's archive as the release
-// workflow packs it - runner-up in a tar.gz, runner-up.exe in a zip.
+// Intent (README, "Updating runner-up"): the program comes out of each
+// platform's archive as the release workflow packs it - runner-up in a tar.gz,
+// runner-up.exe in a zip.
 func TestTheProgramComesOutOfEachPlatformsArchive(t *testing.T) {
 	s, _ := signedFixture(t)
 	exe, err := Program(s.Archive, "windows-amd64")
@@ -112,9 +111,9 @@ func TestTheProgramComesOutOfEachPlatformsArchive(t *testing.T) {
 	}
 }
 
-// Intent (the Windows service never installs an older release, so an old
-// signed release with a known flaw cannot be pushed to it): versions order as
-// semantic versions, a pre-release before its release.
+// Intent (README, "Updating runner-up": the Windows service never installs an
+// older release, so an old signed release with a known flaw cannot be pushed to
+// it): versions order as semantic versions, a pre-release before its release.
 func TestReleaseVersionsOrderAsSemanticVersions(t *testing.T) {
 	ordered := []string{"v0.1.9", "v0.1.10", "v0.2.0-alpha.2", "v0.2.0-alpha.10", "v0.2.0-beta", "v0.2.0", "v1.0.0"}
 	for i := range ordered {

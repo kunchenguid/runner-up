@@ -101,14 +101,11 @@ func (e *e2e) statusSays(want ...string) string {
 	return out
 }
 
-// Intent ("drain new job placement, let running jobs
-// finish, do the blocked step, then resume placement right away"; its goal:
-// "without stopping the coordinator or affecting other places"): with a
-// real coordinator serving, `runner-up drain` keeps two places from new
-// jobs while the job running there finishes, admits only the named pair
-// there, and exits 0 once the pair has run, the places then free; a place
-// it does not name takes a job meanwhile, and status shows the drain
-// throughout.
+// Intent (README, "Draining places"): with a real coordinator serving,
+// `runner-up drain` keeps two places from new jobs while the job running there
+// finishes, admits only the named pair there, and exits 0 once the pair has
+// run, the places then free; a place it does not name takes a job meanwhile,
+// and status shows the drain throughout.
 func TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet(t *testing.T) {
 	e := newE2E(t)
 	drainBoxes(e)
@@ -194,10 +191,9 @@ func TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet(t *testing.T) {
 	}
 }
 
-// Intent ("then resume placement right away"; README: "Stopping
-// runner-up drain ... ends it early"): stopping the drain mid-way exits 130,
-// gives its places back at once to a job it held, and the job running in a
-// drained place carries on.
+// Intent (README, "Draining places": the drain ends early when its command is
+// stopped): stopping the drain mid-way exits 130, gives its places back at once
+// to a job it held, and the job running in a drained place carries on.
 func TestStoppingTheDrainResumesPlacementAndKeepsRunningJobs(t *testing.T) {
 	e := newE2E(t)
 	drainBoxes(e)
@@ -235,9 +231,9 @@ func TestStoppingTheDrainResumesPlacementAndKeepsRunningJobs(t *testing.T) {
 	}
 }
 
-// Intent (the drain names places and jobs; a mistyped one must not
-// pause anything): the drain refuses a place the setup lacks, a job named
-// twice and missing input, exiting 2 before it publishes anything.
+// Intent (README, "Draining places"; a mistyped place or job must not pause
+// anything): the drain refuses a place the setup lacks, a job named twice and
+// missing input, exiting 2 before it publishes anything.
 func TestDrainRefusesWhatItCannotDo(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")

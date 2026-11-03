@@ -15,10 +15,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
-// Intent: the real borrow CLI waits beside jobs, passes the place
-// and its size to the command, preserves stdio and exit status, survives a
-// coordinator restart, and cleans the named VM before releasing the place.
-// GitHub and the machine agent are isolated stand-ins; no real VM is started.
+// Intent (README, "Borrowing a virtual Mac"): the real borrow CLI waits beside
+// jobs, passes the place and its size to the command, preserves stdio and exit
+// status, survives a coordinator restart, and cleans the named VM before
+// releasing the place. GitHub and the machine agent are isolated stand-ins; no
+// real VM is started.
 func TestBorrowCLIWaitsRunsAndSurvivesRestart(t *testing.T) {
 	e := borrowE2E(t)
 	busy, err := lock.Busy(filepath.Join(e.cfg.PlaceDir("box-1"), "busy.lock"))
@@ -63,8 +64,9 @@ exit 23`
 	t.Logf("CLI transcript:\n%s\nRestart preserved the lock; cleanup removed the stand-in VM; exit=23.\n%s", transcript, borrowStatus(t, e))
 }
 
-// Intent: stopping a task ends its borrow and deletes its named VM;
-// cancelling a queued task must never launch its command later.
+// Intent (README, "Borrowing a virtual Mac"): stopping a task ends its borrow
+// and deletes its named VM; cancelling a queued task must never launch its
+// command later.
 func TestBorrowCLICancellation(t *testing.T) {
 	for _, queued := range []bool{true, false} {
 		t.Run(fmt.Sprintf("queued=%v", queued), func(t *testing.T) {
@@ -111,8 +113,9 @@ func TestBorrowCLICancellation(t *testing.T) {
 	}
 }
 
-// Intent: signal termination retains its shell-compatible status through the
-// real supervisor, socket protocol and caller, and releases the borrowed place.
+// Intent (README, "Borrowing a virtual Mac"): signal termination retains its
+// shell-compatible status through the real supervisor, socket protocol and
+// caller, and releases the borrowed place.
 func TestBorrowCLICommandSignalStatus(t *testing.T) {
 	e := borrowE2E(t)
 	e.serve()
@@ -191,8 +194,9 @@ func borrowStatus(t *testing.T, e *e2e) string {
 	return string(b)
 }
 
-// Intent: borrowing requires an explicit label, declared positive
-// minutes and a tart pool, rather than silently taking a non-VM place.
+// Intent (README, "Borrowing a virtual Mac"): borrowing requires an explicit
+// label, declared positive minutes and a tart pool, rather than silently taking
+// a non-VM place.
 func TestBorrowCLIRejectsInvalidInputs(t *testing.T) {
 	e := newE2E(t) // Its pool has only a Docker place.
 	for _, args := range [][]string{

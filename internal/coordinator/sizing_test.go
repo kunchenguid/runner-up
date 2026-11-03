@@ -12,10 +12,10 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent: a pool has one size whichever
+// Intent (README, "Job sizes and readings"): a pool has one size whichever
 // place takes it; a waiting large job keeps its room instead of being starved
-// by later small jobs. The 14-core budget and 12+2 illustration are from the
-// accepted card, not proposed production measurements. Job messages are the
+// by later small jobs. The 14-core budget and 12+2 illustration are the
+// README's, not proposed production measurements. Job messages are the
 // project's renamed GitHub recording, not fabricated protocol payloads.
 func TestPoolSizesKeepRoomForTheFirstJob(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
@@ -70,7 +70,7 @@ func TestPoolSizesKeepRoomForTheFirstJob(t *testing.T) {
 	h.launcher.finish(t, "host-2")
 }
 
-// Intent: a job waits only when its cores OR memory do
+// Intent (README, "Setup file"): a job waits only when its cores OR memory do
 // not fit. Pool sizes reach VM launch arguments, not just planner accounting.
 func TestPoolSizeFitsMemoryAndSizesTheAgent(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")

@@ -18,11 +18,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/plan"
 )
 
-// Intent: "serve watches its setup file
-// and waits about a second after a change, because a pull rewrites the file.
-// It runs check-config and applies pools, places, sizes and order in place,
+// Intent (README, "Changing the setup"): serve watches its setup file and waits
+// about a second after a change, because a pull rewrites the file. It checks it
+// as check-config does and applies pools, places, sizes and order in place,
 // without dropping running jobs or open sessions. It keeps the running setup
-// when the new one fails." The end-to-end journey is in cmd/reload_e2e_test.go.
+// when the new one fails. The end-to-end journey is in cmd/reload_e2e_test.go.
 
 // A pull rewrites the setup file in steps; the watcher sends nothing until
 // the file has held one content for its quiet time, then sends that once.

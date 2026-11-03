@@ -14,14 +14,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent ("When a machine's agent cannot
-// be reached (SSH refused or timing out), runner-up stops giving that
-// machine's places jobs until it answers again, makes no new runner
-// registration in the meantime, and the job it held goes to a healthy
-// place"). Before, the coordinator ran Tidy and Place again the moment a
-// place runner ended, and the dead machine, counting no busy place, took the
-// oldest waiting job straight back: 50 refusals made 50 registrations with no
-// time passing, while a younger job took a freed healthy place.
+// Intent (README, "When a machine is down"). Before, the coordinator ran Tidy
+// and Place again the moment a place runner ended, and the dead machine,
+// counting no busy place, took the oldest waiting job straight back: 50
+// refusals made 50 registrations with no time passing, while a younger job took
+// a freed healthy place.
 
 // cannotReach ends place id's runner as one whose ssh to its machine failed,
 // which the place runner records in place.json before it exits.

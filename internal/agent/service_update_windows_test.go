@@ -23,16 +23,13 @@ import (
 
 func TestMain(m *testing.M) { testbin.Main(m) }
 
-// Intent ("The service updates itself from
-// signed runner-up releases; you create one signing key, and whoever holds
-// it controls the PC", and the setup's fixes: install each
-// version in a folder of its own, and leave the service alone when nothing
-// changed): runner-up setup installs the service from a folder of its
-// version and starts it; run again with the same program, it leaves the
-// running service as it is. Handed a newer release through the agent, as the
-// coordinator hands it, the service refuses one the key it trusts did not
-// sign, and installs a signed one, restarts as it and answers with its
-// version. An administrator's setup then installs the version before again.
+// Intent (README, "Windows machines" and "Updating runner-up"): runner-up setup
+// installs the service from a folder of its version and starts it; run again
+// with the same program, it leaves the running service as it is. Handed a newer
+// release through the agent, as the coordinator hands it, the service refuses
+// one the key it trusts did not sign, and installs a signed one, restarts as it
+// and answers with its version. An administrator's setup then installs the
+// version before again.
 //
 // It installs runner-up's service on this machine, so it runs only on a
 // GitHub-hosted runner, which is thrown away after the run.

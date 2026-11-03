@@ -24,10 +24,10 @@ import (
 	"github.com/kunchenguid/runner-up/internal/lock"
 )
 
-// Intent (the design): the planner keeps
-// pool compatibility, so a job runs only in a place serving its pool; it keeps
-// each machine within its core and memory budget less the room kept for its
-// owner; it gives a freed place to the job the order rules pick, across
+// Intent (README, "How it works", "Setup file" and "Order rules"): the planner
+// keeps pool compatibility, so a job runs only in a place serving its pool; it
+// keeps each machine within its core and memory budget less the room kept for
+// its owner; it gives a freed place to the job the order rules pick, across
 // repositories; and a coordinator restart loses no waiting job and leaves
 // running jobs in their places. Fixtures are scale set messages runner-up's
 // predecessor recorded from GitHub, renamed (testdata/messages).
@@ -436,10 +436,9 @@ func TestJobGoneAtGitHubGivesThePlaceToTheNext(t *testing.T) {
 	}
 }
 
-// Intent (plan: "per-machine core/memory budgets with owner room"): a place
-// starts a job only while its share fits beside the shares of its machine's
-// running places, within the machine's cores and memory less the room kept
-// for its owner.
+// Intent (README, "Setup file"): a place starts a job only while its share fits
+// beside the shares of its machine's running places, within the machine's cores
+// and memory less the room kept for its owner.
 func TestMachineBudgetKeepsTheOwnersRoom(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
 	cfg := oneBox(t.TempDir())
@@ -501,13 +500,11 @@ func TestRestartKeepsWaitingJobsAndRunningPlaces(t *testing.T) {
 	h2.want(map[string]string{"box-1": suite, "box-2": pr184, "box-large": publish})
 }
 
-// Intent ("When a job is cancelled before its runner took it,
-// runner-up removes the spare runner's GitHub registration first and stops
-// it only once GitHub accepts"): a runner whose job was cancelled before it
-// started keeps its place while GitHub cannot be reached, and is asked about
-// again at the next tick. Once GitHub removes it, its place is stopped, once;
-// when the place ends the runner is not removed a second time, and the place
-// takes the next job.
+// Intent (README, "When GitHub closes a job"): a runner whose job was cancelled
+// before it started keeps its place while GitHub cannot be reached, and is
+// asked about again at the next tick. Once GitHub removes it, its place is
+// stopped, once; when the place ends the runner is not removed a second time,
+// and the place takes the next job.
 func TestCancelledBeforeRunnerStopsTheSpareRunnerOnceGitHubRemovesIt(t *testing.T) {
 	h := newHarness(t, oneBox(t.TempDir()), newFakeLauncher(), map[string]*fakeSet{})
 	set := h.sets[setKey("octo-org/app", "ru-linux")]
@@ -588,12 +585,11 @@ func TestUnusedRunnerOutlivesAFailedRemovalAndARestart(t *testing.T) {
 	}
 }
 
-// Intent (at the start timeout, "runner-up removes the runner's
-// GitHub registration first and powers off only after GitHub accepts the
-// removal"): a runner no job reached in time keeps its place while GitHub
-// cannot be reached, and is asked about again at the next tick. Once GitHub
-// removes it, its place is stopped; when the place ends the runner is not
-// removed a second time, and its job gets a new runner.
+// Intent (README, "Setup file", startTimeoutSeconds): a runner no job reached
+// in time keeps its place while GitHub cannot be reached, and is asked about
+// again at the next tick. Once GitHub removes it, its place is stopped; when
+// the place ends the runner is not removed a second time, and its job gets a
+// new runner.
 func TestIdleRunnerKeepsItsPlaceUntilGitHubRemovesIt(t *testing.T) {
 	f := loadFixture(t, "assigned-takebacks.json")
 	h := newHarness(t, proofBox(t.TempDir(), "box-1"), newFakeLauncher(), map[string]*fakeSet{})
@@ -648,11 +644,11 @@ func TestIdleRunnerKeepsItsPlaceUntilGitHubRemovesIt(t *testing.T) {
 	}
 }
 
-// Intent ("optionally log a refused removal for an ended place as
-// a stranded job, so the next one is diagnosed at once"): when a runner's
-// place has ended but GitHub will not remove the runner because it gave it a
-// job, the coordinator says that job is stranded, naming the runner, and
-// keeps trying to remove the runner.
+// Intent (the fix that logs a refused removal for an ended place as a stranded
+// job, so the next one is diagnosed at once): when a runner's place has ended
+// but GitHub will not remove the runner because it gave it a job, the
+// coordinator says that job is stranded, naming the runner, and keeps trying to
+// remove the runner.
 func TestRefusedRemovalOfAnEndedRunnerNamesTheStrandedJob(t *testing.T) {
 	f := loadFixture(t, "assigned-takebacks.json")
 	h := newHarness(t, proofBox(t.TempDir(), "box-1"), newFakeLauncher(), map[string]*fakeSet{})

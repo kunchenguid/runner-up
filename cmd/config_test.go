@@ -11,15 +11,15 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (the design): "init then machine add over SSH
-// runs a job with no hand-written setup file", within "per-machine core/memory
-// budgets with owner room", on Linux machines and on Macs ("tart VM and host
-// on macOS", "the two-macOS-VM limit"). machine add gives a machine as many
-// places as fit its cores and memory less the room kept for its owner, and no
-// more tart places than macOS runs VMs at once, refuses a machine that cannot
-// run the places asked for, and writes a setup that loads as written. A pool
-// label GitHub's own runners, or every self-hosted runner, answer to is
-// refused, so pools stay apart from other runners.
+// Intent (README, "Setting up", "Setup file" and "Macs"): init then machine add
+// over SSH runs a job with no hand-written setup file, within each machine's
+// cores and memory less its owner's room, on Linux machines and on Macs.
+// machine add gives a machine as many places as fit its cores and memory less
+// the room kept for its owner, and no more tart places than macOS runs VMs at
+// once, refuses a machine that cannot run the places asked for, and writes a
+// setup that loads as written. A pool label GitHub's own runners, or every
+// self-hosted runner, answer to is refused, so pools stay apart from other
+// runners.
 
 // limaProbe is what machine add read of the Linux test machine over SSH: a
 // Lima VM with 4 cores and 5910 MB running Ubuntu 24.04 on arm64, with Docker
@@ -186,9 +186,10 @@ func TestMachineAddGivesAMacNoMoreTartPlacesThanMacOSRunsVMs(t *testing.T) {
 	}
 }
 
-// Intent: a PC's five Hyper-V places serve the 24.04 and 26.04
-// pools alike, each pool on its own base disk: poolImages loads as written
-// and leaves the places, their shares and the machine's budget as they were.
+// Intent (README, "Setup file", poolImages): a PC's five Hyper-V places serve
+// the 24.04 and 26.04 pools alike, each pool on its own base disk: poolImages
+// loads as written and leaves the places, their shares and the machine's budget
+// as they were.
 func TestPoolImagesKeepThePlacesAndTheirShares(t *testing.T) {
 	pc := func(poolImages map[string]string) *config.Config {
 		cfg := initialSetup(t)
@@ -226,8 +227,8 @@ func TestPoolImagesKeepThePlacesAndTheirShares(t *testing.T) {
 	}
 }
 
-// Intent: a pool image no job could run on is refused when the
-// setup loads, not when a job reaches it.
+// Intent (README, "Setup file", poolImages): a pool image no job could run on
+// is refused when the setup loads, not when a job reaches it.
 func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 	// An absolute path on the system the test runs on, as the coordinator's
 	// own system reads the KVM rule.
@@ -261,8 +262,7 @@ func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 	}
 }
 
-// Intent ("the setup names a runner-up
-// version and a per-platform SHA-256"): a release named as the release
+// Intent (README, "Updating runner-up"): a release named as the release
 // workflow tags it, with each platform's archive SHA-256 as its checksums.txt
 // lists it, is accepted; a release the coordinator could not fetch or check is
 // refused when the setup loads.

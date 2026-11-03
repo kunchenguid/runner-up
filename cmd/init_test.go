@@ -11,12 +11,10 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent (the design: "init then machine add over SSH runs a job with no
-// hand-written setup file"), and the bug a live run found:
-// adding a machine a second time, to another setup, failed. machine add had
-// installed runner-up in ~/.local/bin, which a command run over ssh does not
-// search, and then refused to install it again from a build for another
-// system.
+// Intent (README, "Setting up"), and the bug a live run found: adding a machine
+// a second time, to another setup, failed. machine add had installed runner-up
+// in ~/.local/bin, which a command run over ssh does not search, and then
+// refused to install it again from a build for another system.
 
 // The stand-in ssh runs its command, the last argument, in $HOME, as ssh does
 // on the machine.
@@ -62,10 +60,9 @@ func TestMachineAddFindsTheAgentAnEarlierMachineAddInstalled(t *testing.T) {
 	}
 }
 
-// Intent (the design: "On a clean Mac ... init then join runs a test
-// repository's job"), and the bug building it found: machine add
-// compared a Mac's uname, which says arm64, with Linux's name for it,
-// aarch64, and refused to install itself on a Mac like the one it ran on.
+// Intent (README, "Setting up"), and the bug building it found: machine add
+// compared a Mac's uname, which says arm64, with Linux's name for it, aarch64,
+// and refused to install itself on a Mac like the one it ran on.
 func TestMachineAddInstallsItselfOnAMachineLikeItsOwn(t *testing.T) {
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")

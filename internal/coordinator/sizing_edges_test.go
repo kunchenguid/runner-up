@@ -10,9 +10,9 @@ import (
 	"github.com/kunchenguid/runner-up/internal/config"
 )
 
-// Intent: keeping room for a waiting job on one machine
-// must not stop compatible work on another machine. The messages are the
-// same recorded release and check offers used by the placement tests.
+// Intent (README, "Job sizes and readings"): keeping room for a waiting job on
+// one machine must not stop compatible work on another machine. The messages
+// are the same recorded release and check offers used by the placement tests.
 func TestPoolReservationLeavesAnotherMachineAvailable(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
 	cfg := onePlace(t.TempDir(), "pool:ru-large")
@@ -43,9 +43,9 @@ func TestPoolReservationLeavesAnotherMachineAvailable(t *testing.T) {
 	h.launcher.finish(t, "other-1")
 }
 
-// Intent: a running job keeps its reservation. A missing
-// snapshot must not make a large running job look like a smaller place
-// default, even after the configured kind size changes.
+// Intent (README, "Setup file"): a running job keeps its reservation. A missing
+// snapshot must not make a large running job look like a smaller place default,
+// even after the configured kind size changes.
 func TestUnknownRunningReservationKeepsTheCountedBudget(t *testing.T) {
 	f := loadFixture(t, "waiting-jobs.json")
 	cfg := onePlace(t.TempDir())

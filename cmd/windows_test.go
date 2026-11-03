@@ -9,13 +9,11 @@ import (
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 )
 
-// Intent (the design: "the Windows agent
-// as a service with Hyper-V VM and fresh-account providers, and one-step PC
-// setup"): the coordinator reaches a Windows machine over SSH, whose sign-in
-// runs cmd or PowerShell, with a command line both read the same way; machine
-// add sets a Windows machine up with account places, or Hyper-V places on a
-// base disk; and a setup that a Windows machine's shell could not pass
-// unchanged is refused before any job.
+// Intent (README, "Windows machines"): the coordinator reaches a Windows
+// machine over SSH, whose sign-in runs cmd or PowerShell, with a command line
+// both read the same way; machine add sets a Windows machine up with account
+// places, or Hyper-V places on a base disk; and a setup that a Windows
+// machine's shell could not pass unchanged is refused before any job.
 
 // windowsProbe is what `runner-up agent probe` reports on a Windows machine
 // set up with runner-up setup --hyperv.
@@ -43,9 +41,9 @@ func TestWindowsCommandLineReadsTheSameInCmdAndPowerShell(t *testing.T) {
 	}
 }
 
-// Intent: the same Hyper-V places run Ubuntu 24.04 and 26.04 jobs,
-// each on the base disk of the pool its job asked for, with the same share
-// of the PC whichever disk boots.
+// Intent (README, "Setup file", poolImages): the same Hyper-V places run Ubuntu
+// 24.04 and 26.04 jobs, each on the base disk of the pool its job asked for,
+// with the same share of the PC whichever disk boots.
 func TestHyperVPlaceBootsThePoolsBaseDisk(t *testing.T) {
 	cfg := initialSetup(t)
 	p := config.Place{ID: "win-pc-1", Provider: config.ProviderHyperV, Pools: []string{"ru-linux", "ru-linux-gate", "ru-linux-2604"},

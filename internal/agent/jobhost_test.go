@@ -24,11 +24,9 @@ import (
 	"github.com/kunchenguid/runner-up/internal/version"
 )
 
-// Intent (the design: "the Windows agent
-// as a service with Hyper-V VM and fresh-account providers", whose check is
-// "the job host's existing tests ported"): each Windows job of an account
-// place runs as a brand-new standard account that is deleted after it,
-// whatever happened - passed, failed, stopped, or cut off by a restart; the
+// Intent (README, "What you need" and "Windows machines"): each Windows job of
+// an account place runs as a brand-new standard account that is deleted after
+// it, whatever happened - passed, failed, stopped, or cut off by a restart; the
 // service never deletes an account it did not record; a place whose cleanup
 // failed takes no job until a later sweep succeeds; the runner's one-time
 // registration reaches the job only on its input, never in a file or a
@@ -622,13 +620,11 @@ func signedRelease(t *testing.T) (key ed25519.PublicKey, checksums, sig []byte, 
 	return ed25519.PublicKey(k), read("checksums.txt"), read("checksums.txt.sig"), read
 }
 
-// Intent ("The service updates itself from
-// signed runner-up releases; you create one signing key, and whoever holds it
-// controls the PC"): handed a release the way the coordinator hands it to
-// `runner-up agent update-service`, the service installs it only when the
-// signing key vouches for that very archive for its own platform, only when
-// it is newer than the service, and never while a place runs a job; once it
-// installs one, it takes no job until it restarts as it.
+// Intent (README, "Updating runner-up"): handed a release the way the
+// coordinator hands it to `runner-up agent update-service`, the service
+// installs it only when the signing key vouches for that very archive for its
+// own platform, only when it is newer than the service, and never while a place
+// runs a job; once it installs one, it takes no job until it restarts as it.
 func TestTheServiceInstallsOnlyANewerReleaseTheSigningKeySigned(t *testing.T) {
 	key, checksums, sig, archive := signedRelease(t)
 	var installed []string

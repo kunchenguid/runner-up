@@ -21,17 +21,15 @@ import (
 	"github.com/kunchenguid/runner-up/internal/testbin"
 )
 
-// Intent (the design: "tart VM and host on macOS", "the two-macOS-VM limit
-// and the guest reboot watch", "fork PR jobs
-// refused by default on every provider" and "a crashed place is cleaned
-// up"). The agent runs one job in a fresh tart clone of the place's image,
-// sized to the place and seeing only a read-only folder with the runner and
-// the fork guard; the runner gets its registration on its input only and the
-// guard as its job-started hook; a new boot session in the clone ends the
-// job; the clone is deleted whatever happened; the agent waits for a free
-// macOS VM before it clones. On the machine itself, the agent runs the runner
-// in a folder of its own, ends the runner and everything the job started
-// when its input closes, and cleans up what an agent killed outright left.
+// Intent (README, "Macs", "Pull requests from forks" and "Trade-offs"). The
+// agent runs one job in a fresh tart clone of the place's image, sized to the
+// place and seeing only a read-only folder with the runner and the fork guard;
+// the runner gets its registration on its input only and the guard as its
+// job-started hook; a new boot session in the clone ends the job; the clone is
+// deleted whatever happened; the agent waits for a free macOS VM before it
+// clones. On the machine itself, the agent runs the runner in a folder of its
+// own, ends the runner and everything the job started when its input closes,
+// and cleans up what an agent killed outright left.
 //
 // Intent (a bug moving a fleet to runner-up found: runner-up's predecessor
 // kept tools such as Node in a host place's tool cache between jobs, and jobs
