@@ -1,6 +1,6 @@
 { lib
 , buildGo127Module
-, version ? "0.1.11" # x-release-please-version
+, version ? "0.1.12" # x-release-please-version
 }:
 
 buildGo127Module {
