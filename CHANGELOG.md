@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.11](https://github.com/kunchenguid/runner-up/compare/v0.1.10...v0.1.11) (2026-11-04)
+
+
+### Features
+
+* let runner-up update itself from signed releases ([b036f52](https://github.com/kunchenguid/runner-up/commit/b036f52284a1a93002f1262b685f4436ce8503a1))
+
+
+### Bug Fixes
+
+* **agent:** hand Docker places the registration on standard input ([0a2b350](https://github.com/kunchenguid/runner-up/commit/0a2b350c83d27fef83175dcbfc264b6ae8a58d6f))
+* **cli:** give each command its own flags, clean -h exits and clear errors ([6656084](https://github.com/kunchenguid/runner-up/commit/665608447a8d039e1cf8a56eb64cfa3030f41f74))
+* **coordinator:** place outside the lock, split the service, guard place.json ([c2c6c6b](https://github.com/kunchenguid/runner-up/commit/c2c6c6b2eae4ca16c30169e24707c380a29fe154))
+* **release:** build static binaries and verify install downloads ([25e7a8f](https://github.com/kunchenguid/runner-up/commit/25e7a8f7edb09dec9e579f2206641c179dfba03f))
+
 ## [0.1.10](https://github.com/kunchenguid/runner-up/compare/v0.1.9...v0.1.10) (2026-11-03)
 
 
