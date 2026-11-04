@@ -713,8 +713,9 @@ change its configured reservation through a reading.
 ## Macs
 
 A Mac's places are tart places, a fresh clone of a macOS image per job, Apple
-container places, a fresh Linux guest per job, or a host place that runs jobs
-on the Mac itself.
+container places, a fresh Linux guest per job, Docker places in Docker
+Desktop's Linux VM (see [What you need](#what-you-need)), or a host place that
+runs jobs on the Mac itself.
 
 For each job, a tart place's agent clones the place's image as
 `runner-up-PLACE`, sizes the clone to the job pool's cores and memory (or the
