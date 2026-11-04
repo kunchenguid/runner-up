@@ -8,7 +8,7 @@
   <a href="https://discord.gg/BW4aJuQhTf"><img alt="Discord" src="https://img.shields.io/discord/1439901831038763092?style=flat-square&label=discord" /></a>
 </p>
 
-<h3 align="center">Your machines, GitHub's queue, one fresh place per job.</h3>
+<h3 align="center">GitHub Actions runners on your own machines, one fresh container or VM per job.</h3>
 
 You have spare machines: a Linux box, a Mac, a Windows PC. Yet your GitHub Actions
 jobs wait in line for hosted runners, or burn a hole in your wallet.
