@@ -288,6 +288,11 @@ On each machine (Linux on x86-64 or arm64, or a Mac), for the provider its
 places use:
 
 - **Docker places:** Docker, with the SSH user in the `docker` group.
+  On a Mac, Docker Desktop runs the containers in its Linux VM. Put the Linux
+  build of runner-up for the Mac's architecture beside runner-up on the Mac, as
+  `runner-up-linux-arm64` or `runner-up-linux-amd64` from the
+  [releases](https://github.com/kunchenguid/runner-up/releases); each container
+  runs it as the fork guard.
 - **KVM places:** `/dev/kvm` usable by the SSH user (the `kvm` group),
   `qemu-system-x86_64` or `qemu-system-aarch64`, `qemu-img`, and on arm64 the
   UEFI firmware (`qemu-efi-aarch64`). You also need a cloud image with

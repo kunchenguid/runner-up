@@ -99,7 +99,7 @@ func TestMachineAddRefusesMachinesThatCannotRunThePlaces(t *testing.T) {
 		o    placeOptions
 		want string
 	}{
-		{dockerMac, placeOptions{Provider: config.ProviderDocker}, "lima runs darwin; docker places run on Linux machines only"},
+		{dockerMac, placeOptions{Provider: config.ProviderKVM, Image: "noble.img"}, "lima runs darwin; kvm places run on Linux machines only"},
 		{macProbe, placeOptions{Image: "ghcr.io/cirruslabs/macos-sequoia-base:latest"}, "lima cannot run tart places: tart is not installed"},
 		{macTartProbe, placeOptions{}, "a tart place needs --image"},
 		{macTartProbe, placeOptions{Provider: config.ProviderHyperV, Image: `C:\vm\noble.vhdx`}, "lima runs darwin; hyperv places run on Windows machines only"},

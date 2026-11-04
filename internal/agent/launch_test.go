@@ -125,3 +125,18 @@ func TestProbeAnswersForEveryProviderOfItsSystem(t *testing.T) {
 		t.Errorf("without the container tool the probe said %q", got)
 	}
 }
+
+// A container is Linux even when its machine is a Mac (Docker Desktop), so a
+// docker place mounts runner-up for Linux as its fork guard, never a Mac build.
+func TestDockerPlaceMountsALinuxForkGuard(t *testing.T) {
+	a := &AgentRun{Provider: config.ProviderDocker, Place: "mini-1", Cores: 1, MemoryMB: 2048,
+		StateDir: t.TempDir(), Self: "/opt/bin/runner-up"}
+	args := strings.Join(dockerArgs(a, dockerProvider{}.launch(a), "/x/fork-guard.sh"), "\n")
+	want := "/opt/bin/runner-up:" + dockerGuest + "/runner-up:ro"
+	if runtime.GOOS != "linux" {
+		want = "/opt/bin/runner-up-linux-" + runtime.GOARCH + ":" + dockerGuest + "/runner-up:ro"
+	}
+	if !strings.Contains(args, want) {
+		t.Errorf("docker args mount no Linux fork guard %q:\n%s", want, args)
+	}
+}

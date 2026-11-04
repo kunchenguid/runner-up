@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -71,12 +72,22 @@ func dockerArgs(a *AgentRun, l runnerLaunch, hook string) []string {
 	args := []string{"run", "--rm", "-i", "--name", containerName(a.Place), "--label", "runner-up.place=" + a.Place,
 		"--cpus", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB) + "m"}
 	if l.Hook != "" {
-		args = append(args, "-v", a.Self+":"+dockerGuest+"/runner-up:ro", "-v", hook+":"+l.Hook+":ro")
+		args = append(args, "-v", dockerGuard(a.Self)+":"+dockerGuest+"/runner-up:ro", "-v", hook+":"+l.Hook+":ro")
 	}
 	for _, env := range l.Env {
 		args = append(args, "-e", env)
 	}
 	return append(args, "--entrypoint", "/bin/sh", image, "-c", dockerEntry, "runner-up", "/home/runner/run.sh")
+}
+
+// dockerGuard is the runner-up a container runs as its fork guard: this
+// program on Linux; elsewhere, such as Docker Desktop's Linux VM on a Mac, the
+// Linux build beside it, named as the release names it (runner-up-linux-arm64).
+func dockerGuard(self string) string {
+	if runtime.GOOS == "linux" {
+		return self
+	}
+	return filepath.Join(filepath.Dir(self), "runner-up-linux-"+runtime.GOARCH)
 }
 
 func (dockerProvider) clean(ctx context.Context, a *AgentRun) error {
