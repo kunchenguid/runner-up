@@ -63,8 +63,8 @@ https://raw.githubusercontent.com/kunchenguid/runner-up/main/README.md
 
 This machine is the coordinator. Ask me which repositories or organization
 to serve, each machine to run jobs on (its SSH address and the kind of
-places it should have: Docker, KVM or host on Linux; tart, Apple container
-or host on a Mac; account or Hyper-V on Windows), and a pool label for each
+places it should have: Docker, KVM or host on Linux; Docker, tart, Apple
+container or host on a Mac; account or Hyper-V on Windows), and a pool label for each
 kind of machine. A pool is the label workflows ask for in runs-on; separate
 pools keep a Linux job off a Mac or a Windows machine.
 
@@ -288,11 +288,13 @@ On each machine (Linux on x86-64 or arm64, or a Mac), for the provider its
 places use:
 
 - **Docker places:** Docker, with the SSH user in the `docker` group.
-  On a Mac, Docker Desktop runs the containers in its Linux VM. Put the Linux
-  build of runner-up for the Mac's architecture beside runner-up on the Mac, as
-  `runner-up-linux-arm64` or `runner-up-linux-amd64` from the
-  [releases](https://github.com/kunchenguid/runner-up/releases); each container
-  runs it as the fork guard.
+  On a Mac, Docker Desktop runs the containers in its Linux VM, and each
+  container runs the Linux build of runner-up as the fork guard: extract
+  `runner-up` from `runner-up-v<VERSION>-linux-<arch>.tar.gz` in the
+  [releases](https://github.com/kunchenguid/runner-up/releases), for the Mac's
+  architecture, and save it as `runner-up-linux-<arch>` beside the runner-up
+  program the agent runs. A setup that names a `release` is not yet supported
+  for docker places on a Mac.
 - **KVM places:** `/dev/kvm` usable by the SSH user (the `kvm` group),
   `qemu-system-x86_64` or `qemu-system-aarch64`, `qemu-img`, and on arm64 the
   UEFI firmware (`qemu-efi-aarch64`). You also need a cloud image with
@@ -346,8 +348,8 @@ machine needs one step first (see [Windows machines](#windows-machines)).
 `machine add` reaches the machine over SSH. It copies runner-up there (to
 `~/.local/bin`) when it is missing, reads the machine's cores and memory, and
 checks that its provider works: Docker by default on Linux, tart on a Mac, or
-the one `--provider` names (`docker`, `kvm`, `tart`, `host` or, on a Mac,
-`container` with `--image`). For Apple container places it checks that the
+the one `--provider` names (`docker`, `kvm` on Linux, `tart`, `host` or, on a
+Mac, `container` with `--image`). For Apple container places it checks that the
 container tool is installed and its service answers, but not the image; see
 [What you need](#what-you-need). It copies itself only to a
 machine of its own system and architecture; for another,

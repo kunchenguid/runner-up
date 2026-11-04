@@ -340,6 +340,11 @@ func newE2E(t *testing.T) *e2e {
 	os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(fakeSSH), 0o755)
 	os.WriteFile(filepath.Join(dir, "bin", "docker"), []byte(fakeDocker), 0o755)
 	os.WriteFile(filepath.Join(dir, "docker", "run.sh"), []byte(fakeRunner), 0o755)
+	if runtime.GOOS != "linux" {
+		// A docker place off Linux mounts the Linux build beside the agent; the
+		// stand-in docker never runs it.
+		os.WriteFile(filepath.Join(filepath.Dir(runnerUp(t)), "runner-up-linux-"+runtime.GOARCH), nil, 0o755)
+	}
 	e.cfg = &config.Config{
 		StateDir:    filepath.Join(dir, "state"),
 		GitHub:      config.GitHub{Repos: []string{"octo-org/app"}},

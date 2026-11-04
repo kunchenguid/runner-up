@@ -33,6 +33,11 @@ func (p dockerProvider) run(ctx context.Context, a *AgentRun, jit string, out io
 	l := p.launch(a)
 	hook := filepath.Join(a.Dir(), "fork-guard.sh")
 	if l.Hook != "" {
+		if guard := dockerGuard(a.Self); guard != a.Self {
+			if fi, err := os.Stat(guard); err != nil || !fi.Mode().IsRegular() {
+				return fmt.Errorf("docker places off Linux run runner-up for Linux as the fork guard; put it at %s", guard)
+			}
+		}
 		if err := os.WriteFile(hook, []byte(l.Guard), 0o755); err != nil {
 			return err
 		}

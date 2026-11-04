@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -138,5 +139,28 @@ func TestDockerPlaceMountsALinuxForkGuard(t *testing.T) {
 	}
 	if !strings.Contains(args, want) {
 		t.Errorf("docker args mount no Linux fork guard %q:\n%s", want, args)
+	}
+}
+
+// Off Linux, a docker place whose Linux build of runner-up is missing beside
+// the agent refuses before docker starts, naming the file to put there, rather
+// than failing every job at Set up runner.
+func TestDockerPlaceOffLinuxNamesAMissingLinuxBuild(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("on Linux a docker place mounts the agent itself")
+	}
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\ntouch "+filepath.Join(bin, "ran")+"\n"), 0o755)
+	a := &AgentRun{Provider: config.ProviderDocker, Place: "mini-1", Cores: 1, MemoryMB: 2048,
+		StateDir: t.TempDir(), Self: filepath.Join(bin, "runner-up")}
+	os.MkdirAll(a.Dir(), 0o700)
+	want := filepath.Join(bin, "runner-up-linux-"+runtime.GOARCH)
+	err := dockerProvider{}.run(t.Context(), a, "jit", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("run said %v, want an error naming %s", err, want)
+	}
+	if _, err := os.Stat(filepath.Join(bin, "ran")); err == nil {
+		t.Error("docker started without the Linux build")
 	}
 }
