@@ -8,7 +8,7 @@ buildGo127Module {
   inherit version;
 
   src = lib.cleanSource ./.;
-  vendorHash = "sha256-zu4GNsrFwCEITXsrq4zLE+u6CEGcIci2TMInG+Fx/NY=";
+  vendorHash = "sha256-SudR8inORWnF/fKHl9F7oQh5l9p7/VCiIDYVvzephXg=";
 
   subPackages = [ "." ];
 
