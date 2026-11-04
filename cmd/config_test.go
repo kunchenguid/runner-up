@@ -122,6 +122,28 @@ func TestMachineAddRefusesMachinesThatCannotRunThePlaces(t *testing.T) {
 	}
 }
 
+// Intent (README, "What you need", Docker places): Docker Desktop runs Linux
+// containers on a Mac, so machine add takes a Mac with docker ready for
+// docker places, where it once refused them as Linux-only.
+func TestMachineAddTakesDockerPlacesOnAMac(t *testing.T) {
+	lima := config.Machine{Name: "lima", SSH: []string{"ci@lima"}}
+	dockerMac := macTartProbe
+	dockerMac.Docker = "ok"
+	cfg := initialSetup(t)
+	if err := addMachine(cfg, lima, dockerMac, placeOptions{Provider: config.ProviderDocker, Cores: 2, MemoryMB: 4096}); err != nil {
+		t.Fatalf("machine add refused docker places on a Mac: %v", err)
+	}
+	places := cfg.Places()
+	if len(places) == 0 {
+		t.Fatal("the Mac joined with no places")
+	}
+	for _, p := range places {
+		if p.Machine != "lima" || p.Provider != config.ProviderDocker || p.Cores != 2 || p.MemoryMB != 4096 {
+			t.Errorf("place %+v, want a 2-core, 4096 MB docker place on lima", p)
+		}
+	}
+}
+
 func TestMachineAddGivesAMacNoMoreTartPlacesThanMacOSRunsVMs(t *testing.T) {
 	mac := config.Machine{Name: "mac", SSH: []string{"you@mac"}}
 	const image = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
