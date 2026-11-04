@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.12](https://github.com/kunchenguid/runner-up/compare/v0.1.11...v0.1.12) (2026-11-04)
+
+
+### Bug Fixes
+
+* **nix:** update Go modules vendorHash for 0.1.11 ([#53](https://github.com/kunchenguid/runner-up/issues/53)) ([a668c46](https://github.com/kunchenguid/runner-up/commit/a668c46e7411b1d568cd6a5ddf237b88d8ae3123))
+
 ## [0.1.11](https://github.com/kunchenguid/runner-up/compare/v0.1.10...v0.1.11) (2026-11-04)
 
 
