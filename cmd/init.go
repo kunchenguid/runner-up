@@ -383,9 +383,9 @@ func ensureAgent(ctx context.Context, m *config.Machine, build string, out io.Wr
 }
 
 // remoteWindows says whether the machine m reaches over SSH runs Windows,
-// whose sign-in runs cmd or PowerShell, either of which runs cmd /c ver.
+// whose sign-in runs cmd or PowerShell, either of which runs cmd.exe /c ver.
 func remoteWindows(ctx context.Context, m config.Machine) bool {
-	argv := append(coordinator.SshArgs(m), "cmd /c ver")
+	argv := append(coordinator.SshArgs(m), "cmd.exe /c ver")
 	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
 	return err == nil && strings.Contains(string(out), "Microsoft Windows")
 }
