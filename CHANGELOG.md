@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/kunchenguid/runner-up/compare/v0.1.12...v0.1.13) (2026-11-06)
+
+
+### Features
+
+* **plan:** priority levels for places and machines ([3188c4b](https://github.com/kunchenguid/runner-up/commit/3188c4ba54547f0c35f029834acb96aec21fd4cd))
+
 ## [0.1.12](https://github.com/kunchenguid/runner-up/compare/v0.1.11...v0.1.12) (2026-11-04)
 
 
