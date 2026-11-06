@@ -35,6 +35,36 @@ func standInSSH(t *testing.T, home, bin string) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
 }
 
+// Intent (README, "Windows machines"): machine add detects Windows over SSH
+// when OpenSSH for Windows uses its default cmd.exe shell. That shell rejects
+// `cmd /c ver` because the SSH command's trailing quote reaches ver itself.
+func TestRemoteWindowsRecognizesDefaultCmdShellOverSSH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in ssh is a shell script")
+	}
+	bin := t.TempDir()
+	ssh := `#!/bin/sh
+for last; do :; done
+case "$last" in
+  "cmd /c ver")
+    printf '%s\n' "'ver\"' is not recognized" >&2
+    exit 1 ;;
+  "cmd.exe /c ver"|"ver"|'cmd /c "ver"')
+    printf '%s\n' 'Microsoft Windows [Version 10.0.26200.9711]' ;;
+  *)
+    printf 'unexpected SSH command: %s\n' "$last" >&2
+    exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(ssh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if !remoteWindows(context.Background(), config.Machine{Name: "pc", SSH: []string{"ci@pc"}}) {
+		t.Fatal("machine add did not recognize Windows over its default SSH cmd.exe shell")
+	}
+}
+
 func TestMachineAddFindsTheAgentAnEarlierMachineAddInstalled(t *testing.T) {
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
