@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -339,6 +340,11 @@ func newE2E(t *testing.T) *e2e {
 	os.WriteFile(filepath.Join(dir, "bin", "ssh"), []byte(fakeSSH), 0o755)
 	os.WriteFile(filepath.Join(dir, "bin", "docker"), []byte(fakeDocker), 0o755)
 	os.WriteFile(filepath.Join(dir, "docker", "run.sh"), []byte(fakeRunner), 0o755)
+	if runtime.GOOS != "linux" {
+		// A docker place off Linux mounts the Linux build beside the agent; the
+		// stand-in docker never runs it.
+		os.WriteFile(filepath.Join(filepath.Dir(runnerUp(t)), "runner-up-linux-"+runtime.GOARCH), nil, 0o755)
+	}
 	e.cfg = &config.Config{
 		StateDir:    filepath.Join(dir, "state"),
 		GitHub:      config.GitHub{Repos: []string{"octo-org/app"}},
@@ -648,8 +654,13 @@ func TestJobRunsThroughTheAgentAndOutlivesACoordinatorRestart(t *testing.T) {
 	docker := e.lines(filepath.Join(e.dir, "docker", "docker.log"))
 	hook := filepath.Join(e.dir, "machine", "runner-up", "agent", "places", "box-1", "fork-guard.sh")
 	place := e.cfg.Places()[0]
+	// A container runs Linux, so off Linux it gets the Linux build beside the agent.
+	guard := runnerUp(t)
+	if runtime.GOOS != "linux" {
+		guard = filepath.Join(filepath.Dir(guard), "runner-up-linux-"+runtime.GOARCH)
+	}
 	wantDocker := "run --rm -i --name runner-up-box-1 --label runner-up.place=box-1 --cpus 2 --memory 4096m" +
-		" -v " + runnerUp(t) + ":/opt/runner-up/runner-up:ro -v " + hook +
+		" -v " + guard + ":/opt/runner-up/runner-up:ro -v " + hook +
 		":/opt/runner-up/fork-guard.sh:ro -e ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-up/fork-guard.sh" +
 		fmt.Sprintf(" -e RUNNER_UP_CORES=%d -e RUNNER_UP_MEMORY_MB=%d", place.Cores, place.MemoryMB) +
 		" --entrypoint /bin/sh " + agent.DefaultDockerImage + ` -c read -r ACTIONS_RUNNER_INPUT_JITCONFIG && export ACTIONS_RUNNER_INPUT_JITCONFIG && exec "$@" runner-up /home/runner/run.sh`

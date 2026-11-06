@@ -170,6 +170,9 @@ func TestCoordinatorRunsTheSetupsReleaseAndGoesBackFromOneThatStops(t *testing.T
 	if b, err := os.ReadFile(filepath.Join(home, copied)); err != nil || !bytes.Equal(b, good) {
 		t.Fatalf("the machine's %s is not the release's program (%v)", copied, err)
 	}
+	if runtime.GOOS != "linux" {
+		os.WriteFile(filepath.Join(home, filepath.Dir(copied), "runner-up-linux-"+runtime.GOARCH), nil, 0o755)
+	}
 	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(verifyJob(t), scaleset.MessageTypeJobAvailable)})
 	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
 	if ssh := e.lines(filepath.Join(e.dir, "ssh.log")); !slices.ContainsFunc(ssh, func(l string) bool {
