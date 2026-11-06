@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +30,9 @@ func fleet(t *testing.T, change func(*config.Config)) *config.Config {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.ParseConfig(b)
+	// The state folder must be absolute on the machine running the test.
+	dir, _ := json.Marshal(t.TempDir())
+	cfg, err := config.ParseConfig(bytes.ReplaceAll(b, []byte(`"STATE_DIR"`), dir))
 	if err != nil {
 		t.Fatal(err)
 	}

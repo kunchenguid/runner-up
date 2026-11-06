@@ -1,5 +1,5 @@
 {
-  "stateDir": "/var/lib/runner-up",
+  "stateDir": "STATE_DIR",
   "github": {"repos": ["octo-org/app"]},
   "pools": [
     {"label": "app-mac-any"},
