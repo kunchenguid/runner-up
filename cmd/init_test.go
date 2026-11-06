@@ -65,6 +65,35 @@ esac
 	}
 }
 
+// Intent (README, "Windows machines"): PowerShell is also a supported SSH
+// sign-in shell. Unlike cmd.exe, PowerShell cannot run bare `ver`.
+func TestRemoteWindowsRecognizesPowerShellOverSSH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in ssh is a shell script")
+	}
+	bin := t.TempDir()
+	ssh := `#!/bin/sh
+for last; do :; done
+case "$last" in
+  "cmd.exe /c ver")
+    printf '%s\n' 'Microsoft Windows [Version 10.0.26200.9711]' ;;
+  "ver")
+    printf '%s\n' "ver: The term 'ver' is not recognized as a cmdlet" >&2
+    exit 1 ;;
+  *)
+    printf 'unexpected SSH command: %s\n' "$last" >&2
+    exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(ssh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if !remoteWindows(context.Background(), config.Machine{Name: "pc", SSH: []string{"ci@pc"}}) {
+		t.Fatal("machine add did not recognize Windows over its PowerShell SSH shell")
+	}
+}
+
 func TestMachineAddFindsTheAgentAnEarlierMachineAddInstalled(t *testing.T) {
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
