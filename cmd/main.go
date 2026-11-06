@@ -329,6 +329,17 @@ func checkConfig(cfg *config.Config, w io.Writer) int {
 		if p.Cores > 0 {
 			fmt.Fprintf(w, "pool %s: each job reserves %d cores, %d MB; overrides place sizes\n", p.Label, p.Cores, p.MemoryMB)
 		}
+		if levels := cfg.PoolLevels(p.Label); len(levels) > 1 {
+			var tried []string
+			for _, places := range levels {
+				var ids []string
+				for _, q := range places {
+					ids = append(ids, q.ID)
+				}
+				tried = append(tried, fmt.Sprintf("priority %d: %s", places[0].Level, strings.Join(ids, ", ")))
+			}
+			fmt.Fprintf(w, "pool %s tries %s\n", p.Label, strings.Join(tried, "; then "))
+		}
 	}
 	return 0
 }
@@ -399,7 +410,11 @@ func machineLine(m config.Machine) string {
 	var shares []string
 	total := config.Share{}
 	for _, p := range m.Places {
-		shares = append(shares, fmt.Sprintf("%s %s %d cores %d MB", p.ID, p.Provider, p.Cores, p.MemoryMB))
+		share := fmt.Sprintf("%s %s %d cores %d MB", p.ID, p.Provider, p.Cores, p.MemoryMB)
+		if p.Priority != nil || p.Level != 0 {
+			share += fmt.Sprintf(" priority %d", p.Level)
+		}
+		shares = append(shares, share)
 		total.Cores += p.Cores
 		total.MemoryMB += p.MemoryMB
 	}

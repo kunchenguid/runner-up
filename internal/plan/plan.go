@@ -144,9 +144,10 @@ func fifo(a, b Job) bool {
 
 // Plan gives free places to waiting jobs. Jobs are taken in rank order; each
 // takes a free place serving its pool whose job size fits what its machine
-// has left, preferring the least-busy machine, then the order places are
-// listed in. When a job waits only for room, it keeps its size on one eligible
-// machine. Later jobs use only the remainder; no running job is interrupted.
+// has left, preferring the lowest priority level (config.Place.Level), then
+// the least-busy machine, then the order places are listed in. When a job
+// waits only for room, it keeps its size on one eligible machine, chosen the
+// same way. Later jobs use only the remainder; no running job is interrupted.
 // Jobs without a free eligible place (or with an unavailable VM slot) hold
 // nothing. Each machine keeps room for only its first such waiting job.
 // A place a drain holds takes only the jobs that drain admits, and those jobs
@@ -177,17 +178,27 @@ func Plan(waiting []Job, places []PlaceView, headroom map[string]Headroom, rules
 			}
 			return p.share()
 		}
+		// better says whether free[i] goes before free[than], if any.
+		better := func(i, than int) bool {
+			if than < 0 {
+				return true
+			}
+			if a, b := free[i].Level, free[than].Level; a != b {
+				return a < b
+			}
+			return busy[free[i].Machine] < busy[free[than].Machine]
+		}
 		for i, p := range free {
 			if p.Drain != j.Drain || !slices.Contains(p.Pools, j.Pool) || j.BorrowID != "" && p.Provider != config.ProviderTart {
 				continue
 			}
 			if h, ok := left[p.Machine]; ok && !h.fits(size(p)) {
-				if !held[p.Machine] && (blocked < 0 || busy[p.Machine] < busy[free[blocked].Machine]) {
+				if !held[p.Machine] && better(i, blocked) {
 					blocked = i
 				}
 				continue
 			}
-			if best < 0 || busy[p.Machine] < busy[free[best].Machine] {
+			if better(i, best) {
 				best = i
 			}
 		}

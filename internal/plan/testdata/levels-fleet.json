@@ -1,0 +1,30 @@
+{
+  "stateDir": "STATE_DIR",
+  "github": {"repos": ["octo-org/app"]},
+  "pools": [
+    {"label": "app-mac-any"},
+    {"label": "app-mac-phone"},
+    {"label": "app-mac-check", "cores": 12, "memoryMB": 32768},
+    {"label": "app-mac-split", "cores": 5, "memoryMB": 8192},
+    {"label": "app-linux"}
+  ],
+  "machines": [
+    {"name": "rental", "ssh": ["ci@rental.example"], "cores": 12, "memoryMB": 24576, "roomCores": 2, "roomMemoryMB": 4096,
+     "places": [
+       {"id": "rental-vm", "provider": "tart", "image": "app-lane", "cores": 5, "memoryMB": 10240, "pools": ["app-mac-phone", "app-mac-split"]},
+       {"id": "rental-vm2", "provider": "tart", "image": "app-lane", "cores": 5, "memoryMB": 10240, "pools": ["app-mac-phone", "app-mac-split"]}
+     ]},
+    {"name": "spare", "ssh": ["ci@spare.example"], "cores": 12, "memoryMB": 16384, "roomCores": 2, "roomMemoryMB": 8192,
+     "places": [
+       {"id": "spare-vm", "provider": "tart", "image": "app-lane", "cores": 10, "memoryMB": 8192, "pools": ["app-mac-phone", "app-mac-split"]}
+     ]},
+    {"name": "main", "cores": 22, "memoryMB": 65536, "roomCores": 8, "roomMemoryMB": 13312,
+     "places": [
+       {"id": "main-vm", "provider": "tart", "image": "app-lane", "cores": 4, "memoryMB": 16384, "pools": ["app-mac-any"]},
+       {"id": "main-real", "provider": "host", "cores": 6, "memoryMB": 16384, "priority": 1, "pools": ["app-mac-any", "app-mac-check", "app-mac-split"]},
+       {"id": "main-real2", "provider": "host", "cores": 6, "memoryMB": 16384, "priority": 1, "pools": ["app-mac-check", "app-mac-split"]},
+       {"id": "main-real3", "provider": "host", "cores": 6, "memoryMB": 16384, "priority": 1, "pools": ["app-mac-check", "app-mac-split"]},
+       {"id": "main-linux", "provider": "container", "image": "runner-up-linux:24.04", "cores": 2, "memoryMB": 8192, "pools": ["app-linux"]}
+     ]}
+  ]
+}

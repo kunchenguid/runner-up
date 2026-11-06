@@ -208,3 +208,62 @@ func TestWindowsSetupThatTheShellWouldChangeIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// Intent (README, "Setup file", priority; asked for as levels where 0 is
+// used first, then 1, then 2): a place takes its machine's priority unless it
+// sets its own, unset is 0, and a negative priority, or priorities that order
+// no pool's places, are refused, while a setup without any loads as before.
+func TestPriorityLevels(t *testing.T) {
+	one, minus := 1, -1
+	setup := func() *Config {
+		cfg := initialSetup(t)
+		cfg.Pools = append(cfg.Pools, Pool{Label: "ru-mac"})
+		cfg.Machines = []Machine{
+			{Name: "small", SSH: []string{"ci@small"}, Places: []Place{{ID: "small-vm", Provider: ProviderTart, Image: "lane", Pools: []string{"ru-mac"}, Cores: 4, MemoryMB: 8192}}},
+			{Name: "big", Places: []Place{
+				{ID: "big-real", Provider: ProviderHost, Pools: []string{"ru-mac"}, Cores: 6, MemoryMB: 16384},
+				{ID: "big-linux", Provider: ProviderDocker, Pools: []string{"ru-linux"}, Cores: 2, MemoryMB: 4096}}},
+		}
+		return cfg
+	}
+	load := func(cfg *Config) error { cfg.Defaults(); return cfg.Validate() }
+
+	cfg := setup()
+	if err := load(cfg); err != nil {
+		t.Fatalf("a setup without priorities was refused: %v", err)
+	}
+	for _, p := range cfg.Places() {
+		if p.Level != 0 {
+			t.Errorf("place %s without a priority is at level %d", p.ID, p.Level)
+		}
+	}
+
+	cfg = setup()
+	cfg.Machines[1].Priority = 2
+	cfg.Machines[1].Places[0].Priority = &one
+	if err := load(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]int{"small-vm": 0, "big-real": 1, "big-linux": 2} {
+		if p, _ := cfg.Place(id); p.Level != want {
+			t.Errorf("place %s is at level %d, want %d", id, p.Level, want)
+		}
+	}
+	if levels := cfg.PoolLevels("ru-mac"); len(levels) != 2 || levels[0][0].ID != "small-vm" || levels[1][0].ID != "big-real" {
+		t.Errorf("ru-mac's levels are %v, want small-vm then big-real", levels)
+	}
+
+	for why, change := range map[string]func(*Config){
+		"a negative machine priority": func(c *Config) { c.Machines[0].Priority = -1 },
+		"a negative place priority":   func(c *Config) { c.Machines[0].Places[0].Priority = &minus },
+		// big-linux alone serves ru-linux, so a level on it orders nothing.
+		"a priority that orders no pool": func(c *Config) { c.Machines[1].Places[1].Priority = &one },
+		"every place at one level":       func(c *Config) { c.Machines[0].Priority, c.Machines[1].Priority = 1, 1 },
+	} {
+		cfg := setup()
+		change(cfg)
+		if err := load(cfg); err == nil || !strings.Contains(err.Error(), "priority") {
+			t.Errorf("%s was not refused for its priority: %v", why, err)
+		}
+	}
+}

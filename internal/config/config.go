@@ -164,9 +164,12 @@ type Machine struct {
 	MemoryMB int `json:"memoryMB,omitempty"`
 	// RoomCores and RoomMemoryMB are kept for the machine's owner: places
 	// reserve at most Cores-RoomCores and MemoryMB-RoomMemoryMB.
-	RoomCores    int     `json:"roomCores,omitempty"`
-	RoomMemoryMB int     `json:"roomMemoryMB,omitempty"`
-	Places       []Place `json:"places"`
+	RoomCores    int `json:"roomCores,omitempty"`
+	RoomMemoryMB int `json:"roomMemoryMB,omitempty"`
+	// Priority is the level its places take unless a place sets its own:
+	// 0, the default, is tried first (Place.Level).
+	Priority int     `json:"priority,omitempty"`
+	Places   []Place `json:"places"`
 }
 
 // Place is one slot on a machine that runs one job at a time, each in a fresh
@@ -210,8 +213,17 @@ type Place struct {
 	// runners use /home/runner/work, where a cache saved there restores.
 	WorkFolder string `json:"workFolder,omitempty"`
 
+	// Priority is the place's own level, when it sets one; otherwise it takes
+	// its machine's.
+	Priority *int `json:"priority,omitempty"`
+
 	// Machine is the place's machine's name, filled in on load.
 	Machine string `json:"-"`
+	// Level is the place's priority level, filled in on load: its own, else
+	// its machine's. A job takes a free place with room at the lowest level
+	// that has one, so a level is tried only once every place below it that
+	// serves the job's pool is full.
+	Level int `json:"-"`
 }
 
 // Share is what a job reserves of its machine while its place runs.
@@ -367,7 +379,12 @@ func (c *Config) Defaults() {
 	}
 	for i := range c.Machines {
 		for j := range c.Machines[i].Places {
-			c.Machines[i].Places[j].Machine = c.Machines[i].Name
+			p := &c.Machines[i].Places[j]
+			p.Machine = c.Machines[i].Name
+			p.Level = c.Machines[i].Priority
+			if p.Priority != nil {
+				p.Level = *p.Priority
+			}
 		}
 	}
 }
@@ -423,6 +440,9 @@ func (c *Config) Validate() error {
 		if m.RoomCores > 0 && m.RoomCores >= m.Cores || m.RoomMemoryMB > 0 && m.RoomMemoryMB >= m.MemoryMB {
 			return fmt.Errorf("machine %q: the room kept for its owner must leave its places some cores and memory", m.Name)
 		}
+		if m.Priority < 0 {
+			return fmt.Errorf("machine %q: priority must be a whole number from 0", m.Name)
+		}
 		if m.OS != "" && m.OS != "windows" {
 			return fmt.Errorf("machine %q: os must be windows or left out", m.Name)
 		}
@@ -440,6 +460,9 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("place ids must be unique, set, plain and at most %d characters: %q", MaxPlaceID, p.ID)
 			}
 			ids[p.ID] = true
+			if p.Priority != nil && *p.Priority < 0 {
+				return fmt.Errorf("place %q: priority must be a whole number from 0", p.ID)
+			}
 			if !slices.Contains(Providers, p.Provider) {
 				return fmt.Errorf("place %q: provider must be one of %v", p.ID, Providers)
 			}
@@ -521,10 +544,51 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("pool %q: no place serves it", p.Label)
 		}
 	}
+	if err := c.checkPriorities(); err != nil {
+		return err
+	}
 	if c.Release != nil {
 		return c.Release.check()
 	}
 	return nil
+}
+
+// checkPriorities refuses priorities that order nothing: some are set, but no
+// pool has places on two different levels.
+func (c *Config) checkPriorities() error {
+	set := false
+	for _, m := range c.Machines {
+		set = set || m.Priority != 0
+		for _, p := range m.Places {
+			set = set || p.Priority != nil
+		}
+	}
+	if !set {
+		return nil
+	}
+	for _, p := range c.Pools {
+		if len(c.PoolLevels(p.Label)) > 1 {
+			return nil
+		}
+	}
+	return fmt.Errorf("priority orders nothing: no pool has places on two different levels; set it on some of a pool's places, or leave it out")
+}
+
+// PoolLevels lists the places serving the pool label by level, lowest first:
+// the order the planner tries them in. Within a level they keep their listed
+// order.
+func (c *Config) PoolLevels(label string) [][]Place {
+	byLevel := map[int][]Place{}
+	for _, p := range c.Places() {
+		if slices.Contains(p.Pools, label) {
+			byLevel[p.Level] = append(byLevel[p.Level], p)
+		}
+	}
+	var out [][]Place
+	for _, l := range slices.Sorted(maps.Keys(byLevel)) {
+		out = append(out, byLevel[l])
+	}
+	return out
 }
 
 func (r *Release) check() error {
