@@ -541,6 +541,7 @@ Each place may also set:
 | `workFolder` | `_work` | where the runner keeps its jobs' work, relative to the runner's folder or absolute; GitHub's Ubuntu runners use `/home/runner/work` |
 | `toolCache` | see meaning | the runner's tool cache (`RUNNER_TOOL_CACHE`). A host place keeps it between jobs, in its folder under the agent's by default, so a tool such as `setup-node`'s Node is downloaded once. For a tart place, a folder inside the clone that the image was set up with; by default the runner's own, which every job starts without |
 | `poolImages` | none | another image for some of the place's pools, by pool label. A job of a named pool runs on that image, any other job on `image` |
+| `priority` | its machine's | the place's [priority level](#priority-levels) |
 
 A place that serves several pools can run each on its own image. For example,
 the same Hyper-V places can run Ubuntu 24.04 and 26.04 jobs:
@@ -553,6 +554,38 @@ the same Hyper-V places can run Ubuntu 24.04 and 26.04 jobs:
 A `linux-2604` job boots `resolute.vhdx`, and a `linux` job boots
 `noble.vhdx`. Either way it is one place; its pool's size, or the place's
 fallback size when the pool has none, counts against its machine's budget.
+
+### Priority levels
+
+A job goes to a free place serving its pool on the machine with the fewest
+busy places, then the first listed. To have some places take a pool's jobs
+only when others cannot, give places a `priority`: a whole number from 0, the
+default. A machine's `priority` is the level of its places that set none. A
+job takes a free place at the lowest level that has one, and tries level 1
+only once every level-0 place serving its pool is full, then level 2, and so
+on; levels need not be consecutive. Within a level, the fewest busy places,
+then the listed order, decide as before.
+
+A place counts as full while it runs a job or a borrow, while its machine is
+unreachable, cools down after a failed start or is held by a drain, while its
+Mac runs as many virtual Macs as macOS allows, and while its machine lacks the
+room for the job. A job waiting only for room keeps it at the lowest level
+where it waits.
+
+For example, to run a pool's jobs on two small Macs' guests and use a big
+Mac's own place only when both are taken, set `"priority": 1` on the big
+Mac's place and leave the guests unset:
+
+```json
+{"id": "big-real", "provider": "host", "pools": ["mac-check", "mac-split"], "cores": 6, "memoryMB": 16384, "priority": 1}
+```
+
+`check-config` shows each place's level when set, and for each pool with
+places on different levels, the levels and their places in the order tried.
+It refuses a negative priority, and priorities that order nothing: levels set
+but no pool with places on two of them. A setup without `priority` places jobs
+as before; `init` and `machine add` write none. runner-up 0.1.12 and earlier
+refuse a setup that names `priority`.
 
 ### Changing the setup
 
