@@ -196,7 +196,7 @@ func (v *snapshot) busy(p config.Place, resources bool) (bool, BusyReason) {
 		return true, BusyJob
 	}
 	if resources {
-		if why := v.tight(p); why != "" {
+		if why := v.tight(p, share(p)); why != "" {
 			return true, BusyReason(why)
 		}
 	}
@@ -206,14 +206,15 @@ func (v *snapshot) busy(p config.Place, resources bool) (bool, BusyReason) {
 	return false, ""
 }
 
-// tight says why place p's job size does not fit beside its machine's other
-// runs, or "" when it fits. A machine without a budget always fits.
-func (v *snapshot) tight(p config.Place) string {
+// tight says why a job of size sh does not fit in place p beside its
+// machine's other runs, or "" when it fits. A machine without a budget always
+// fits.
+func (v *snapshot) tight(p config.Place, sh config.Share) string {
 	m := v.s.Cfg.Machine(p.Machine)
 	if m.Cores == 0 && m.MemoryMB == 0 {
 		return ""
 	}
-	b, used, sh := m.Budget(), v.inUse(p.Machine, p.ID), share(p)
+	b, used := m.Budget(), v.inUse(p.Machine, p.ID)
 	room := func(n int, unit string) string {
 		if n == 0 {
 			return ""

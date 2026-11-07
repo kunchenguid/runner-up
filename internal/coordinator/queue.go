@@ -19,6 +19,9 @@ type queue struct {
 	// took it, while a runner left waiting for nothing is still to go
 	// (stopSpare).
 	spare map[setName]bool
+	// waitWhy is why each waiting job last had no free place, as last
+	// logged (logWaitsLocked).
+	waitWhy map[string]string
 }
 
 func newQueue() queue {
@@ -27,6 +30,7 @@ func newQueue() queue {
 		acquired: map[string]acquired{},
 		timings:  map[string]time.Duration{},
 		spare:    map[setName]bool{},
+		waitWhy:  map[string]string{},
 	}
 }
 

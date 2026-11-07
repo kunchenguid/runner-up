@@ -3,11 +3,15 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kunchenguid/runner-up/internal/agent"
 	"github.com/kunchenguid/runner-up/internal/config"
@@ -149,5 +153,68 @@ func TestMacOSVMOutsideRunnerUpTakesOneOfTheTwo(t *testing.T) {
 	}
 	if mac.reads != 3 {
 		t.Fatalf("the coordinator asked the Mac %d times, want 3", mac.reads)
+	}
+}
+
+// waitLines reads the "no free place" lines a service logged into buf for
+// runner request req, as their why values.
+func waitLines(t *testing.T, buf *bytes.Buffer, req int64) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		var e map[string]any
+		if line == "" || json.Unmarshal([]byte(line), &e) != nil {
+			continue
+		}
+		if e["msg"] == "no free place for a waiting job" && e["request"] == float64(req) {
+			out = append(out, e["why"].(string))
+		}
+	}
+	return out
+}
+
+// Intent: a release job waited 54 minutes on a Mac while two macOS VMs
+// someone started by hand filled its two, and the log said nothing of why.
+// A job waiting with no free place logs why, naming those VMs, once each
+// time the reason changes.
+func TestWaitingJobLogsWhyEachTimeItChanges(t *testing.T) {
+	f := loadFixture(t, "waiting-jobs.json")
+	cfg := oneMac(t.TempDir())
+	h := newHarness(t, cfg, newFakeLauncher(), map[string]*fakeSet{})
+	var buf bytes.Buffer
+	h.svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	h.now = f.Now
+	mac := &vmsOnMac{vms: []string{"headless-hs", "proof-a"}}
+	h.svc.VmReader = mac.read
+	h.feedAsMac(f)
+	if got := h.busyTart(); len(got) != 0 {
+		t.Fatalf("tart places %v run jobs while two other VMs fill the Mac", got)
+	}
+	waiting := h.svc.waitingLocked()
+	if len(waiting) == 0 {
+		t.Fatal("no job waits")
+	}
+	j := waiting[0].RequestID
+	if got := waitLines(t, &buf, j); len(got) != 0 {
+		t.Fatalf("logged %q before the job waited a minute", got)
+	}
+
+	full := "macOS VM limit: 2 of 2 running, outside runner-up: headless-hs, proof-a"
+	want := "mac-1: " + full + "; mac-2: " + full + "; mac-3: " + full + "; mac-host: runs a job"
+	h.now = h.now.Add(2 * time.Minute)
+	h.svc.Place(context.Background())
+	h.now = h.now.Add(10 * time.Second)
+	h.svc.Place(context.Background())
+	if got := waitLines(t, &buf, j); !slices.Equal(got, []string{want}) {
+		t.Fatalf("logged %q, want once %q", got, want)
+	}
+
+	// proof-a gives way to proof-b: the reason changes and is logged again.
+	mac.set("headless-hs", "proof-b")
+	h.now = h.now.Add(vmReadEvery)
+	h.svc.Place(context.Background())
+	again := strings.ReplaceAll(want, "proof-a", "proof-b")
+	if got := waitLines(t, &buf, j); !slices.Equal(got, []string{want, again}) {
+		t.Fatalf("logged %q, want %q then %q", got, want, again)
 	}
 }

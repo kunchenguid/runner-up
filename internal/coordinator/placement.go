@@ -58,6 +58,7 @@ func (s *Service) Place(ctx context.Context) {
 	}
 	s.advanceDrainsLocked()
 	s.noteWasteLocked()
+	s.logWaitsLocked()
 	s.saveLocked()
 }
 
