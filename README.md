@@ -572,6 +572,12 @@ Mac runs as many virtual Macs as macOS allows, and while its machine lacks the
 room for the job. A job waiting only for room keeps it at the lowest level
 where it waits.
 
+Once a job has waited a minute with no free place, the coordinator logs
+`no free place for a waiting job` with a `why` naming each place serving its
+pool and what keeps it, such as `mini-vm1: macOS VM limit: 2 of 2 running,
+outside runner-up: proof-a, proof-b`, and logs it again each time that
+reason changes.
+
 For example, to run a pool's jobs on two small Macs' guests and use a big
 Mac's own place only when both are taken, set `"priority": 1` on the big
 Mac's place and leave the guests unset:
