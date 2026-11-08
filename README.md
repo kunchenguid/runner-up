@@ -49,7 +49,9 @@ place's machine over SSH.
   fails to start rests a while too (see
   [When a place fails to start](#when-a-place-fails-to-start)).
 - **Sign-in.** The coordinator uses the GitHub command line's sign-in. It
-  stores no token: it asks `gh auth token` each time it opens a session.
+  stores no token: it asks `gh auth token` each time it opens a session and
+  each time it signs in to GitHub again, about hourly, so a token gh renews,
+  such as a GitHub App installation token, takes effect without a restart.
 
 ## Quick start
 

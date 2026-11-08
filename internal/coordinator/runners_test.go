@@ -61,7 +61,7 @@ func brokerClient(t *testing.T, broker http.HandlerFunc) *scaleset.Client {
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"token":"registration-token"}`)
 		case strings.HasSuffix(r.URL.Path, "/actions/runner-registration"):
-			fmt.Fprintf(w, `{"url":%q,"token":%q}`, srv.URL+"/tenant/1/", adminToken())
+			fmt.Fprintf(w, `{"url":%q,"token":%q}`, srv.URL+"/tenant/1/", adminToken(time.Now().Add(time.Hour)))
 		default:
 			broker(w, r)
 		}
@@ -80,8 +80,8 @@ func brokerClient(t *testing.T, broker http.HandlerFunc) *scaleset.Client {
 
 // adminToken is an Actions service token: the client reads only when it
 // expires, without checking its signature.
-func adminToken() string {
+func adminToken(expires time.Time) string {
 	enc := base64.RawURLEncoding.EncodeToString
-	claims := fmt.Sprintf(`{"iss":"1","exp":%d}`, time.Now().Add(time.Hour).Unix())
+	claims := fmt.Sprintf(`{"iss":"1","exp":%d}`, expires.Unix())
 	return enc([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc([]byte(claims)) + "." + enc([]byte("unsigned"))
 }
