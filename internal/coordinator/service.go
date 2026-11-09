@@ -48,6 +48,12 @@ type SavedState struct {
 	// Departed are the places a setup change removed, or moved to another
 	// machine, while their runner ran (runners.departed).
 	Departed []departedPlace `json:"departed,omitempty"`
+	// FailedStarts are the places resting after their runner failed to start,
+	// by id (failedstart.go).
+	FailedStarts map[string]PlaceRest `json:"failedStarts,omitempty"`
+	// Finished is when GitHub said each runner's job finished, by runner
+	// name, for the runners still holding a place (finished.go).
+	Finished map[string]time.Time `json:"finished,omitempty"`
 }
 
 // departedPlace is a departed place as the setup had it, with its machine,
@@ -60,8 +66,8 @@ type departedPlace struct {
 // Service is the coordinator's state, in four parts:
 //   - queue (queue.go): the jobs waiting for a place, and those acquired for
 //     a runner that has not yet taken one
-//   - runners (runners.go): the runners it started, and what it still owes
-//     them and their places
+//   - runners (runners.go, failedstart.go, finished.go): the runners it
+//     started, and what it still owes them and their places
 //   - machines (reach.go, vmlimit.go): which machines rest, and which macOS
 //     VMs each Mac runs
 //   - reads (reads.go, closedruns.go): what it read from GitHub's API for the
@@ -159,8 +165,14 @@ func NewService(cfg *config.Config, log *slog.Logger, launcher Launcher) (*Servi
 				s.departed[d.Place.ID] = d.Place
 			}
 		}
+		for id, r := range st.FailedStarts {
+			if _, ok := cfg.Place(id); ok {
+				s.failedStarts[id] = r
+			}
+		}
+		maps.Copy(s.finished, st.Finished)
 		log.Info("restored state", "waiting", len(s.waiting), "acquired", len(s.acquired), "unused", len(s.unused),
-			"resting", len(s.unreachable))
+			"resting", len(s.unreachable), "resting places", len(s.failedStarts))
 	case !errors.Is(err, os.ErrNotExist):
 		return nil, err
 	}
@@ -293,6 +305,9 @@ func (s *Service) Handle(target, pool string, msg *scaleset.RunnerScaleSetMessag
 			delete(s.acquired, k)
 			delete(s.waiting, k)
 		}
+		if m.RunnerName != "" {
+			s.noteFinishedLocked(m.RunnerName, m.FinishTime, now)
+		}
 		s.Log.Info("job completed", "repo", repoOf(target, m.JobMessageBase), "job", m.JobDisplayName, "run", m.WorkflowRunID,
 			"runner", m.RunnerName, "result", m.Result)
 	}
@@ -312,7 +327,7 @@ func (s *Service) Handle(target, pool string, msg *scaleset.RunnerScaleSetMessag
 }
 
 func (s *Service) saveLocked() {
-	st := SavedState{Timings: s.timings, Unreachable: s.unreachable}
+	st := SavedState{Timings: s.timings, Unreachable: s.unreachable, FailedStarts: s.failedStarts, Finished: s.finished}
 	for _, j := range s.waiting {
 		st.Waiting = append(st.Waiting, j)
 	}

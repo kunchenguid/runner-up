@@ -93,6 +93,8 @@ func (v *snapshot) placeWhy(p config.Place, j plan.Job, now time.Time) string {
 		return "its machine does not answer"
 	case now.Before(s.cooling[p.ID]):
 		return "resting after a failed start"
+	case now.Before(s.failedStarts[p.ID].Until):
+		return "resting after " + s.failedStarts[p.ID].FailedStarts() + " in a row"
 	case s.held[p.ID] != "":
 		return "held: " + s.held[p.ID]
 	}

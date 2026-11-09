@@ -91,9 +91,9 @@ func (s *Service) assignLocked(ctx context.Context, v *snapshot, a plan.Assignme
 	v.forget(p.ID)
 	// This place's last run may have ended since the last Tidy, and its
 	// place.json is about to be replaced. That run may have found the machine
-	// unreachable.
+	// unreachable, or failed to start its runner.
 	s.retireLocked(p)
-	if s.restingLocked(p.Machine) {
+	if s.restingLocked(p.Machine) || s.placeRestsLocked(p.ID, s.now()) {
 		return true
 	}
 	if j.BorrowID != "" {

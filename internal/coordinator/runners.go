@@ -29,6 +29,15 @@ type runners struct {
 	givenUp map[string]bool
 	// cooling are the places resting after a failed launch, until when.
 	cooling map[string]time.Time
+	// failedStarts are the places resting after their runner failed to start,
+	// by id (failedstart.go).
+	failedStarts map[string]PlaceRest
+	// finished is when GitHub said each runner's job finished, by runner
+	// name (finished.go).
+	finished map[string]time.Time
+	// stopping are the runners whose place the coordinator stopped because
+	// they outlived their finished job, by name (finished.go).
+	stopping map[string]bool
 	// wasted is when each place was last logged free beside a job that fits
 	// it (noteWasteLocked).
 	wasted map[string]time.Time
@@ -43,12 +52,15 @@ type runners struct {
 
 func newRunners() runners {
 	return runners{
-		unused:   map[string]PlaceRun{},
-		givenUp:  map[string]bool{},
-		cooling:  map[string]time.Time{},
-		wasted:   map[string]time.Time{},
-		departed: map[string]config.Place{},
-		held:     map[string]string{},
+		unused:       map[string]PlaceRun{},
+		givenUp:      map[string]bool{},
+		cooling:      map[string]time.Time{},
+		failedStarts: map[string]PlaceRest{},
+		finished:     map[string]time.Time{},
+		stopping:     map[string]bool{},
+		wasted:       map[string]time.Time{},
+		departed:     map[string]config.Place{},
+		held:         map[string]string{},
 	}
 }
 
@@ -80,9 +92,9 @@ func (s *Service) Unhold(ids []string) {
 
 // Tidy runs on every pass of the serve loop: it forgets the last run of
 // every free place, removes the registration of every runner that ended
-// without a job, and gives up on every runner no job reached in time and
-// every spare runner still to go. It calls GitHub and stops places with mu
-// let go.
+// without a job, gives up on every runner no job reached in time and every
+// spare runner still to go, and stops every runner that outlived its finished
+// job (finished.go). It calls GitHub and stops places with mu let go.
 func (s *Service) Tidy(ctx context.Context) {
 	s.pass.Lock()
 	defer s.pass.Unlock()
@@ -104,6 +116,7 @@ func (s *Service) Tidy(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	s.giveUpIdle(ctx, false)
+	s.endFinished()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	keep := s.now().Add(-time.Duration(s.Cfg.LogKeepDays) * 24 * time.Hour)
@@ -339,9 +352,10 @@ func (s *Service) recordGiveUpsLocked(idle []idleRunner, answers []giveUpAnswer)
 // in line from where it was: GitHub keeps an assigned job assigned to the
 // scale set and sends nothing more, so a job dropped here would never be
 // placed again. A run that could not reach its machine's agent rests the
-// machine. A departed place's run ran as the setup had the place then; once
-// it is retired the place is forgotten or, where the setup still has it,
-// takes jobs as the setup has it now.
+// machine, and one whose runner failed to start rests the place
+// (failedstart.go). A departed place's run ran as the setup had the place
+// then; once it is retired the place is forgotten or, where the setup still
+// has it, takes jobs as the setup has it now.
 func (s *Service) retireLocked(p config.Place) {
 	if d, ok := s.departed[p.ID]; ok {
 		p = d
@@ -355,6 +369,7 @@ func (s *Service) retireLocked(p config.Place) {
 	if run.Unreachable && slices.ContainsFunc(s.Cfg.Machines, func(m config.Machine) bool { return m.Name == p.Machine }) {
 		s.restLocked(p.Machine)
 	}
+	s.noteStartLocked(p, run)
 	removed := s.givenUp[run.RunnerName]
 	delete(s.givenUp, run.RunnerName)
 	if !run.Started {

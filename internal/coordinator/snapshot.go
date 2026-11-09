@@ -67,7 +67,8 @@ func (s *Service) runnerAlive(placeID string) bool {
 func share(p config.Place) config.Share { return config.Share{Cores: p.Cores, MemoryMB: p.MemoryMB} }
 
 // views reads every place's state for the planner. A place cooling down
-// after a failed launch reads as busy for a minute, and a place on a resting
+// after a failed launch reads as busy for a minute, a place whose runner
+// failed to start while it rests (failedstart.go), and a place on a resting
 // machine until the machine's agent answers (reach.go). A place a drain
 // holds reads as busy until all the drain's places are free, then takes
 // only the jobs the drain admits (drain.go).
@@ -79,7 +80,7 @@ func (v *snapshot) views() []plan.PlaceView {
 	for _, p := range places {
 		// Resource fit depends on the job, not the place's fallback size.
 		busy, _ := v.busy(p, false)
-		if !busy && (now.Before(s.cooling[p.ID]) || s.restingLocked(p.Machine) || s.held[p.ID] != "") {
+		if !busy && (s.placeRestsLocked(p.ID, now) || s.restingLocked(p.Machine) || s.held[p.ID] != "") {
 			busy = true
 		}
 		view := plan.PlaceView{Place: p, Busy: busy}
