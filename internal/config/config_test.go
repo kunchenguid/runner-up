@@ -54,7 +54,7 @@ func TestFreeMemoryFloorsNoPlaceCouldStartUnderAreRefused(t *testing.T) {
 		cfg := initialSetup(t)
 		m := Machine{Name: "desk", SSH: []string{"ci@desk"}, OS: os, Cores: 16, MemoryMB: 32768, RoomCores: 4, RoomMemoryMB: 16384,
 			MinAvailableMemoryMB: floor,
-			Places:               []Place{{ID: "desk-1", Provider: ProviderKVM, Pools: []string{"ru-linux"}, Cores: 4, MemoryMB: 8192, Image: "/var/lib/runner-up/noble.img"}}}
+			Places:               []Place{{ID: "desk-1", Provider: ProviderDocker, Pools: []string{"ru-linux"}, Cores: 4, MemoryMB: 8192}}}
 		if os == "windows" {
 			m.Places[0].Provider, m.Places[0].Image = ProviderHyperV, `C:\runner-up\noble.vhdx`
 		}
