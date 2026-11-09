@@ -28,6 +28,7 @@ func (s *Service) Place(ctx context.Context) {
 	s.refreshRunWorkflows(ctx)
 	s.forgetClosedRuns(ctx)
 	s.refreshVMs(ctx)
+	s.refreshMemory(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.askRestingLocked(ctx)

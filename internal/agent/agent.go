@@ -103,7 +103,7 @@ func providerFor(name string) (provider, error) {
 }
 
 // AgentCommands are the agent's commands, the ones AgentMain takes.
-var AgentCommands = []string{"probe", "vms", "run", "clean", "measure", "service-version", "update-service"}
+var AgentCommands = []string{"probe", "vms", "memory", "run", "clean", "measure", "service-version", "update-service"}
 
 // AgentMain is `runner-up agent`.
 func AgentMain(args []string) int {
@@ -122,7 +122,7 @@ func AgentMain(args []string) int {
 	}
 	// Only run, clean and measure take more than their name.
 	switch args[0] {
-	case "service-version", "update-service", "probe", "vms":
+	case "service-version", "update-service", "probe", "vms", "memory":
 		fs := flag.NewFlagSet("agent "+args[0], flag.ContinueOnError)
 		if code, stop := cli.Parse(fs, args[1:], false); stop {
 			return code
@@ -160,6 +160,19 @@ func AgentMain(args []string) int {
 			return ExitFailed
 		}
 		b, _ := json.Marshal(vms)
+		fmt.Println(string(b))
+		return 0
+	case "memory":
+		// The memory free here and what the places running here use, for
+		// the coordinator's check against the machine's free-memory floor.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		m, err := readMemory(ctx, filepath.Join(config.DefaultStateDir(), "agent"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return ExitFailed
+		}
+		b, _ := json.Marshal(m)
 		fmt.Println(string(b))
 		return 0
 	}
