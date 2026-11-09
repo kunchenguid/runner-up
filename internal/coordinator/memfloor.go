@@ -25,8 +25,8 @@ import (
 // not the owner's; each counts at most its reservation, and a place the agent
 // cannot read counts as using nothing, so its whole share stays held. Below
 // the floor the place is busy, so the job waits at GitHub holding nothing. A
-// missing or failed reading keeps the machine's places waiting until one
-// succeeds: the floor protects the owner. The reading never changes a size.
+// missing, failed or stale reading keeps the machine's places waiting until
+// one succeeds: the floor protects the owner. The reading never changes a size.
 
 // memReader reads machine m's free memory and what its places use.
 type memReader func(ctx context.Context, m config.Machine) (agent.Memory, error)
@@ -41,6 +41,12 @@ const memReadEvery = 10 * time.Second
 // memReadBudget is how long one placement pass waits for the machines it
 // reads. A machine that has not answered by then counts as a failed reading.
 var memReadBudget = 10 * time.Second
+
+// memReadStale is how old a reading may be and still hold a place to the
+// floor. A machine whose places were all busy was not read, and a place there
+// that frees during a pass waits for a fresh reading rather than start on the
+// owner's use from long ago. It leaves a pass room to read and plan.
+func memReadStale() time.Duration { return 2*memReadEvery + memReadBudget }
 
 // MemoryReading is the latest reading of a machine's free memory, kept in
 // the state file so runner-up status can say why a place waits.
@@ -132,6 +138,8 @@ func (v *snapshot) memoryFloor(m config.Machine, except string) memoryFloor {
 		return memoryFloor{unread: "free memory not read yet"}
 	case r.Err != "":
 		return memoryFloor{unread: "free memory unread: " + r.Err}
+	case v.s.now != nil && v.s.now().Sub(r.At) > memReadStale():
+		return memoryFloor{unread: "free memory not read since " + r.At.Format(time.RFC3339)}
 	}
 	f := memoryFloor{free: r.AvailableMB}
 	for _, q := range v.livePlaces(m.Name, except) {

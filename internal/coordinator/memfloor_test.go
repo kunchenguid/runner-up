@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kunchenguid/runner-up/internal/agent"
 	"github.com/kunchenguid/runner-up/internal/config"
@@ -225,6 +227,62 @@ func TestFloorReadsOnlyWhileAPlaceCouldStart(t *testing.T) {
 	h.finishAndPlace("desk-1")
 	if read["desk"] != 2 {
 		t.Fatalf("desk read %d times, want again once a place there was free", read["desk"])
+	}
+}
+
+// A machine whose places were all busy is not read, so its last reading may
+// be long out of date. A place there that frees while a pass reads another machine
+// waits for a fresh reading rather than start on the owner's use from then.
+func TestFloorWaitsOnAStaleReading(t *testing.T) {
+	f := loadFixture(t, "waiting-jobs.json")
+	cfg := desk(t.TempDir())
+	den := desk("").Machines[0]
+	den.Name, den.SSH = "den", []string{"ci@den"}
+	den.Places = slices.Clone(den.Places)
+	den.Places[0].ID, den.Places[1].ID = "den-1", "den-2"
+	cfg.Machines = append(cfg.Machines, den)
+	launcher := newFakeLauncher()
+	h := newHarness(t, cfg, launcher, map[string]*fakeSet{})
+	h.now = f.Now
+	var mu sync.Mutex
+	free := map[string]int{"desk": 32000, "den": 32000}
+	var freeDen func()
+	h.svc.MemReader = func(_ context.Context, m config.Machine) (agent.Memory, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if m.Name == "desk" && freeDen != nil {
+			freeDen()
+			freeDen = nil
+		}
+		return agent.Memory{AvailableMB: free[m.Name]}, nil
+	}
+	h.feed(f)
+	if got := h.placed(); len(got) != 4 {
+		t.Fatalf("places %v run jobs, want all four", got)
+	}
+
+	// A minute later the owners of both machines use most of their memory.
+	// A place on desk frees, so desk is read; while it is, den-1's job ends.
+	mu.Lock()
+	free["desk"], free["den"] = 2048, 2048
+	freeDen = func() { launcher.finish(t, "den-1") }
+	mu.Unlock()
+	h.finishAndPlace("desk-1")
+	if got := h.placed(); len(got) != 2 {
+		t.Fatalf("places %v run jobs, want only desk-2 and den-2: den's reading is a minute old", got)
+	}
+	want := BusyReason("free memory not read since " + f.Now.Format(time.RFC3339))
+	if _, why := h.svc.PlaceBusy(den.Places[0]); why != want {
+		t.Fatalf("den-1 reads %q, want %q", why, want)
+	}
+
+	// Read again, den holds its places to the floor as it is now.
+	h.later()
+	if got := h.placed(); len(got) != 2 {
+		t.Fatalf("places %v run jobs with 2048 MB free under a 4 GB floor", got)
+	}
+	if _, why := h.svc.PlaceBusy(den.Places[0]); why != "free memory 2048 MB, under the floor 4096 MB + 8192 MB its places reserve + 8192 MB for this job" {
+		t.Fatalf("den-1 reads %q", why)
 	}
 }
 
