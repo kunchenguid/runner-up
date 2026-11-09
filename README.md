@@ -47,7 +47,9 @@ place's machine over SSH.
   agent answers again, and its job goes to another place (see
   [When a machine is down](#when-a-machine-is-down)).
 - **Sign-in.** The coordinator uses the GitHub command line's sign-in. It
-  stores no token: it asks `gh auth token` each time it opens a session.
+  stores no token: it asks `gh auth token` each time it opens a session, and
+  again when GitHub refuses the token a session started with, so a
+  short-lived token such as a GitHub App's can be renewed behind `gh`.
 
 ## Quick start
 

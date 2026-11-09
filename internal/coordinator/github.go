@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,8 +27,8 @@ const sessionCleanupTimeout = 5 * time.Second
 type ClientFactory func(ctx context.Context, target string) (*scaleset.Client, error)
 
 // GhClients makes clients that sign in with the GitHub command line's token,
-// read afresh for every session, so a new gh sign-in takes effect at the next
-// session.
+// read afresh for every session and whenever GitHub refuses a session's
+// token, so a new gh sign-in takes effect at the next session.
 func GhClients(token tokenSource) ClientFactory {
 	return func(ctx context.Context, target string) (*scaleset.Client, error) {
 		t, err := token(ctx)
@@ -44,9 +45,14 @@ func GhClients(token tokenSource) ClientFactory {
 
 // setClient is one scale set's live session.
 type setClient struct {
-	client  *scaleset.Client
 	session *scaleset.MessageSessionClient
 	id      int
+	// renew makes a client with a token read afresh, for when GitHub refuses
+	// the one client was made with.
+	renew func(ctx context.Context) (*scaleset.Client, error)
+
+	mu     sync.Mutex
+	client *scaleset.Client
 }
 
 func (c *setClient) AcquireJobs(ctx context.Context, ids []int64) ([]int64, error) {
@@ -54,7 +60,12 @@ func (c *setClient) AcquireJobs(ctx context.Context, ids []int64) ([]int64, erro
 }
 
 func (c *setClient) GenerateJIT(ctx context.Context, name, workFolder string) (string, int, error) {
-	cfg, err := c.client.GenerateJitRunnerConfig(ctx, &scaleset.RunnerScaleSetJitRunnerSetting{Name: name, WorkFolder: workFolder}, c.id)
+	var cfg *scaleset.RunnerScaleSetJitRunnerConfig
+	err := c.signedIn(ctx, func(client *scaleset.Client) error {
+		var err error
+		cfg, err = client.GenerateJitRunnerConfig(ctx, &scaleset.RunnerScaleSetJitRunnerSetting{Name: name, WorkFolder: workFolder}, c.id)
+		return err
+	})
 	if err != nil {
 		return "", 0, err
 	}
@@ -66,7 +77,32 @@ func (c *setClient) GenerateJIT(ctx context.Context, name, workFolder string) (s
 }
 
 func (c *setClient) RemoveRunner(ctx context.Context, id int64) error {
-	return c.client.RemoveRunner(ctx, id)
+	return c.signedIn(ctx, func(client *scaleset.Client) error { return client.RemoveRunner(ctx, id) })
+}
+
+// signedIn runs call with the session's client. The message session keeps
+// its own token, so a session can outlive the GitHub token its client was
+// made with, such as a GitHub App's, which lasts an hour. When GitHub refuses
+// that token, signedIn reads the token again through renew and runs call once
+// more with the new client, which the session then keeps.
+func (c *setClient) signedIn(ctx context.Context, call func(*scaleset.Client) error) error {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	err := call(client)
+	if !errors.Is(err, scaleset.UnauthorizedError) || c.renew == nil {
+		return err
+	}
+	fresh, renewErr := c.renew(ctx)
+	if renewErr != nil {
+		return fmt.Errorf("%w (reading the GitHub token again: %w)", err, renewErr)
+	}
+	c.mu.Lock()
+	if c.client == client {
+		c.client = fresh
+	}
+	c.mu.Unlock()
+	return call(fresh)
 }
 
 // isOrg reports whether a target is an organization rather than owner/name.
@@ -214,7 +250,16 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 		}
 	}()
 	log.Info("scale set session open", "scaleSetId", set.ID)
-	sc := &setClient{client: c, session: session, id: set.ID}
+	renew := func(ctx context.Context) (*scaleset.Client, error) {
+		c, err := clients(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		c.SetSystemInfo(scaleset.SystemInfo{System: "runner-up", Version: version.Version, Subsystem: "coordinator", ScaleSetID: set.ID})
+		log.Info("GitHub refused the session's token; read it again")
+		return c, nil
+	}
+	sc := &setClient{client: c, session: session, id: set.ID, renew: renew}
 	svc.AddSet(target, label, sc)
 	// Run before the session closes: no job is acquired through a closing
 	// session.
