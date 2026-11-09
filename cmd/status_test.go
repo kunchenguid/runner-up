@@ -18,25 +18,29 @@ import (
 
 // Intent (README.md, "Setting up": "runner-up status shows each place, its
 // running reservation and the waiting work"; "When a machine is down":
-// "runner-up status shows a resting machine's places as resting"): status
+// "runner-up status shows a resting machine's places as resting"; "When a
+// place fails to start": status shows the place resting until when): status
 // gives each place one line saying whether it is free, which job or borrow
-// holds it, or that its machine rests, then each waiting job and borrow and
-// each job acquired for a place. This test owns those lines' words; journey
-// tests read the state status reads (place.json, busy.lock, state.json)
-// instead of typing them. TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet
-// owns a drain's lines, which need a drain a coordinator moves on.
+// holds it, or that its machine or the place itself rests, then each waiting
+// job and borrow and each job acquired for a place. This test owns those
+// lines' words; journey tests read the state status reads (place.json,
+// busy.lock, state.json) instead of typing them.
+// TestDrainCommandAdmitsThePairOnlyOnceItsPlacesAreQuiet owns a drain's
+// lines, which need a drain a coordinator moves on.
 func TestStatusSaysEachPlaceAndJobInOneLine(t *testing.T) {
 	cfg := initialSetup(t)
 	docker := func(id string) config.Place {
 		return config.Place{ID: id, Provider: config.ProviderDocker, Pools: []string{"ru-linux"}, Cores: 2, MemoryMB: 4096}
 	}
 	cfg.Machines = []config.Machine{
-		{Name: "box", Places: []config.Place{docker("box-1"), docker("box-2"), docker("box-3"), docker("box-4")}},
+		{Name: "box", Places: []config.Place{docker("box-1"), docker("box-2"), docker("box-3"), docker("box-4"), docker("box-5"),
+			docker("box-6")}},
 		{Name: "far", Places: []config.Place{docker("far-1")}},
 	}
 	cfg.Defaults()
 	at := time.Date(2026, 11, 3, 9, 5, 0, 0, time.UTC)
 	since := at.Local().Format(time.RFC3339)
+	until := time.Now().Add(15 * time.Minute).Truncate(time.Second)
 	hold := func(id string, run coordinator.PlaceRun) {
 		os.MkdirAll(cfg.PlaceDir(id), 0o700)
 		held, err := lock.Busy(filepath.Join(cfg.PlaceDir(id), "busy.lock"))
@@ -61,6 +65,12 @@ func TestStatusSaysEachPlaceAndJobInOneLine(t *testing.T) {
 		},
 		"acquired":    []map[string]any{{"job": plan.Job{Repo: "octo-org/app", Pool: "ru-linux", Name: "build"}, "place": "box-1", "at": at}},
 		"unreachable": map[string]time.Time{"far": at},
+		// box-5 rests until a quarter of an hour from now; box-6's rest
+		// ended.
+		"failedStarts": map[string]coordinator.PlaceRest{
+			"box-5": {Failures: 5, Until: until},
+			"box-6": {Failures: 1, Until: at},
+		},
 	}
 	if err := config.WriteJSON(filepath.Join(cfg.StateDir, "state.json"), state); err != nil {
 		t.Fatal(err)
@@ -75,6 +85,9 @@ func TestStatusSaysEachPlaceAndJobInOneLine(t *testing.T) {
 		`place box-2 on box (docker, 2 cores, 4096 MB) busy (job): octo-org/app "verify / linux" waiting for its job`,
 		`place box-3 on box (docker, 2 cores, 4096 MB) busy (job): octo-org/app "affected-journeys" running`,
 		`place box-4 on box (docker, 2 cores, 4096 MB) busy (borrow): borrow "native check" since ` + since,
+		`place box-5 on box (docker, 2 cores, 4096 MB) resting (5 failed starts in a row; takes jobs again at ` +
+			until.Local().Format(time.RFC3339) + `)`,
+		`place box-6 on box (docker, 2 cores, 4096 MB) free`,
 		`place far-1 on far (docker, 2 cores, 4096 MB) resting (agent unreachable since ` + since + `)`,
 		`waiting octo-org/app ru-linux "suite" since ` + since,
 		`waiting borrow ru-linux "second check" since ` + since,

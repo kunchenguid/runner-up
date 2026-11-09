@@ -62,6 +62,9 @@ type PlaceRun struct {
 	// Unreachable: the place runner could not reach its machine's agent, or
 	// lost it (reach.go).
 	Unreachable bool `json:"unreachable,omitempty"`
+	// StartFailed: the place's agent said the place failed before a job
+	// reached the runner, unasked, or did not start (failedstart.go).
+	StartFailed bool `json:"startFailed,omitempty"`
 }
 
 // ProcLauncher is the real Launcher.
@@ -292,7 +295,9 @@ type placeRunner struct {
 // the agent's input; one that does not stop then is killed. A runner no job
 // reached in time is the coordinator's to stop: it removes the runner's
 // registration first (Service.giveUp), since GitHub can give the
-// runner a job up to that moment.
+// runner a job up to that moment. An agent that says the place failed
+// before a job reached the runner, unasked, failed to start the runner, for
+// the coordinator to rest the place (failedstart.go).
 func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -303,6 +308,7 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
 		r.log.Error("agent did not start", "err", err)
+		r.markStartFailed()
 		return agent.ExitFailed
 	}
 	attrs := []any{"machine", r.p.Machine, "provider", r.p.Provider, "pool", r.pool}
@@ -341,11 +347,13 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	jobTimer := time.NewTimer(r.cfg.Seconds(r.cfg.MaxJobSeconds))
 	defer jobTimer.Stop()
 	var kill <-chan time.Time
+	stopping := false
 	end := func(why string) {
 		if kill != nil {
 			return
 		}
 		r.log.Warn(why)
+		stopping = true
 		stdin.Close()
 		kill = time.After(2 * time.Minute)
 	}
@@ -363,8 +371,11 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 			}
 			code := agent.ExitCode(err)
 			r.log.Info("agent ended", "exit", code, "job", gotJob)
-			if code == sshFailed && !r.cfg.Machine(r.p.Machine).Local() {
+			switch {
+			case code == sshFailed && !r.cfg.Machine(r.p.Machine).Local():
 				r.markUnreachable()
+			case !gotJob && code == agent.ExitFailed && !stopping:
+				r.markStartFailed()
 			}
 			if !gotJob {
 				return agent.ExitUnstarted
@@ -399,6 +410,14 @@ func (r *placeRunner) markStarted(job string) {
 func (r *placeRunner) markUnreachable() {
 	r.update(func(run *PlaceRun) { run.Unreachable = true })
 	r.log.Warn("ssh could not reach the machine's agent, or lost it", "machine", r.p.Machine)
+}
+
+// markStartFailed records, before this process ends and lets go of the
+// place, that the runner failed to start, for the coordinator to rest the
+// place (failedstart.go).
+func (r *placeRunner) markStartFailed() {
+	r.update(func(run *PlaceRun) { run.StartFailed = true })
+	r.log.Warn("the runner failed to start; the place rests")
 }
 
 func (r *placeRunner) update(change func(*PlaceRun)) {

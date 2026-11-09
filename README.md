@@ -45,7 +45,9 @@ place's machine over SSH.
   jobs (see [Changing the setup](#changing-the-setup)).
 - **Down machines.** A machine whose agent cannot be reached rests until its
   agent answers again, and its job goes to another place (see
-  [When a machine is down](#when-a-machine-is-down)).
+  [When a machine is down](#when-a-machine-is-down)). A place whose runner
+  fails to start rests a while too (see
+  [When a place fails to start](#when-a-place-fails-to-start)).
 - **Sign-in.** The coordinator uses the GitHub command line's sign-in. It
   stores no token: it asks `gh auth token` each time it opens a session.
 
@@ -186,7 +188,7 @@ The agent needs none of these, so machines may run Windows.
 | **place** | where one job runs at a time on a machine: a Docker container, a KVM, tart or Hyper-V virtual machine, an Apple container guest, a Windows account, or the machine itself (a host place). Each job gets a fresh one, except on a host place |
 | **pool** | a label jobs ask for in `runs-on`. Each place serves one or more pools, and a pool may set the cores and memory each of its jobs reserves |
 | **room** | cores and memory set aside. A machine keeps room for its owner (1 core and 1024 MB by default), and the first-ranked job waiting only for cores or memory keeps room on one machine until it fits |
-| **rest** | a machine whose agent cannot be reached rests: its places take no job until the agent answers again (see [When a machine is down](#when-a-machine-is-down)) |
+| **rest** | a machine whose agent cannot be reached rests: its places take no job until the agent answers again (see [When a machine is down](#when-a-machine-is-down)). A place whose runner fails to start rests for a while (see [When a place fails to start](#when-a-place-fails-to-start)) |
 | **borrow** | reserving a tart place on a Mac for a command of your own for a while, instead of a job (see [Borrowing a virtual Mac](#borrowing-a-virtual-mac)) |
 | **drain** | pausing named places until named jobs have run there with nothing else running (see [Draining places](#draining-places)) |
 
@@ -481,6 +483,22 @@ version, which costs no call to GitHub. Once it answers, the machine's places
 take jobs again. A machine still resting when the coordinator restarts is
 asked at once. `runner-up status` shows a resting machine's places as resting.
 
+### When a place fails to start
+
+When a place's agent says the place failed before a job reached its runner,
+such as a virtual machine that stopped while booting or a container docker
+would not start, the place rests. Given the same job again at once, it would
+most likely fail the same way, registering and removing a runner at GitHub
+on each try. A resting place takes no job, and the job its runner was
+started for goes to another place, in line from where it was. The place
+rests a minute after its first failure, then twice as long after each
+further failure in a row: 2, 4 and 8 minutes, then 15 minutes after every
+failure from the fifth on. The first run there that does not fail to start
+ends the count. A coordinator restart keeps the rests. `runner-up status`
+shows a resting place and when it takes jobs again. An agent killed outright
+says nothing, and its place takes a job at once; one that cannot be reached
+rests its machine instead.
+
 ### When GitHub closes a job
 
 When GitHub says a job was cancelled before a runner took it, the job's scale
@@ -500,6 +518,15 @@ quiet, and reads at most ten runs at a time and sixty an hour. If GitHub says
 the run is completed, the coordinator forgets the run's quiet waiting jobs
 and starts no runner for them. A run GitHub calls open, or a read GitHub does
 not answer, keeps them waiting. A job with a runner is never read about.
+
+A runner normally ends within seconds of finishing its job. One that lost
+GitHub may not: GitHub fails its job once it stops hearing from the runner,
+while the runner keeps trying to reach GitHub and would hold its place until
+`maxJobSeconds`. So once GitHub says a runner's job finished, whatever its
+result, the coordinator stops that runner if it still holds its place ten
+minutes after the finish, and the place frees. GitHub gives a one-job runner
+no second job and takes nothing more from it for the finished one, so
+stopping it loses nothing.
 
 ## Setup file
 

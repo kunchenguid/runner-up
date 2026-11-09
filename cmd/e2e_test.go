@@ -257,13 +257,16 @@ exec sh -c "$last"
 // arguments and any runner variable in its own environment, which -e NAME
 // copies - goes to settings, and its image to images. It then runs the
 // container's entrypoint and arguments as given, on docker's own standard
-// input, with the stand-in runner run.sh in place of the image's.
+// input, with the stand-in runner run.sh in place of the image's. While the
+// file broken exists, run fails as docker does when it cannot start a
+// container: it prints broken's words and exits 125.
 const fakeDocker = `#!/bin/bash
 d=$E2E_DIR/docker
 printf '%s\n' "$*" >> "$d/docker.log"
 name=${!#}
 case $1 in
 run)
+  if [ -e "$d/broken" ]; then cat "$d/broken" >&2; exit 125; fi
   printf '%s %s\n' "$*" "$(env | grep '^ACTIONS_RUNNER_')" >> "$d/settings"
   shift
   entry= image= args=()

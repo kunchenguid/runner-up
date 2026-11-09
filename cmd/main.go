@@ -265,6 +265,8 @@ func status(cfg *config.Config, w io.Writer) int {
 			state = "busy (" + string(why) + ")"
 		} else if since, ok := st.Unreachable[p.Machine]; ok {
 			state = "resting (agent unreachable since " + since.Local().Format(time.RFC3339) + ")"
+		} else if r, ok := st.FailedStarts[p.ID]; ok && time.Now().Before(r.Until) {
+			state = "resting (" + r.FailedStarts() + " in a row; takes jobs again at " + r.Until.Local().Format(time.RFC3339) + ")"
 		} else if label, ok := drainedFor[p.ID]; ok {
 			state = fmt.Sprintf("drained (for %q)", label)
 		}
