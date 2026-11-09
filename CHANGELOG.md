@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.13](https://github.com/kunchenguid/runner-up/compare/v0.1.12...v0.1.13) (2026-11-09)
+
+
+### Features
+
+* **coordinator:** log why a waiting job has no free place ([61413c0](https://github.com/kunchenguid/runner-up/commit/61413c00464b2e6a9a1976793ab082e8ce961af8))
+* **plan:** priority levels for places and machines ([3188c4b](https://github.com/kunchenguid/runner-up/commit/3188c4ba54547f0c35f029834acb96aec21fd4cd))
+
+
+### Bug Fixes
+
+* **coordinator:** rest a place whose runner fails to start, and stop runners that outlive a finished job ([f522e48](https://github.com/kunchenguid/runner-up/commit/f522e48ccf5dbb299b63a801e1c1c009def42147))
+
 ## [0.1.12](https://github.com/kunchenguid/runner-up/compare/v0.1.11...v0.1.12) (2026-11-04)
 
 
