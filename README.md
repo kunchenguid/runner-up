@@ -609,7 +609,9 @@ available + what its running places use >= minAvailableMemoryMB + what its runni
   example, `busy (free memory 2048 MB, under the floor 4096 MB + 8192 MB for
   this job)`, and a job that waits a minute logs the same reason.
 - **A reading that fails**, such as from an agent older than this setting,
-  keeps the machine's places waiting until one succeeds, and is logged.
+  keeps the machine's places waiting until one succeeds, and is logged. So
+  does a reading more than half a minute old, such as of a machine whose
+  places were all busy when it was last read.
 
 The coordinator reads a machine with a floor at most every 10 seconds, and
 only while one of its places is free and the machine does not rest. The floor
