@@ -32,6 +32,9 @@ const (
 	// passesEnv names a file the coordinator adds a line to after each pass
 	// of its serve loop, for a test to count.
 	passesEnv = "RUNNER_UP_TEST_PASSES"
+	// ghEnv, when set, names a stand-in GitHub command line the coordinator
+	// reads its token from, as it reads gh's, instead of a fixed token.
+	ghEnv = "RUNNER_UP_TEST_GH"
 )
 
 // trialEnv shortens a new version's trial (coordinator.TrialWindow) in the
@@ -65,10 +68,18 @@ func serveStandIn(path string) int {
 		coordinator.TrialWindow = d
 	}
 	actions := os.Getenv(actionsEnv)
-	clients := func(_ context.Context, target string) (*scaleset.Client, error) {
+	token := func(context.Context) (string, error) { return "local-only", nil }
+	if gh := os.Getenv(ghEnv); gh != "" {
+		token = coordinator.GhToken(gh)
+	}
+	clients := func(ctx context.Context, target string) (*scaleset.Client, error) {
+		pat, err := token(ctx)
+		if err != nil {
+			return nil, err
+		}
 		return scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
 			GitHubConfigURL:     actions + "/" + target,
-			PersonalAccessToken: "local-only",
+			PersonalAccessToken: pat,
 			SystemInfo:          scaleset.SystemInfo{System: "runner-up", Version: version.Version, Subsystem: "coordinator"},
 		})
 	}

@@ -50,13 +50,22 @@ type setClient struct {
 	// renew makes a client with a token read afresh, for when GitHub refuses
 	// the one client was made with.
 	renew func(ctx context.Context) (*scaleset.Client, error)
+	// end ends the session. Jobs are acquired through the client the session
+	// was opened with, which keeps the token it was made with; once GitHub
+	// refuses that token, only a new session, opened with a token read
+	// afresh, acquires jobs again.
+	end context.CancelCauseFunc
 
 	mu     sync.Mutex
 	client *scaleset.Client
 }
 
 func (c *setClient) AcquireJobs(ctx context.Context, ids []int64) ([]int64, error) {
-	return c.session.AcquireJobs(ctx, ids)
+	got, err := c.session.AcquireJobs(ctx, ids)
+	if errors.Is(err, scaleset.UnauthorizedError) && c.end != nil {
+		c.end(fmt.Errorf("GitHub refused the session's token: %w", err))
+	}
+	return got, err
 }
 
 func (c *setClient) GenerateJIT(ctx context.Context, name, workFolder string) (string, int, error) {
@@ -250,6 +259,8 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 		}
 	}()
 	log.Info("scale set session open", "scaleSetId", set.ID)
+	sessCtx, end := context.WithCancelCause(ctx)
+	defer end(nil)
 	renew := func(ctx context.Context) (*scaleset.Client, error) {
 		c, err := clients(ctx, target)
 		if err != nil {
@@ -259,7 +270,7 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 		log.Info("GitHub refused the session's token; read it again")
 		return c, nil
 	}
-	sc := &setClient{client: c, session: session, id: set.ID, renew: renew}
+	sc := &setClient{client: c, session: session, id: set.ID, renew: renew, end: end}
 	svc.AddSet(target, label, sc)
 	// Run before the session closes: no job is acquired through a closing
 	// session.
@@ -268,8 +279,11 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 	first := &scaleset.RunnerScaleSetMessage{MessageID: 0, Statistics: session.Session().Statistics}
 	svc.Handle(target, label, first)
 	last := 0
-	for ctx.Err() == nil {
-		msg, err := session.GetMessage(ctx, last, svc.Setup().AnnounceCapacity)
+	for sessCtx.Err() == nil {
+		msg, err := session.GetMessage(sessCtx, last, svc.Setup().AnnounceCapacity)
+		if sessCtx.Err() != nil {
+			break
+		}
 		if err != nil {
 			return fmt.Errorf("get message: %w", err)
 		}
@@ -284,5 +298,5 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 			}
 		}
 	}
-	return ctx.Err()
+	return context.Cause(sessCtx)
 }

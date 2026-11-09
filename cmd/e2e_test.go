@@ -70,6 +70,15 @@ type actionsStandIn struct {
 	// records its answer at each removal.
 	containerUp func() bool
 	up          []bool
+	// signIn, when set, is the only GitHub token the stand-in takes for a
+	// runner registration token; signInRefused counts those it refused.
+	// adminTTL, when set, is how long the admin token it hands out lasts.
+	signIn        string
+	signInRefused int
+	adminTTL      time.Duration
+	// onAcquire, when set, runs once a job is acquired, before the answer,
+	// without the stand-in's lock.
+	onAcquire func()
 }
 
 type queued struct {
@@ -119,9 +128,12 @@ func (a *actionsStandIn) setPath(path string) (name, rest string, ok bool) {
 
 // adminToken is the shape of the token the service hands a client: a JWT,
 // read for its expiry only.
-func adminToken() string {
+func adminToken() string { return adminTokenFor(time.Hour) }
+
+// adminTokenFor is an admin token that expires after ttl.
+func adminTokenFor(ttl time.Duration) string {
 	enc := base64.RawURLEncoding.EncodeToString
-	claims := fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix())
+	claims := fmt.Sprintf(`{"exp":%d}`, time.Now().Add(ttl).Unix())
 	return enc([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc([]byte(claims)) + "." + enc([]byte("stand-in"))
 }
 
@@ -140,9 +152,18 @@ func (a *actionsStandIn) serve(w http.ResponseWriter, r *http.Request) {
 	setName, setRest, inSet := a.setPath(path)
 	switch {
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/actions/runners/registration-token"):
+		if a.signIn != "" && r.Header.Get("Authorization") != "Bearer "+a.signIn {
+			a.signInRefused++
+			reply(http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
+			return
+		}
 		reply(http.StatusCreated, map[string]string{"token": "registration-token"})
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/actions/runner-registration"):
-		reply(http.StatusOK, map[string]string{"url": a.URL + "/tenant/", "token": adminToken()})
+		ttl := time.Hour
+		if a.adminTTL > 0 {
+			ttl = a.adminTTL
+		}
+		reply(http.StatusOK, map[string]string{"url": a.URL + "/tenant/", "token": adminTokenFor(ttl)})
 	case r.Method == http.MethodGet && path == sets:
 		name := r.URL.Query().Get("name")
 		if _, ok := a.sets[name]; !ok {
@@ -193,6 +214,12 @@ func (a *actionsStandIn) serve(w http.ResponseWriter, r *http.Request) {
 		var ids []int64
 		json.NewDecoder(r.Body).Decode(&ids)
 		a.acquired = append(a.acquired, ids...)
+		if f := a.onAcquire; f != nil {
+			a.onAcquire = nil
+			a.mu.Unlock()
+			f()
+			a.mu.Lock()
+		}
 		reply(http.StatusOK, map[string]any{"count": len(ids), "value": ids})
 	case r.Method == http.MethodPost && inSet && setRest == "generatejitconfig":
 		var setting scaleset.RunnerScaleSetJitRunnerSetting
