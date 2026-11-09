@@ -46,6 +46,49 @@ func TestOwnersRoomMustLeaveThePlacesSomething(t *testing.T) {
 	}
 }
 
+// Intent (README, "Setup file", minAvailableMemoryMB; issue #56): a machine's
+// free-memory floor is a whole number of MB, read only where the agent can
+// read it, and refused when no place could ever start under it.
+func TestFreeMemoryFloorsNoPlaceCouldStartUnderAreRefused(t *testing.T) {
+	desk := func(floor int, os string) *Config {
+		cfg := initialSetup(t)
+		m := Machine{Name: "desk", SSH: []string{"ci@desk"}, OS: os, Cores: 16, MemoryMB: 32768, RoomCores: 4, RoomMemoryMB: 16384,
+			MinAvailableMemoryMB: floor,
+			Places:               []Place{{ID: "desk-1", Provider: ProviderKVM, Pools: []string{"ru-linux"}, Cores: 4, MemoryMB: 8192, Image: "/var/lib/runner-up/noble.img"}}}
+		if os == "windows" {
+			m.Places[0].Provider, m.Places[0].Image = ProviderHyperV, `C:\runner-up\noble.vhdx`
+		}
+		cfg.Machines = []Machine{m}
+		return cfg
+	}
+	for _, tc := range []struct {
+		floor int
+		os    string
+		want  string
+	}{
+		{-1, "", "must not be negative"},
+		{32768, "", "must leave its places some of its memoryMB"},
+		// 30000 MB kept free leaves no room for the place's 8192 MB.
+		{30000, "", "never fit beside its machine's free-memory floor"},
+		{4096, "windows", "read only on Linux and macOS"},
+	} {
+		if err := desk(tc.floor, tc.os).Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("a floor of %d MB on %q: %v, want %q", tc.floor, tc.os, err, tc.want)
+		}
+	}
+	for _, floor := range []int{0, 4096} {
+		if err := desk(floor, "").Validate(); err != nil {
+			t.Errorf("a floor of %d MB was refused: %v", floor, err)
+		}
+	}
+	// A machine that counts no memory may still keep a floor.
+	cfg := desk(4096, "")
+	cfg.Machines[0].Cores, cfg.Machines[0].MemoryMB, cfg.Machines[0].RoomCores, cfg.Machines[0].RoomMemoryMB = 0, 0, 0, 0
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a floor on a machine that counts nothing was refused: %v", err)
+	}
+}
+
 // Intent (README, "Setup file": "check-config rejects partial sizes and
 // sizes that never fit a machine serving the pool, after its owner's room"):
 // a pool's size replaces its places' sizes, a pool without one keeps them,

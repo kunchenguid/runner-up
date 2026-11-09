@@ -54,6 +54,9 @@ type SavedState struct {
 	// Finished is when GitHub said each runner's job finished, by runner
 	// name, for the runners still holding a place (finished.go).
 	Finished map[string]time.Time `json:"finished,omitempty"`
+	// Memory is the latest free-memory reading of each machine with a
+	// floor, by name, for runner-up status (memfloor.go).
+	Memory map[string]MemoryReading `json:"memory,omitempty"`
 }
 
 // departedPlace is a departed place as the setup had it, with its machine,
@@ -68,8 +71,9 @@ type departedPlace struct {
 //     a runner that has not yet taken one
 //   - runners (runners.go, failedstart.go, finished.go): the runners it
 //     started, and what it still owes them and their places
-//   - machines (reach.go, vmlimit.go): which machines rest, and which macOS
-//     VMs each Mac runs
+//   - machines (reach.go, vmlimit.go, memfloor.go): which machines rest,
+//     which macOS VMs each Mac runs, and the free memory of each machine
+//     with a floor
 //   - reads (reads.go, closedruns.go): what it read from GitHub's API for the
 //     order rules and about quiet runs
 //
@@ -327,7 +331,7 @@ func (s *Service) Handle(target, pool string, msg *scaleset.RunnerScaleSetMessag
 }
 
 func (s *Service) saveLocked() {
-	st := SavedState{Timings: s.timings, Unreachable: s.unreachable, FailedStarts: s.failedStarts, Finished: s.finished}
+	st := SavedState{Timings: s.timings, Unreachable: s.unreachable, FailedStarts: s.failedStarts, Finished: s.finished, Memory: s.Memory}
 	for _, j := range s.waiting {
 		st.Waiting = append(st.Waiting, j)
 	}

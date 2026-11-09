@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/runner-up/internal/agent"
 	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/coordinator"
 	"github.com/kunchenguid/runner-up/internal/lock"
@@ -95,5 +96,37 @@ func TestStatusSaysEachPlaceAndJobInOneLine(t *testing.T) {
 	}, "\n") + "\n"
 	if out.String() != want {
 		t.Errorf("status said\n%s\nwant\n%s", out.String(), want)
+	}
+}
+
+// Intent (README, "Setup file", minAvailableMemoryMB; issue #56): a place
+// held back by its machine's free-memory floor shows in status as busy, with
+// the coordinator's latest reading against the floor, and check-config says
+// the machine keeps one.
+func TestStatusSaysAPlaceWaitsUnderTheFreeMemoryFloor(t *testing.T) {
+	cfg := initialSetup(t)
+	kvm := func(id string) config.Place {
+		return config.Place{ID: id, Provider: config.ProviderKVM, Pools: []string{"ru-linux"}, Cores: 4, MemoryMB: 8192,
+			Image: "/var/lib/runner-up/noble-server-cloudimg-amd64.img"}
+	}
+	cfg.Machines = []config.Machine{{Name: "desk", SSH: []string{"ci@desk"}, Cores: 16, MemoryMB: 32768, RoomCores: 4, RoomMemoryMB: 16384,
+		MinAvailableMemoryMB: 4096, Places: []config.Place{kvm("desk-1")}}}
+	cfg.Defaults()
+	at := time.Date(2026, 11, 3, 9, 5, 0, 0, time.UTC)
+	state := map[string]any{"memory": map[string]coordinator.MemoryReading{"desk": {At: at, Memory: agent.Memory{AvailableMB: 2048}}}}
+	if err := config.WriteJSON(filepath.Join(cfg.StateDir, "state.json"), state); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := status(cfg, &out); code != 0 {
+		t.Fatalf("status exited %d", code)
+	}
+	want := "place desk-1 on desk (kvm, 4 cores, 8192 MB) busy (free memory 2048 MB, under the floor 4096 MB + 8192 MB for this job)\n"
+	if out.String() != want {
+		t.Errorf("status said\n%s\nwant\n%s", out.String(), want)
+	}
+	line := machineLine(cfg.Machines[0])
+	if !strings.HasSuffix(line, "all at once; a place starts only while 4096 MB stays free beside its places") {
+		t.Errorf("check-config says %q", line)
 	}
 }
