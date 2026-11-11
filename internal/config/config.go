@@ -166,6 +166,12 @@ type Machine struct {
 	// reserve at most Cores-RoomCores and MemoryMB-RoomMemoryMB.
 	RoomCores    int `json:"roomCores,omitempty"`
 	RoomMemoryMB int `json:"roomMemoryMB,omitempty"`
+	// MinAvailableMemoryMB, when set, is a floor on the machine's live free
+	// memory, kept for an owner whose own use changes: a place starts only
+	// while the memory its machine's agent reads free at that moment, plus
+	// what runner-up's own running places there use, leaves the floor beside
+	// every running place's share and the new job's. Zero reads nothing.
+	MinAvailableMemoryMB int `json:"minAvailableMemoryMB,omitempty"`
 	// Priority is the level its places take unless a place sets its own:
 	// 0, the default, is tried first (Place.Level).
 	Priority int     `json:"priority,omitempty"`
@@ -443,6 +449,15 @@ func (c *Config) Validate() error {
 		if m.Priority < 0 {
 			return fmt.Errorf("machine %q: priority must be a whole number from 0", m.Name)
 		}
+		if m.MinAvailableMemoryMB < 0 {
+			return fmt.Errorf("machine %q: minAvailableMemoryMB must not be negative", m.Name)
+		}
+		if m.MinAvailableMemoryMB > 0 && m.OS == "windows" {
+			return fmt.Errorf("machine %q: minAvailableMemoryMB is read only on Linux and macOS machines", m.Name)
+		}
+		if m.MinAvailableMemoryMB > 0 && m.MemoryMB > 0 && m.MinAvailableMemoryMB >= m.MemoryMB {
+			return fmt.Errorf("machine %q: minAvailableMemoryMB must leave its places some of its memoryMB", m.Name)
+		}
 		if m.OS != "" && m.OS != "windows" {
 			return fmt.Errorf("machine %q: os must be windows or left out", m.Name)
 		}
@@ -502,6 +517,9 @@ func (c *Config) Validate() error {
 				}
 				if b.MemoryMB > 0 && sized.MemoryMB > b.MemoryMB {
 					return fmt.Errorf("place %q, pool %q: its %d MB never fit its machine's %d MB, less the owner's room", p.ID, label, sized.MemoryMB, b.MemoryMB)
+				}
+				if floor := m.MinAvailableMemoryMB; floor > 0 && m.MemoryMB > 0 && floor+sized.MemoryMB > m.MemoryMB {
+					return fmt.Errorf("place %q, pool %q: its %d MB never fit beside its machine's free-memory floor of %d MB in its %d MB", p.ID, label, sized.MemoryMB, floor, m.MemoryMB)
 				}
 			}
 			if err := checkImage(p.Provider, p.Image); err != nil {

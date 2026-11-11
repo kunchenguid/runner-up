@@ -59,6 +59,7 @@ Running:
 On each machine (run by the coordinator):
   agent probe            show the machine's cores, memory and providers
   agent vms              list the macOS virtual machines running here
+  agent memory           show the memory free here and what its places use
   agent run|clean        run one job in a place, or clean up after one
   agent measure          run a tart guest's runner and sample its use
   agent service-version  show the version of the Windows service here
@@ -238,6 +239,9 @@ func status(cfg *config.Config, w io.Writer) int {
 	svc := &coordinator.Service{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	var st coordinator.SavedState
 	saved := config.ReadJSON(filepath.Join(cfg.StateDir, "state.json"), &st) == nil
+	// The coordinator's latest free-memory readings say why a place waits
+	// under its machine's floor.
+	svc.Memory = st.Memory
 	drains := coordinator.Drains(cfg)
 	drainedFor := map[string]string{}
 	for _, d := range slices.Backward(drains) {
@@ -421,8 +425,12 @@ func machineLine(m config.Machine) string {
 		total.MemoryMB += p.MemoryMB
 	}
 	line := fmt.Sprintf("%s (%s): %s", m.Name, where, strings.Join(shares, ", "))
+	floor := ""
+	if m.MinAvailableMemoryMB > 0 {
+		floor = fmt.Sprintf("; a place starts only while %d MB stays free beside its places", m.MinAvailableMemoryMB)
+	}
 	if m.Cores == 0 && m.MemoryMB == 0 {
-		return line + "; nothing counted"
+		return line + "; nothing counted" + floor
 	}
 	b := m.Budget()
 	fit := "all at once"
@@ -440,7 +448,7 @@ func machineLine(m config.Machine) string {
 		counted = append(counted, fmt.Sprintf("%d of %d MB", b.MemoryMB, m.MemoryMB))
 	}
 	line += "; places may reserve " + strings.Join(counted, " and ")
-	return line + ", " + fit
+	return line + ", " + fit + floor
 }
 
 func countProvider(m config.Machine, provider string) int {

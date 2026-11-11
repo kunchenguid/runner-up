@@ -548,7 +548,8 @@ budget. Each pool may set `cores` and `memoryMB` together: every job of that
 pool reserves that size, whichever place runs it. It replaces the place's
 `cores` and `memoryMB`, including the container or VM limits. A pool without a
 size keeps the place's existing size. `check-config` rejects partial sizes
-and sizes that never fit a machine serving the pool, after its owner's room.
+and sizes that never fit a machine serving the pool, after its owner's room. A machine
+may also keep a [free-memory floor](#free-memory-floor) for its owner.
 
 A host job is not held to its reservation by the operating system. Jobs receive
 `RUNNER_UP_CORES` and `RUNNER_UP_MEMORY_MB`; use them to set worker counts and
@@ -582,6 +583,49 @@ A `linux-2604` job boots `resolute.vhdx`, and a `linux` job boots
 `noble.vhdx`. Either way it is one place; its pool's size, or the place's
 fallback size when the pool has none, counts against its machine's budget.
 
+### Free-memory floor
+
+A machine that is also someone's daily computer may set
+`minAvailableMemoryMB`: a floor on its live free memory, kept for an owner
+whose own use changes through the day, where `roomMemoryMB` is fixed. Before a
+place there starts, the coordinator asks the machine's agent how much memory
+is free right now (`runner-up agent memory`), and starts the place only while
+
+```
+available + what its running places use >= minAvailableMemoryMB + what its running places reserve + the job's memoryMB
+```
+
+- **Available** is `MemAvailable` on Linux, the memory new work can take
+  without swapping. On macOS it is the Mac's memory less what it has in use
+  as Activity Monitor counts it (app memory, wired and compressed).
+- **What its running places use** counts as free, since it is runner-up's,
+  not the owner's, so a running job does not hold the next one back twice.
+  Each place counts at most its reservation, and only a reading taken after
+  its job started. The agent reads a KVM place's QEMU on Linux; any other
+  place counts as using nothing, so its whole reservation stays held.
+- **Below the floor** the place counts as busy: the job waits at GitHub
+  holding nothing, as it does for cores or memory, and the first-ranked job
+  keeps room on one machine. `runner-up status` shows the place as, for
+  example, `busy (free memory 2048 MB, under the floor 4096 MB + 8192 MB for
+  this job)`, and a job that waits a minute logs the same reason.
+- **A reading that fails**, such as from an agent older than this setting,
+  keeps the machine's places waiting until one succeeds, and is logged. So
+  does a reading more than half a minute old, such as of a machine whose
+  places were all busy when it was last read.
+
+The coordinator reads a machine with a floor at most every 10 seconds, and
+only while one of its places is free and the machine does not rest. The floor
+is not set by default, is read only on Linux and macOS machines, and must
+leave every place's size within the machine's `memoryMB`. It only holds a
+place back: it never changes a size, and a job that has started runs on
+whatever the owner's use does next. For example, a workstation with two
+KVM places of 8 GB keeps 4 GB free for its owner with, beside its `places`:
+
+```json
+{"name": "desk", "ssh": ["ci@desk"], "cores": 16, "memoryMB": 32768, "roomCores": 4, "roomMemoryMB": 16384,
+ "minAvailableMemoryMB": 4096}
+```
+
 ### Priority levels
 
 A job goes to a free place serving its pool on the machine with the fewest
@@ -596,7 +640,7 @@ then the listed order, decide as before.
 A place counts as full while it runs a job or a borrow, while its machine is
 unreachable, cools down after a failed start or is held by a drain, while its
 Mac runs as many virtual Macs as macOS allows, and while its machine lacks the
-room for the job. A job waiting only for room keeps it at the lowest level
+room for the job, or the free memory its [floor](#free-memory-floor) needs. A job waiting only for room keeps it at the lowest level
 where it waits.
 
 Once a job has waited a minute with no free place, the coordinator logs

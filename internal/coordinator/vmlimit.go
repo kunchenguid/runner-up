@@ -78,45 +78,61 @@ func (s *Service) refreshVMs(ctx context.Context) {
 	if len(due) == 0 {
 		return
 	}
-	type reading struct {
-		machine string
-		vms     []string
-		err     error
-	}
-	ctx, cancel := context.WithTimeout(ctx, vmReadBudget)
-	defer cancel()
-	// Buffered for every reader, so one that answers after the budget never
-	// blocks.
-	readings := make(chan reading, len(due))
-	for _, m := range due {
-		go func() {
-			vms, err := s.VmReader(ctx, m)
-			readings <- reading{m.Name, vms, err}
-		}()
-	}
-	got := map[string]reading{}
-	for len(got) < len(due) && ctx.Err() == nil {
-		select {
-		case r := <-readings:
-			got[r.machine] = r
-		case <-ctx.Done():
-		}
-	}
+	got := readAtOnce(ctx, due, vmReadBudget, s.VmReader)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, m := range due {
 		s.vmsRead[m.Name] = now
-		r, ok := got[m.Name]
-		if !ok {
-			r.err = fmt.Errorf("no answer within %s", vmReadBudget)
-		}
-		if r.err != nil {
+		if r := got[m.Name]; r.err != nil {
 			delete(s.vms, m.Name)
 			s.Log.Warn("could not read the Mac's running macOS VMs; counting only its places' clones", "machine", m.Name, "err", r.err)
 		} else {
-			s.vms[m.Name] = r.vms
+			s.vms[m.Name] = r.value
 		}
 	}
+}
+
+// machineReading is one machine's answer to readAtOnce.
+type machineReading[T any] struct {
+	value T
+	err   error
+}
+
+// readAtOnce asks every machine in due at once, within budget for them all,
+// so one machine slow to answer never delays placement by more than that. A
+// machine that has not answered by then has an error. It is called with mu
+// let go.
+func readAtOnce[T any](ctx context.Context, due []config.Machine, budget time.Duration,
+	read func(context.Context, config.Machine) (T, error)) map[string]machineReading[T] {
+	type answer struct {
+		machine string
+		machineReading[T]
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	// Buffered for every reader, so one that answers after the budget never
+	// blocks.
+	answers := make(chan answer, len(due))
+	for _, m := range due {
+		go func() {
+			v, err := read(ctx, m)
+			answers <- answer{m.Name, machineReading[T]{v, err}}
+		}()
+	}
+	got := map[string]machineReading[T]{}
+	for len(got) < len(due) && ctx.Err() == nil {
+		select {
+		case a := <-answers:
+			got[a.machine] = a.machineReading
+		case <-ctx.Done():
+		}
+	}
+	for _, m := range due {
+		if _, ok := got[m.Name]; !ok {
+			got[m.Name] = machineReading[T]{err: fmt.Errorf("no answer within %s", budget)}
+		}
+	}
+	return got
 }
 
 // vmLimitFull says why tart place p cannot start a clone now, or "" when it

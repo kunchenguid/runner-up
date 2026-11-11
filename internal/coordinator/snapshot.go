@@ -93,11 +93,13 @@ func (v *snapshot) views() []plan.PlaceView {
 	return out
 }
 
-// headroom is what each counted machine's jobs may still reserve.
+// headroom is what each counted machine's jobs may still reserve, and on a
+// machine with a free-memory floor, no more than its free memory allows.
 func (v *snapshot) headroom() map[string]plan.Headroom {
 	out := map[string]plan.Headroom{}
 	for _, m := range v.s.Cfg.Machines {
-		if m.Cores == 0 && m.MemoryMB == 0 {
+		floor := m.MinAvailableMemoryMB > 0
+		if m.Cores == 0 && m.MemoryMB == 0 && !floor {
 			continue
 		}
 		b, used := m.Budget(), v.inUse(m.Name, "")
@@ -105,7 +107,16 @@ func (v *snapshot) headroom() map[string]plan.Headroom {
 		if m.Cores == 0 {
 			cores = int(^uint(0) >> 1)
 		}
-		out[m.Name] = plan.Headroom{Cores: cores, MemoryMB: b.MemoryMB - used.MemoryMB, Memory: b.MemoryMB > 0}
+		h := plan.Headroom{Cores: cores, MemoryMB: b.MemoryMB - used.MemoryMB, Memory: b.MemoryMB > 0}
+		// The floor leaves the machine's places what its free memory allows,
+		// when that is less (memfloor.go).
+		if floor {
+			if left := v.memoryFloor(m, "").left(m.MinAvailableMemoryMB); !h.Memory || left < h.MemoryMB {
+				h.MemoryMB = left
+			}
+			h.Memory = true
+		}
+		out[m.Name] = h
 	}
 	return out
 }
@@ -116,8 +127,19 @@ func (v *snapshot) headroom() map[string]plan.Headroom {
 // A departed place counts on the machine its runner runs on, not where the
 // setup has it now (reload.go).
 func (v *snapshot) inUse(machine, except string) config.Share {
-	s := v.s
 	used := config.Share{}
+	for _, q := range v.livePlaces(machine, except) {
+		sh := v.reservation(q)
+		used.Cores += sh.Cores
+		used.MemoryMB += sh.MemoryMB
+	}
+	return used
+}
+
+// livePlaces are machine's places whose runner or borrow supervisor is
+// alive, but except, departed places counted where their runner runs.
+func (v *snapshot) livePlaces(machine, except string) []config.Place {
+	s := v.s
 	places := slices.DeleteFunc(s.Cfg.Places(), func(q config.Place) bool {
 		_, departed := s.departed[q.ID]
 		return departed
@@ -125,14 +147,9 @@ func (v *snapshot) inUse(machine, except string) config.Share {
 	for _, id := range slices.Sorted(maps.Keys(s.departed)) {
 		places = append(places, s.departed[id])
 	}
-	for _, q := range places {
-		if q.ID != except && q.Machine == machine && v.place(q.ID).alive {
-			sh := v.reservation(q)
-			used.Cores += sh.Cores
-			used.MemoryMB += sh.MemoryMB
-		}
-	}
-	return used
+	return slices.DeleteFunc(places, func(q config.Place) bool {
+		return q.ID == except || q.Machine != machine || !v.place(q.ID).alive
+	})
 }
 
 // inUse is snapshot.inUse read afresh.
@@ -161,7 +178,8 @@ func (s *Service) Reservation(p config.Place) config.Share {
 // PlaceBusy reads one place, sized for the pool when checking an assignment.
 // Its own lock says whether its runner or borrow supervisor is alive. A
 // place is also busy while its size does not fit beside the other runs, within the
-// machine's budget less the owner's room. A tart place is
+// machine's budget less the owner's room, or under its free-memory floor
+// (memfloor.go). A tart place is
 // also busy while its Mac runs as many macOS VMs as it may (vmlimit.go). A
 // lock that cannot be read counts busy, so a broken reader never starts a
 // second job in a place.
@@ -208,10 +226,22 @@ func (v *snapshot) busy(p config.Place, resources bool) (bool, BusyReason) {
 }
 
 // tight says why a job of size sh does not fit in place p beside its
-// machine's other runs, or "" when it fits. A machine without a budget always
-// fits.
+// machine's other runs, or "" when it fits: within its budget, then under its
+// free-memory floor (memfloor.go). A machine with neither always fits.
 func (v *snapshot) tight(p config.Place, sh config.Share) string {
 	m := v.s.Cfg.Machine(p.Machine)
+	if why := v.overBudget(m, p, sh); why != "" {
+		return why
+	}
+	if m.MinAvailableMemoryMB > 0 {
+		return v.underFloor(m, p.ID, sh.MemoryMB)
+	}
+	return ""
+}
+
+// overBudget says why a job of size sh does not fit in place p within its
+// machine's budget, or "" when it does or the machine counts nothing.
+func (v *snapshot) overBudget(m config.Machine, p config.Place, sh config.Share) string {
 	if m.Cores == 0 && m.MemoryMB == 0 {
 		return ""
 	}
