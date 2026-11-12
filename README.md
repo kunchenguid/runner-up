@@ -205,8 +205,9 @@ runner-up is young. Read this before you trust it with your jobs.
   crashed place's cleanup.
 - **Proven only in part:** Hyper-V places have run only a check's test jobs,
   not yet anyone's daily work. Apple container places have run the runner
-  with a stand-in registration, not yet a real job. tart-linux places pass
-  their tests with a stand-in tart, not yet a real job. Account places on Windows pass their tests but
+  with a stand-in registration, not yet a real job. tart-linux places have
+  run real jobs on two Macs at once (Docker, a service container,
+  `setup-node`), not yet anyone's daily work. Account places on Windows pass their tests but
   have not yet run a real job. Changing the setup while the coordinator runs
   is proven by end-to-end tests with stand-ins for GitHub, ssh and Docker,
   not yet with real jobs.
@@ -834,8 +835,8 @@ To prioritize a Mac's own jobs over its Linux guests, see `last:` in
 
 ### Linux tart images
 
-> **Experimental.** tart-linux places have not yet run a real job (see
-> [Status](#status)).
+> **Experimental.** tart-linux places have run real jobs, not yet anyone's
+> daily work (see [Status](#status)).
 
 A tart-linux place runs each job in a fresh tart clone of a Linux image, a
 whole virtual machine, so a job can run Docker inside it. For each job, the
@@ -875,7 +876,27 @@ runner-up machine add mac --ssh you@mac --provider tart-linux --image ubuntu-run
 ```
 
 `machine add` adds one provider's places; to give a Mac that already has tart
-places tart-linux places too, add them to its `"places"` in the setup file.
+places tart-linux places too, add them to its `"places"` in the setup file:
+
+```json
+{"id": "mac-lin-1", "provider": "tart-linux", "pools": ["linux-arm"], "cores": 4, "memoryMB": 8192, "image": "ubuntu-runner"}
+```
+
+The clones run arm64 Linux, the Mac's own architecture. Give tart-linux places
+a pool of their own rather than one that x86-64 Linux places serve, so a job
+that needs amd64 images or binaries never lands on arm64.
+
+To use the same image on other Macs, export it once and import it on each:
+
+```sh
+tart export ubuntu-runner ubuntu-runner.tvm
+# copy ubuntu-runner.tvm to the other Mac, then there:
+tart import ubuntu-runner.tvm ubuntu-runner
+```
+
+Each job's clone is an APFS copy of the image that shares its blocks until
+the job writes, so several tart-linux places on a Mac cost little disk beyond
+the image and what their jobs write.
 
 ### macOS images
 
