@@ -116,22 +116,48 @@ func (p tartProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 	if err := waitForVMSlot(ctx, vm, a.BootTimeout, out); err != nil {
 		return err
 	}
-	if b, err := tart(ctx, "clone", a.Image, vm); err != nil {
-		return fmt.Errorf("tart clone %s: %s", a.Image, FirstLine(string(b), err))
+	c := tartClone{vm: vm, system: "macOS", bootID: []string{"/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"},
+		runArgs: []string{"--dir=" + tartShareName + ":" + share + ":ro"}}
+	cmd := exec.Command("tart", "exec", "-i", vm, "/bin/bash", "-c", tartScript(p.launch(a)), "runner-up", tartGuestShare, a.ToolCache)
+	cmd.Stdin = strings.NewReader(jit + "\n")
+	_, err = c.runJob(ctx, a, cmd, out)
+	return err
+}
+
+// tartClone is one job's clone of a tart place's image, macOS or Linux.
+type tartClone struct {
+	vm string
+	// system names the clone's system in messages.
+	system string
+	// bootID reads, in the clone, a UUID its kernel makes afresh at each boot.
+	bootID []string
+	// runArgs are tart run's arguments besides --no-graphics and the clone.
+	runArgs []string
+}
+
+// runJob clones a's image as c.vm, sizes and boots it, waits for its guest
+// agent, and runs cmd, a tart exec in the clone, until it ends, ctx is done,
+// the clone stops or its system restarts. A restart ends the runner with it,
+// but its tart exec can go on waiting, so the job ends once the clone reads
+// a new boot ID. err is why the clone failed the job; exit is cmd's own
+// result, which only a clone that ran on to the end gives.
+func (c tartClone) runJob(ctx context.Context, a *AgentRun, cmd *exec.Cmd, out io.Writer) (exit, err error) {
+	if b, err := tart(ctx, "clone", a.Image, c.vm); err != nil {
+		return nil, fmt.Errorf("tart clone %s: %s", a.Image, FirstLine(string(b), err))
 	}
-	set := []string{"set", vm, "--cpu", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB)}
+	set := []string{"set", c.vm, "--cpu", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB)}
 	if a.DiskGB > 0 {
 		set = append(set, "--disk-size", strconv.Itoa(a.DiskGB))
 	}
 	if b, err := tart(ctx, set...); err != nil {
-		return fmt.Errorf("tart set: %s", FirstLine(string(b), err))
+		return nil, fmt.Errorf("tart set: %s", FirstLine(string(b), err))
 	}
 
-	boot := exec.Command("tart", "run", "--no-graphics", "--dir="+tartShareName+":"+share+":ro", vm)
+	boot := exec.Command("tart", append(append([]string{"run", "--no-graphics"}, c.runArgs...), c.vm)...)
 	boot.Stdout, boot.Stderr = out, out
 	boot.WaitDelay = 5 * time.Second
 	if err := boot.Start(); err != nil {
-		return fmt.Errorf("tart run: %w", err)
+		return nil, fmt.Errorf("tart run: %w", err)
 	}
 	vmDone := make(chan struct{})
 	go func() { boot.Wait(); close(vmDone) }()
@@ -144,19 +170,16 @@ func (p tartProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 			<-vmDone
 		}
 	}()
-	if err := waitForGuest(ctx, vm, a.BootTimeout, vmDone); err != nil {
-		return err
+	if err := waitForGuest(ctx, c.vm, a.BootTimeout, vmDone); err != nil {
+		return nil, err
 	}
-	fmt.Fprintf(out, "runner-up agent: clone %s of %s is up\n", vm, a.Image)
+	fmt.Fprintf(out, "runner-up agent: clone %s of %s is up\n", c.vm, a.Image)
 
-	// A kernel panic restarts the clone's macOS and ends the runner with it,
-	// but its tart exec can go on waiting. So the job ends once the clone
-	// reads a new boot session, or the clone stops.
 	jobCtx, endJob := context.WithCancel(ctx)
 	defer endJob()
 	restarted := make(chan struct{})
 	go func() {
-		if WatchBootSession(jobCtx, func(c context.Context) string { return bootSession(c, vm) }, a.GuestCheck) {
+		if WatchBootSession(jobCtx, func(ctx context.Context) string { return bootSession(ctx, c.vm, c.bootID) }, a.GuestCheck) {
 			close(restarted)
 			endJob()
 		}
@@ -168,28 +191,26 @@ func (p tartProvider) run(ctx context.Context, a *AgentRun, jit string, out io.W
 		case <-jobCtx.Done():
 		}
 	}()
-	cmd := exec.Command("tart", "exec", "-i", vm, "/bin/bash", "-c", tartScript(p.launch(a)), "runner-up", tartGuestShare, a.ToolCache)
-	cmd.Stdin = strings.NewReader(jit + "\n")
 	cmd.Stdout, cmd.Stderr = out, out
 	// Once tart exec has ended, its output is not waited for.
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("tart exec: %w", err)
+		return nil, fmt.Errorf("tart exec: %w", err)
 	}
-	waitOrStop(jobCtx, cmd, func() { cmd.Process.Signal(syscall.SIGTERM) }, 30*time.Second)
+	ran := waitOrStop(jobCtx, cmd, func() { cmd.Process.Signal(syscall.SIGTERM) }, 30*time.Second)
 	select {
 	case <-restarted:
-		return fmt.Errorf("the clone's macOS restarted during the job")
+		return nil, fmt.Errorf("the clone's %s restarted during the job", c.system)
 	default:
 	}
 	select {
 	case <-vmDone:
 		if ctx.Err() == nil {
-			return fmt.Errorf("the clone stopped while the runner ran")
+			return nil, fmt.Errorf("the clone stopped while the runner ran")
 		}
 	default:
 	}
-	return nil
+	return ran, nil
 }
 
 // tart runs tart with args, bounded by two minutes, and returns its output.
@@ -315,16 +336,18 @@ func waitForGuest(ctx context.Context, vm string, timeout time.Duration, vmDone 
 	}
 }
 
-// bootSessionUUID is how macOS prints kern.bootsessionuuid: a UUID the kernel
-// makes afresh at each boot. kern.boottime would not do: macOS moves it
-// whenever the clock is set, as a new clone's clock is soon after boot.
+// bootSessionUUID is how macOS prints kern.bootsessionuuid, and Linux
+// /proc/sys/kernel/random/boot_id: a UUID the kernel makes afresh at each
+// boot. kern.boottime would not do: macOS moves it whenever the clock is set,
+// as a new clone's clock is soon after boot.
 var bootSessionUUID = regexp.MustCompile(`^(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// bootSession reads the clone's boot session, or "" when it cannot.
-func bootSession(ctx context.Context, vm string) string {
+// bootSession reads the clone's boot session with the command read, or ""
+// when it cannot.
+func bootSession(ctx context.Context, vm string, read []string) string {
 	c, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	b, err := exec.CommandContext(c, "tart", "exec", vm, "/usr/sbin/sysctl", "-n", "kern.bootsessionuuid").Output()
+	b, err := exec.CommandContext(c, "tart", append([]string{"exec", vm}, read...)...).Output()
 	if now := strings.TrimSpace(string(b)); err == nil && bootSessionUUID.MatchString(now) {
 		return now
 	}

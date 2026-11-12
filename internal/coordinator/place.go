@@ -215,7 +215,7 @@ func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	if p.DiskGB > 0 {
 		args = append(args, "--disk-gb", strconv.Itoa(p.DiskGB))
 	}
-	if p.Provider == config.ProviderTart {
+	if p.Provider == config.ProviderTart || p.Provider == config.ProviderTartLinux {
 		args = append(args, "--guest-check", strconv.Itoa(cfg.GuestCheckSeconds))
 	}
 	if p.Switch != "" {

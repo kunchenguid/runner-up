@@ -30,6 +30,10 @@ const (
 	// ProviderTart runs each job in a new tart clone of a macOS image on a Mac
 	// with Apple silicon, deleted after the job.
 	ProviderTart = "tart"
+	// ProviderTartLinux runs each job in a new tart clone of a Linux image on
+	// a Mac with Apple silicon, deleted after the job. Linux clones do not
+	// count toward macOS's limit of two virtual machines.
+	ProviderTartLinux = "tart-linux"
 	// ProviderHost runs each job on the machine itself, as the agent's user, in
 	// a runner folder made for the job and removed after it.
 	ProviderHost = "host"
@@ -48,7 +52,7 @@ const (
 )
 
 // Providers are every provider's name.
-var Providers = []string{ProviderDocker, ProviderKVM, ProviderTart, ProviderHost, ProviderAccount, ProviderHyperV, ProviderContainer}
+var Providers = []string{ProviderDocker, ProviderKVM, ProviderTart, ProviderTartLinux, ProviderHost, ProviderAccount, ProviderHyperV, ProviderContainer}
 
 // WindowsProviders run on Windows machines, and only there.
 var WindowsProviders = []string{ProviderAccount, ProviderHyperV}
@@ -619,6 +623,8 @@ func checkImage(provider, image string) error {
 		return fmt.Errorf("a KVM place needs the absolute path of its base disk image on the machine")
 	case provider == ProviderTart && (image == "" || strings.ContainsAny(image, " \t\n")):
 		return fmt.Errorf("a tart place needs the tart image it clones, such as ghcr.io/cirruslabs/macos-sequoia-base:latest")
+	case provider == ProviderTartLinux && (image == "" || strings.ContainsAny(image, " \t\n")):
+		return fmt.Errorf("a tart-linux place needs the Linux tart image it clones, with python3 and a user named runner")
 	case provider == ProviderHost && image != "":
 		return fmt.Errorf("a host place runs on the machine itself and takes no image")
 	case provider == ProviderHyperV && !winAbs.MatchString(image):

@@ -35,6 +35,7 @@ func TestEveryPlaceStartsItsRunnerWithTheForkGuardUnlessForksAreAllowed(t *testi
 		},
 		config.ProviderHyperV:    linuxGuestHanded,
 		config.ProviderContainer: linuxGuestHanded,
+		config.ProviderTartLinux: linuxGuestHanded,
 	}
 	for _, name := range config.Providers {
 		render, ok := handed[name]

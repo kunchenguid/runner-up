@@ -218,3 +218,33 @@ func TestWaitingJobLogsWhyEachTimeItChanges(t *testing.T) {
 		t.Fatalf("logged %q, want %q then %q", got, want, again)
 	}
 }
+
+// Intent (README, "Linux tart images"): Linux clones do not count toward
+// macOS's two, so a Mac's busy tart-linux places never hold back its tart
+// places, and its tart-linux places take jobs while two macOS clones run.
+func TestTartLinuxClonesDoNotCountTowardTheMacOSVMLimit(t *testing.T) {
+	f := loadFixture(t, "waiting-jobs.json")
+	cfg := oneMac(t.TempDir())
+	m := &cfg.Machines[0]
+	m.Places = m.Places[:2]
+	for _, id := range []string{"mac-lin-1", "mac-lin-2"} {
+		m.Places = append(m.Places, config.Place{ID: id, Provider: config.ProviderTartLinux, Pools: []string{"ru-mac"},
+			Cores: 2, MemoryMB: 4096, Image: "ghcr.io/cirruslabs/ubuntu:latest"})
+	}
+	h := newHarness(t, cfg, newFakeLauncher(), map[string]*fakeSet{})
+	h.now = f.Now
+	h.feedAsMac(f)
+	// Six jobs wait, and the budget fits all four places: both macOS clones
+	// and both Linux clones run at once.
+	placed := h.placed()
+	for _, id := range []string{"mac-1", "mac-2", "mac-lin-1", "mac-lin-2"} {
+		if _, ok := placed[id]; !ok {
+			t.Errorf("%s runs no job; placed %v", id, placed)
+		}
+	}
+	for _, p := range m.Places {
+		if busy, why := h.svc.PlaceBusy(p); strings.Contains(string(why), "VM limit") {
+			t.Errorf("%s reads busy=%v %q", p.ID, busy, why)
+		}
+	}
+}
