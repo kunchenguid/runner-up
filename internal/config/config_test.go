@@ -108,6 +108,8 @@ func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 		{"a tart image with a space", Place{Provider: ProviderTart, Image: "ci-base",
 			PoolImages: map[string]string{"ru-linux": "ci base"}},
 			`place "lima-1": pool "ru-linux"'s image: a tart place needs the tart image it clones`},
+		{"a tart-linux place without an image", Place{Provider: ProviderTartLinux},
+			`place "lima-1": a tart-linux place needs the Linux tart image it clones`},
 	} {
 		cfg := initialSetup(t)
 		cfg.Pools = append(cfg.Pools, Pool{Label: "ru-large"})
