@@ -350,7 +350,7 @@ machine needs one step first (see [Windows machines](#windows-machines)).
 `~/.local/bin`) when it is missing, reads the machine's cores and memory, and
 checks that its provider works: Docker by default on Linux, tart on a Mac, or
 the one `--provider` names (`docker`, `kvm`, `tart`, `host` or, on a Mac,
-`container` with `--image`). For Apple container places it checks that the
+`tart-linux` or `container` with `--image`). For Apple container places it checks that the
 container tool is installed and its service answers, but not the image; see
 [What you need](#what-you-need). It copies itself only to a
 machine of its own system and architecture; for another,
@@ -543,8 +543,8 @@ Besides what `init` and `machine add` write, you can set:
 | `order` | `["waited:60m", "shortest"]` | the [order rules](#order-rules) |
 | `allowForkPullRequests` | `false` | let jobs from forks' pull requests run |
 | `startTimeoutSeconds` | 600 | how long a runner may wait for its job. Then the coordinator removes the runner from its scale set and stops it; a runner GitHub says is running a job keeps it |
-| `bootTimeoutSeconds` | 300 | how long a KVM, tart or Hyper-V place may take to boot |
-| `guestCheckSeconds` | 30 | how often a tart place checks its clone has not restarted |
+| `bootTimeoutSeconds` | 300 | how long a KVM, tart, tart-linux or Hyper-V place may take to boot |
+| `guestCheckSeconds` | 30 | how often a tart or tart-linux place checks its clone has not restarted |
 | `maxJobSeconds` | 21600 | the longest a job may run |
 | `logKeepDays` | 30 | how long place logs are kept |
 | `release` | none | the runner-up the coordinator and its machines run: see [Updating runner-up](#updating-runner-up) |
