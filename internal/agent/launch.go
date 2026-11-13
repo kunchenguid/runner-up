@@ -101,7 +101,8 @@ func (tartProvider) launch(a *AgentRun) runnerLaunch {
 	return a.launch(tartGuest+"/fork-guard.sh", tartGuard)
 }
 
-// A Linux guest - a Hyper-V VM or an Apple container guest - cannot run
+// A Linux guest - a Hyper-V VM, an Apple container guest or a tart-linux
+// clone - cannot run
 // runner-up's own program, so its hook runs the guest program's guard.
 const (
 	linuxGuestDir   = "/opt/runner-up"
@@ -113,6 +114,10 @@ func (hypervProvider) launch(a *AgentRun) runnerLaunch {
 }
 
 func (appleContainerProvider) launch(a *AgentRun) runnerLaunch {
+	return a.launch(linuxGuestDir+"/fork-guard.sh", linuxGuestGuard)
+}
+
+func (tartLinuxProvider) launch(a *AgentRun) runnerLaunch {
 	return a.launch(linuxGuestDir+"/fork-guard.sh", linuxGuestGuard)
 }
 

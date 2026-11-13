@@ -90,6 +90,8 @@ func providerFor(name string) (provider, error) {
 		return kvmProvider{}, nil
 	case config.ProviderTart:
 		return tartProvider{}, nil
+	case config.ProviderTartLinux:
+		return tartLinuxProvider{}, nil
 	case config.ProviderHost:
 		return hostProvider{}, nil
 	case config.ProviderAccount:
@@ -371,6 +373,8 @@ type Probe struct {
 	HyperV  string `json:"hyperv,omitempty"`
 	// Container is empty from an agent older than its reading.
 	Container string `json:"container,omitempty"`
+	// TartLinux is empty from an agent older than its reading.
+	TartLinux string `json:"tartLinux,omitempty"`
 }
 
 // reading is where p keeps provider's answer.
@@ -382,6 +386,8 @@ func (p *Probe) reading(provider string) *string {
 		return &p.KVM
 	case config.ProviderTart:
 		return &p.Tart
+	case config.ProviderTartLinux:
+		return &p.TartLinux
 	case config.ProviderHost:
 		return &p.Host
 	case config.ProviderAccount:
@@ -431,6 +437,7 @@ func (dockerProvider) ready() string {
 
 func (kvmProvider) ready() string            { return kvmReady() }
 func (tartProvider) ready() string           { return tartReady() }
+func (tartLinuxProvider) ready() string      { return tartLinuxReady() }
 func (hostProvider) ready() string           { return hostReady() }
 func (accountProvider) ready() string        { return accountReady() }
 func (hypervProvider) ready() string         { return hypervReady() }

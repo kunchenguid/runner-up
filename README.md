@@ -205,15 +205,18 @@ runner-up is young. Read this before you trust it with your jobs.
   crashed place's cleanup.
 - **Proven only in part:** Hyper-V places have run only a check's test jobs,
   not yet anyone's daily work. Apple container places have run the runner
-  with a stand-in registration, not yet a real job. Account places on Windows pass their tests but
+  with a stand-in registration, not yet a real job. tart-linux places have
+  run real jobs on two Macs at once (Docker, a service container,
+  `setup-node`), not yet anyone's daily work. Account places on Windows pass their tests but
   have not yet run a real job. Changing the setup while the coordinator runs
   is proven by end-to-end tests with stand-ins for GitHub, ssh and Docker,
   not yet with real jobs.
 - **Order rules** are proven by tests that replay GitHub's recorded scale set
   messages. Within one pool of one repository GitHub picks which job a runner
   takes, so the order there is only close (see [Order rules](#order-rules)).
-- **Experimental:** Hyper-V places, Apple container places, Windows account
-  places, [borrowing a virtual Mac](#borrowing-a-virtual-mac) and
+- **Experimental:** Hyper-V places, Apple container places, tart-linux
+  places, Windows account places,
+  [borrowing a virtual Mac](#borrowing-a-virtual-mac) and
   [draining places](#draining-places). They may still change between
   releases.
 
@@ -311,6 +314,9 @@ places use:
   GitHub's runner itself need not be in the image; the guest downloads the
   pinned runner. The runner gets what the image sets in `/etc/environment`,
   as on a Hyper-V place.
+- **tart-linux places** (experimental; a Mac with Apple silicon): tart, as
+  for tart places, and a Linux tart image pulled or built on the Mac (see
+  [Linux tart images](#linux-tart-images)).
 - **host places** (Linux or a Mac): nothing more. The job runs as the SSH user
   (see [Trade-offs](#trade-offs)).
 
@@ -344,7 +350,7 @@ machine needs one step first (see [Windows machines](#windows-machines)).
 `~/.local/bin`) when it is missing, reads the machine's cores and memory, and
 checks that its provider works: Docker by default on Linux, tart on a Mac, or
 the one `--provider` names (`docker`, `kvm`, `tart`, `host` or, on a Mac,
-`container` with `--image`). For Apple container places it checks that the
+`tart-linux` or `container` with `--image`). For Apple container places it checks that the
 container tool is installed and its service answers, but not the image; see
 [What you need](#what-you-need). It copies itself only to a
 machine of its own system and architecture; for another,
@@ -537,8 +543,8 @@ Besides what `init` and `machine add` write, you can set:
 | `order` | `["waited:60m", "shortest"]` | the [order rules](#order-rules) |
 | `allowForkPullRequests` | `false` | let jobs from forks' pull requests run |
 | `startTimeoutSeconds` | 600 | how long a runner may wait for its job. Then the coordinator removes the runner from its scale set and stops it; a runner GitHub says is running a job keeps it |
-| `bootTimeoutSeconds` | 300 | how long a KVM, tart or Hyper-V place may take to boot |
-| `guestCheckSeconds` | 30 | how often a tart place checks its clone has not restarted |
+| `bootTimeoutSeconds` | 300 | how long a KVM, tart, tart-linux or Hyper-V place may take to boot |
+| `guestCheckSeconds` | 30 | how often a tart or tart-linux place checks its clone has not restarted |
 | `maxJobSeconds` | 21600 | the longest a job may run |
 | `logKeepDays` | 30 | how long place logs are kept |
 | `release` | none | the runner-up the coordinator and its machines run: see [Updating runner-up](#updating-runner-up) |
@@ -771,9 +777,10 @@ change its configured reservation through a reading.
 
 ## Macs
 
-A Mac's places are tart places, a fresh clone of a macOS image per job, Apple
-container places, a fresh Linux guest per job, or a host place that runs jobs
-on the Mac itself.
+A Mac's places are tart places, a fresh clone of a macOS image per job,
+tart-linux places, a fresh clone of a Linux image per job, Apple container
+places, a fresh Linux guest per job, or a host place that runs jobs on the Mac
+itself.
 
 For each job, a tart place's agent clones the place's image as
 `runner-up-PLACE`, sizes the clone to the job pool's cores and memory (or the
@@ -825,6 +832,71 @@ workers by `RUNNER_UP_CORES`.
 
 To prioritize a Mac's own jobs over its Linux guests, see `last:` in
 [Order rules](#order-rules).
+
+### Linux tart images
+
+> **Experimental.** tart-linux places have run real jobs, not yet anyone's
+> daily work (see [Status](#status)).
+
+A tart-linux place runs each job in a fresh tart clone of a Linux image, a
+whole virtual machine, so a job can run Docker inside it. For each job, the
+place's agent clones the place's image as `runner-up-PLACE`, sizes the clone
+to the job pool's cores and memory (or the place's defaults), and boots it
+with no window and nothing of the Mac shared. Through tart's guest agent
+(`tart exec`), it runs runner-up's guest program in the clone as root, as an
+Apple container place does: the program arrives on standard input, then the
+registration on one more line, so neither the image, the clone's settings
+nor any command line holds the registration. The program checks the pinned
+runner's download, runs it as `runner` for one job with the
+[configured fork policy](#pull-requests-from-forks), and ends. A new boot ID
+in the clone (`/proc/sys/kernel/random/boot_id`) ends the job, as a new boot
+session does on a macOS clone. The clone is stopped and deleted after the job.
+
+Linux clones do not count toward macOS's limit of two VMs, so a Mac's
+tart-linux places take jobs while two macOS clones run, as far as its cores
+and memory allow. They cannot be [borrowed](#borrowing-a-virtual-mac).
+
+The image needs tart's guest agent, `/usr/bin/python3`, `sudo` when the guest
+agent does not run as root, and a user and group named `runner` with
+`/home/runner` present. The runner runs with no supplementary groups, so give
+it Docker through the socket's mode rather than the `docker` group. To build
+one from Cirrus Labs' Ubuntu image:
+
+```sh
+tart clone ghcr.io/cirruslabs/ubuntu:latest ubuntu-runner
+tart run --no-graphics ubuntu-runner &
+tart exec ubuntu-runner sudo bash -c '
+  useradd -m -s /bin/bash runner
+  echo "runner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/runner
+  curl -fsSL https://get.docker.com | sh
+  mkdir -p /etc/systemd/system/docker.socket.d
+  printf "[Socket]\nSocketMode=0666\n" > /etc/systemd/system/docker.socket.d/runner.conf'
+tart stop ubuntu-runner
+runner-up machine add mac --ssh you@mac --provider tart-linux --image ubuntu-runner --pool my-linux
+```
+
+`machine add` adds one provider's places; to give a Mac that already has tart
+places tart-linux places too, add them to its `"places"` in the setup file:
+
+```json
+{"id": "mac-lin-1", "provider": "tart-linux", "pools": ["linux-arm"], "cores": 4, "memoryMB": 8192, "image": "ubuntu-runner"}
+```
+
+The clones run arm64 Linux, the Mac's own architecture. Give tart-linux places
+a pool of their own rather than one that x86-64 Linux places serve, so a job
+that needs amd64 images or binaries never lands on arm64.
+
+To use the same image on other Macs, export it once and import it on each:
+
+```sh
+tart export ubuntu-runner ubuntu-runner.tvm
+# copy ubuntu-runner.tvm to the other Mac, then there:
+tart import ubuntu-runner.tvm ubuntu-runner
+```
+
+Each job's clone is an APFS copy of the image that shares its blocks until
+the job writes, so several tart-linux places on a Mac cost little disk beyond
+the image and what their jobs write.
 
 ### macOS images
 
