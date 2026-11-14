@@ -539,6 +539,12 @@ func (c *Config) Validate() error {
 			if p.Network != "" && !dockerNetworkName.MatchString(p.Network) {
 				return fmt.Errorf("place %q: a Docker network's name starts with a letter or digit and has only letters, digits, _, . and -", p.ID)
 			}
+			// host would give a job the machine's own network, which this
+			// setting exists to keep it off; none leaves the runner unable to
+			// reach GitHub.
+			if p.Network == "host" || p.Network == "none" {
+				return fmt.Errorf("place %q: a Docker place can't join Docker's %q network: name one created for its jobs", p.ID, p.Network)
+			}
 			if p.ToolCache != "" {
 				if p.Provider != ProviderHost && p.Provider != ProviderTart {
 					return fmt.Errorf("place %q: only a host or tart place sets its tool cache", p.ID)

@@ -568,7 +568,7 @@ Each place may also set:
 | `workFolder` | `_work` | where the runner keeps its jobs' work, relative to the runner's folder or absolute; GitHub's Ubuntu runners use `/home/runner/work` |
 | `toolCache` | see meaning | the runner's tool cache (`RUNNER_TOOL_CACHE`). A host place keeps it between jobs, in its folder under the agent's by default, so a tool such as `setup-node`'s Node is downloaded once. For a tart place, a folder inside the clone that the image was set up with; by default the runner's own, which every job starts without |
 | `poolImages` | none | another image for some of the place's pools, by pool label. A job of a named pool runs on that image, any other job on `image` |
-| `network` | Docker's default bridge | the Docker network a Docker place's containers join (`docker run --network`); create it on the machine first. See [Trade-offs](#trade-offs) for keeping jobs off your local network |
+| `network` | Docker's default bridge | the Docker network a Docker place's containers join (`docker run --network`); create it on the machine first. Docker's `host` and `none` networks are refused. See [Trade-offs](#trade-offs) for keeping jobs off your local network |
 | `priority` | its machine's | the place's [priority level](#priority-levels) |
 
 A place that serves several pools can run each on its own image. For example,
