@@ -62,6 +62,9 @@ type AgentRun struct {
 	Image    string
 	// Switch is the Hyper-V switch a Hyper-V place joins.
 	Switch string
+	// Network is the Docker network a Docker place's container joins, or
+	// empty for Docker's default bridge.
+	Network string
 	// ToolCache is the runner's tool cache for a host or tart place.
 	ToolCache   string
 	BootTimeout time.Duration
@@ -172,6 +175,7 @@ func AgentMain(args []string) int {
 	fs.IntVar(&a.DiskGB, "disk-gb", 0, "a KVM place's disk size, 40 GB by default, or the size a tart clone or Hyper-V disk grows to")
 	fs.StringVar(&a.Image, "image", "", "the runner image, a KVM or Hyper-V place's base disk image, the tart image a tart place clones, or the image an Apple container place starts from")
 	fs.StringVar(&a.Switch, "switch", config.DefaultSwitch, "the Hyper-V switch a Hyper-V place joins")
+	fs.StringVar(&a.Network, "network", "", "the Docker network a Docker place's container joins; Docker's default bridge when empty")
 	fs.StringVar(&a.ToolCache, "tool-cache", "", "the runner's tool cache: a host place's, kept between jobs (in the place's folder by default), or a folder inside a tart clone")
 	boot := fs.Int("boot-timeout", 300, "seconds a KVM, tart or Hyper-V place may take to boot")
 	guestCheck := fs.Int("guest-check", 30, "seconds between readings of a tart clone's boot session")

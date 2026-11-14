@@ -120,6 +120,42 @@ func TestPoolImagesNoJobCouldRunOnAreRefused(t *testing.T) {
 	}
 }
 
+// Intent (README, "Setup file", network): a place that names a Docker
+// network is refused when the setup loads unless it is a Docker place and
+// the name is one Docker takes as a network's.
+func TestDockerNetworksNoPlaceCouldJoinAreRefused(t *testing.T) {
+	for _, tc := range []struct {
+		why  string
+		p    Place
+		want string
+	}{
+		{"a host place", Place{Provider: ProviderHost, Network: "runner-jobs"},
+			`place "lima-1": only a Docker place joins a Docker network`},
+		{"another container's network", Place{Provider: ProviderDocker, Network: "container:proxy"},
+			`place "lima-1": a Docker network's name starts with a letter or digit`},
+		{"two words", Place{Provider: ProviderDocker, Network: "runner jobs"},
+			`place "lima-1": a Docker network's name starts with a letter or digit`},
+		{"a leading dash", Place{Provider: ProviderDocker, Network: "-jobs"},
+			`place "lima-1": a Docker network's name starts with a letter or digit`},
+		{"the machine's own network", Place{Provider: ProviderDocker, Network: "host"},
+			`place "lima-1": a Docker place can't join Docker's "host" network`},
+		{"no network", Place{Provider: ProviderDocker, Network: "none"},
+			`place "lima-1": a Docker place can't join Docker's "none" network`},
+		{"a Docker network", Place{Provider: ProviderDocker, Network: "runner-jobs_1.lan"}, ""},
+	} {
+		cfg := initialSetup(t)
+		tc.p.ID, tc.p.Pools, tc.p.Cores, tc.p.MemoryMB = "lima-1", []string{"ru-linux"}, 2, 2048
+		cfg.Machines = []Machine{{Name: "lima", SSH: []string{"ci@lima"}, Places: []Place{tc.p}}}
+		err := cfg.Validate()
+		if tc.want == "" && err != nil {
+			t.Errorf("%s: refused: %v", tc.why, err)
+		}
+		if tc.want != "" && (err == nil || !strings.HasPrefix(err.Error(), tc.want)) {
+			t.Errorf("%s: validate said %v, want %q", tc.why, err, tc.want)
+		}
+	}
+}
+
 // Intent (README, "Updating runner-up": the setup names a runner-up version
 // and each platform's SHA-256): a release named as the release workflow tags
 // it, with each platform's archive SHA-256 as its checksums.txt lists it, is

@@ -981,6 +981,27 @@ func TestSpareRunnerGivenAJobAsItsJobIsCancelledKeepsRunning(t *testing.T) {
 	e.noSecrets(seen.jits)
 }
 
+// Intent (README, "Setup file", network): a Docker place that names a Docker
+// network runs each job's container on that network, so a firewall on the
+// network's bridge applies to the place's jobs.
+func TestDockerPlaceRunsItsJobsOnItsNetwork(t *testing.T) {
+	e := newE2E(t)
+	e.cfg.Machines[0].Places[0].Network = "runner-jobs"
+	e.save()
+	e.actions.send(scaleset.JobAvailable{JobMessageBase: jobMessage(verifyJob(t), scaleset.MessageTypeJobAvailable)})
+	e.serve()
+	e.eventually("a container starts for the job", func() bool { pid, _ := e.container(); return pid > 0 })
+	want := " --network runner-jobs --entrypoint /bin/sh " + agent.DefaultDockerImage + " "
+	if docker := e.lines(filepath.Join(e.dir, "docker", "docker.log")); !slices.ContainsFunc(docker, func(l string) bool {
+		return strings.HasPrefix(l, "run ") && strings.Contains(l, want)
+	}) {
+		t.Errorf("docker ran %q, want a run with %q", docker, want)
+	}
+	if code := e.stop(); code != 0 {
+		t.Fatalf("the coordinator exited %d on SIGTERM", code)
+	}
+}
+
 // Intent (README, "Setup file", poolImages): a place serving two pools runs
 // each pool's job on that pool's image - two Ubuntu releases on the same place,
 // picked by the label the job asks for - and stays one place with one share of

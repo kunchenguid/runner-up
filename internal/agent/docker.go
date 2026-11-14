@@ -76,6 +76,9 @@ func dockerArgs(a *AgentRun, l runnerLaunch, hook string) []string {
 	for _, env := range l.Env {
 		args = append(args, "-e", env)
 	}
+	if a.Network != "" {
+		args = append(args, "--network", a.Network)
+	}
 	return append(args, "--entrypoint", "/bin/sh", image, "-c", dockerEntry, "runner-up", "/home/runner/run.sh")
 }
 

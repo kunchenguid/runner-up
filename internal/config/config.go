@@ -201,6 +201,9 @@ type Place struct {
 	// Switch is the Hyper-V virtual switch a Hyper-V place's virtual machine
 	// joins; defaultSwitch when empty.
 	Switch string `json:"switch,omitempty"`
+	// Network is the Docker network a Docker place's containers join (docker
+	// run --network); Docker's default bridge when empty.
+	Network string `json:"network,omitempty"`
 	// ToolCache is the runner's tool cache (RUNNER_TOOL_CACHE), where
 	// actions such as setup-node keep the tools they download. A host place
 	// keeps it between jobs, in its folder under the agent's when empty, so
@@ -295,6 +298,10 @@ func DefaultConfigPath() string {
 
 // winAbs matches a full Windows path on a drive.
 var winAbs = regexp.MustCompile(`^[A-Za-z]:\\[^\\]`)
+
+// dockerNetworkName is a name Docker accepts for a network; it also keeps
+// docker's other --network forms, such as container:<name>, out.
+var dockerNetworkName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 // MaxPlaceID keeps a place's id short enough for the names Windows gives
 // what it makes for the place.
@@ -525,6 +532,18 @@ func (c *Config) Validate() error {
 			}
 			if p.Switch != "" && p.Provider != ProviderHyperV {
 				return fmt.Errorf("place %q: only a Hyper-V place joins a switch", p.ID)
+			}
+			if p.Network != "" && p.Provider != ProviderDocker {
+				return fmt.Errorf("place %q: only a Docker place joins a Docker network", p.ID)
+			}
+			if p.Network != "" && !dockerNetworkName.MatchString(p.Network) {
+				return fmt.Errorf("place %q: a Docker network's name starts with a letter or digit and has only letters, digits, _, . and -", p.ID)
+			}
+			// host would give a job the machine's own network, which this
+			// setting exists to keep it off; none leaves the runner unable to
+			// reach GitHub.
+			if p.Network == "host" || p.Network == "none" {
+				return fmt.Errorf("place %q: a Docker place can't join Docker's %q network: name one created for its jobs", p.ID, p.Network)
 			}
 			if p.ToolCache != "" {
 				if p.Provider != ProviderHost && p.Provider != ProviderTart {

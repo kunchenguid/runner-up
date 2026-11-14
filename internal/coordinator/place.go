@@ -221,6 +221,9 @@ func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	if p.Switch != "" {
 		args = append(args, "--switch", p.Switch)
 	}
+	if p.Network != "" {
+		args = append(args, "--network", p.Network)
+	}
 	if p.ToolCache != "" {
 		args = append(args, "--tool-cache", p.ToolCache)
 	}
