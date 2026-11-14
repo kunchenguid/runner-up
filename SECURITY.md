@@ -17,8 +17,8 @@ Include the version, how you run runner-up, and the steps to reproduce.
   is in `internal/release/key.go`; the private half lives only in the `release`
   environment's secret. If you suspect the key leaked, report it as above.
 - **A runner's one-time registration** reaches it only through paths documented
-  in `AGENTS.md` and the README; the coordinator stores no GitHub token and asks
-  `gh auth token` for each session.
+  in `AGENTS.md` and the README; the coordinator stores no GitHub token (see the
+  README's sign-in note for when it asks `gh auth token`).
 - **Pull requests from forks** are blocked from running jobs by the fork guard
   unless the setup file sets `allowForkPullRequests`.
 

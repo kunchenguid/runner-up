@@ -27,7 +27,7 @@ User-facing behavior: [README.md](README.md). Each test's intent is in the comme
 - Every runner starts with the fork guard as its job-started hook unless `allowForkPullRequests` is set.
 - A place is busy exactly while some process holds its lock; running jobs outlive a coordinator stop.
 - Resource reservations: see README.md, "Setup file" and "Borrowing a virtual Mac".
-- The coordinator stores no token; it asks `gh auth token` for each session.
+- The coordinator stores no token; it asks `gh auth token` for each session and each sign-in a session's client makes (`ghSignIn` in `internal/coordinator/github.go`).
 - The Windows service installs only a release whose `checksums.txt` the release signing key signed; its public half is in `internal/release/key.go`, its private half only in the `release` environment's secret.
 - Recorded GitHub payloads in `testdata/` are renamed; keep them free of real repository, account and machine names.
 
