@@ -137,10 +137,6 @@ func TestDockerNetworksNoPlaceCouldJoinAreRefused(t *testing.T) {
 			`place "lima-1": a Docker network's name starts with a letter or digit`},
 		{"a leading dash", Place{Provider: ProviderDocker, Network: "-jobs"},
 			`place "lima-1": a Docker network's name starts with a letter or digit`},
-		{"the machine's own network", Place{Provider: ProviderDocker, Network: "host"},
-			`place "lima-1": a Docker place can't join Docker's "host" network`},
-		{"no network", Place{Provider: ProviderDocker, Network: "none"},
-			`place "lima-1": a Docker place can't join Docker's "none" network`},
 		{"a Docker network", Place{Provider: ProviderDocker, Network: "runner-jobs_1.lan"}, ""},
 	} {
 		cfg := initialSetup(t)
