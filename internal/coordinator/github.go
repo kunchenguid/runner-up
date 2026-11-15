@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -25,21 +26,55 @@ const sessionCleanupTimeout = 5 * time.Second
 // ClientFactory makes a scale set client for a repository or organization.
 type ClientFactory func(ctx context.Context, target string) (*scaleset.Client, error)
 
-// GhClients makes clients that sign in with the GitHub command line's token,
-// read afresh for every session, so a new gh sign-in takes effect at the next
-// session.
+// GhClients makes clients that sign in with the GitHub command line's token.
+// gh is asked when a session opens, so a missing sign-in fails it plainly,
+// and again each time the client signs in to GitHub, so a token gh renews
+// takes effect without a new session.
 func GhClients(token tokenSource) ClientFactory {
 	return func(ctx context.Context, target string) (*scaleset.Client, error) {
-		t, err := token(ctx)
-		if err != nil {
+		if _, err := token(ctx); err != nil {
 			return nil, err
 		}
-		return scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
-			GitHubConfigURL:     "https://github.com/" + target,
-			PersonalAccessToken: t,
-			SystemInfo:          scaleset.SystemInfo{System: "runner-up", Version: version.Version, Subsystem: "coordinator"},
-		})
+		return ghClient("https://github.com/"+target, token)
 	}
+}
+
+// ghTokenPlaceholder is the token a scale set client holds; ghSignIn sends
+// gh's token in its place.
+const ghTokenPlaceholder = "gh-auth-token"
+
+// ghClient is a scale set client for configURL that signs in with token, read
+// afresh at each sign-in.
+func ghClient(configURL string, token tokenSource) (*scaleset.Client, error) {
+	return scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
+		GitHubConfigURL:     configURL,
+		PersonalAccessToken: ghTokenPlaceholder,
+		SystemInfo:          scaleset.SystemInfo{System: "runner-up", Version: version.Version, Subsystem: "coordinator"},
+	}, scaleset.WithHTTPClient(ghSignIn{token: token, next: scaleset.NewHTTPClient(scaleset.HTTPClientConfig{})}))
+}
+
+// ghSignIn sends a scale set client's requests, with gh's current token in
+// place of the placeholder. The client sends its token only to ask GitHub for
+// a runner registration token, which it does when its Actions service token
+// nears its end, about hourly. A session's requests ride on that client, so
+// a token read once would fail them all once it expired, as a GitHub App
+// installation token does after an hour.
+type ghSignIn struct {
+	token tokenSource
+	next  scaleset.HTTPClient
+}
+
+func (s ghSignIn) Do(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("Authorization") != "Bearer "+ghTokenPlaceholder {
+		return s.next.Do(req)
+	}
+	token, err := s.token(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	signed := req.Clone(req.Context())
+	signed.Header.Set("Authorization", "Bearer "+token)
+	return s.next.Do(signed)
 }
 
 // setClient is one scale set's live session.
