@@ -221,6 +221,11 @@ func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	if p.Switch != "" {
 		args = append(args, "--switch", p.Switch)
 	}
+	// A Linux guest is the agent's default, which agents older than the
+	// flag run too.
+	if p.Guest == config.GuestWindows {
+		args = append(args, "--guest", p.Guest)
+	}
 	if p.ToolCache != "" {
 		args = append(args, "--tool-cache", p.ToolCache)
 	}

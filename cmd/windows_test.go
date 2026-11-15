@@ -45,6 +45,23 @@ func TestWindowsCommandLineReadsTheSameInCmdAndPowerShell(t *testing.T) {
 	}
 }
 
+// Intent (README, "Windows machines": a Hyper-V place set to a Windows guest
+// boots the owner's Windows image): the agent hears a Windows guest from the
+// coordinator, while a Linux guest's command line stays the one agents older
+// than Windows guests read.
+func TestHyperVPlaceTellsTheAgentItsGuest(t *testing.T) {
+	cfg := initialSetup(t)
+	head := `runner-up agent run --provider hyperv --place win-pc-1 --cores 4 --memory 8192 --boot-timeout ` + strconv.Itoa(cfg.BootTimeoutSeconds) +
+		` --image C:\runner-up\win11.vhdx`
+	for guest, want := range map[string]string{"": head, config.GuestLinux: head, config.GuestWindows: head + " --guest windows"} {
+		p := config.Place{ID: "win-pc-1", Provider: config.ProviderHyperV, Cores: 4, MemoryMB: 8192, Image: `C:\runner-up\win11.vhdx`, Guest: guest}
+		argv := coordinator.AgentCommand(winPC, coordinator.RunArgs(cfg, p, "ru-linux")...)
+		if line := argv[len(argv)-1]; line != want {
+			t.Errorf("a %q guest's job runs\n%s\nwant\n%s", guest, line, want)
+		}
+	}
+}
+
 // Intent (README, "Setup file", poolImages): the same Hyper-V places run Ubuntu
 // 24.04 and 26.04 jobs, each on the base disk of the pool its job asked for,
 // with the same share of the PC whichever disk boots.

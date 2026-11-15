@@ -30,16 +30,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/testrun"
 )
 
 func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 	bsdtar := discReader(t)
-	seed, err := hypervSeed("win-pc-1", "x64", hypervPlaceLaunch(), time.Unix(1793230000, 0))
+	label, seed, err := hypervDisc(&AgentRun{Place: "win-pc-1", Cores: 4, MemoryMB: 8192}, "x64", time.Unix(1793230000, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	iso, err := seedISO(seed)
+	iso, err := seedISO(label, seed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +69,60 @@ func TestSeedDiscReadsAsCloudInitsNoCloudSeed(t *testing.T) {
 	// cloud-init finds its seed by the volume label.
 	if label := strings.TrimSpace(string(iso[16*2048+40 : 16*2048+72])); label != "cidata" {
 		t.Errorf("the disc is labelled %q, want cidata", label)
+	}
+}
+
+// Intent (README, "Windows machines": a Windows guest's image runs guest.ps1
+// from the root of the seed disc, and its fork guard is runner-up's own
+// fork-guard command): the seed disc of a Hyper-V place set to a Windows
+// guest holds the guest program, filled in with every value, and the agent's
+// own program byte for byte, and nothing else. (Windows's own reading of the
+// disc is TestWindowsReadsTheGuestsSeedDisc; what the guest program does is
+// TestWindowsGuestRunsOnlyThePinnedRunnerWithTheForkGuard.)
+func TestWindowsGuestDiscHoldsTheGuestProgramAndRunnerUp(t *testing.T) {
+	bsdtar := discReader(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &AgentRun{Place: "win-pc-1", Guest: config.GuestWindows, Cores: 4, MemoryMB: 8192, Self: self}
+	label, files, err := hypervDisc(a, "x64", time.Unix(1793230000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	iso, err := seedISO(label, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "seed.iso")
+	os.WriteFile(path, iso, 0o600)
+	list, err := testrun.Command(t, bsdtar, "-tf", path).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range strings.Fields(string(list)) {
+		if f != "." {
+			got = append(got, f)
+		}
+	}
+	if strings.Join(got, " ") != "guest.ps1 runner-up.exe" {
+		t.Errorf("the disc holds %q, want guest.ps1 and runner-up.exe", got)
+	}
+	guest, err := testrun.Command(t, bsdtar, "-xOf", path, "guest.ps1").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guest) == 0 || regexp.MustCompile(`@[A-Z_0-9]+@`).Match(guest) {
+		t.Errorf("the disc's guest program has a value left unfilled:\n%s", guest)
+	}
+	runnerUp, err := testrun.Command(t, bsdtar, "-xOf", path, "runner-up.exe").Output()
+	if err != nil || !bytes.Equal(runnerUp, program) {
+		t.Errorf("the disc's runner-up.exe is %d bytes (%v), want the agent's own %d", len(runnerUp), err, len(program))
 	}
 }
 

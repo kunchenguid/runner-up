@@ -58,11 +58,11 @@ func (p hypervProvider) run(ctx context.Context, a *AgentRun, jit string, out io
 	if err != nil {
 		return err
 	}
-	seed, err := hypervSeed(a.Place, runnerArch(), p.launch(a), time.Now())
+	label, files, err := hypervDisc(a, runnerArch(), time.Now())
 	if err != nil {
 		return err
 	}
-	iso, err := seedISO(seed)
+	iso, err := seedISO(label, files)
 	if err != nil {
 		return err
 	}

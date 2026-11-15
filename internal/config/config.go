@@ -37,9 +37,9 @@ const (
 	// standard account runner-up's Windows service makes for the job and
 	// deletes after it.
 	ProviderAccount = "account"
-	// ProviderHyperV runs each job in a new Hyper-V Linux virtual machine on a
-	// Windows machine, on a differencing disk over a base disk image, deleted
-	// after the job.
+	// ProviderHyperV runs each job in a new Hyper-V virtual machine on a
+	// Windows machine, Linux or Windows as the place's Guest says, on a
+	// differencing disk over a base disk image, deleted after the job.
 	ProviderHyperV = "hyperv"
 	// ProviderContainer runs each job in a new Linux guest made with Apple's
 	// container tool on a Mac with Apple silicon, from an image with python3
@@ -52,6 +52,15 @@ var Providers = []string{ProviderDocker, ProviderKVM, ProviderTart, ProviderHost
 
 // WindowsProviders run on Windows machines, and only there.
 var WindowsProviders = []string{ProviderAccount, ProviderHyperV}
+
+// The systems a Hyper-V place's virtual machine runs (Place.Guest).
+const (
+	// GuestLinux boots a Linux disk that cloud-init sets up, the default.
+	GuestLinux = "linux"
+	// GuestWindows boots a Windows disk that signs a user named runner in to
+	// its desktop and starts runner-up's guest program from the seed disc.
+	GuestWindows = "windows"
+)
 
 // Config is the whole setup. `runner-up init` and `runner-up machine add`
 // write it; a person may edit it too. It never holds a token: the coordinator
@@ -201,6 +210,9 @@ type Place struct {
 	// Switch is the Hyper-V virtual switch a Hyper-V place's virtual machine
 	// joins; defaultSwitch when empty.
 	Switch string `json:"switch,omitempty"`
+	// Guest is the system a Hyper-V place's images run: GuestLinux when
+	// empty, or GuestWindows.
+	Guest string `json:"guest,omitempty"`
 	// ToolCache is the runner's tool cache (RUNNER_TOOL_CACHE), where
 	// actions such as setup-node keep the tools they download. A host place
 	// keeps it between jobs, in its folder under the agent's when empty, so
@@ -525,6 +537,14 @@ func (c *Config) Validate() error {
 			}
 			if p.Switch != "" && p.Provider != ProviderHyperV {
 				return fmt.Errorf("place %q: only a Hyper-V place joins a switch", p.ID)
+			}
+			if p.Guest != "" {
+				if p.Provider != ProviderHyperV {
+					return fmt.Errorf("place %q: only a Hyper-V place sets its guest", p.ID)
+				}
+				if p.Guest != GuestLinux && p.Guest != GuestWindows {
+					return fmt.Errorf("place %q: guest must be %s or %s", p.ID, GuestLinux, GuestWindows)
+				}
 			}
 			if p.ToolCache != "" {
 				if p.Provider != ProviderHost && p.Provider != ProviderTart {

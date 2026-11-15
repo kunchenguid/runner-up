@@ -86,7 +86,8 @@ function Remove-RunnerUpVM([string]$Name) {
 }
 
 # A differencing disk over Parent, which nothing changes, grown to at least
-# SizeBytes; cloud-init grows the VM's partition to fill it.
+# SizeBytes; cloud-init grows a Linux VM's partition to fill it, while Windows
+# keeps the partition its image has.
 function New-RunnerUpDisk([string]$Path, [string]$Parent, [uint64]$SizeBytes) {
     $ims = Get-CimInstance -Namespace $script:ns -ClassName Msvm_ImageManagementService
     $sd = New-CimInstance -Namespace $script:ns -ClassName Msvm_VirtualHardDiskSettingData -ClientOnly -Property @{
@@ -99,11 +100,12 @@ function New-RunnerUpDisk([string]$Path, [string]$Parent, [uint64]$SizeBytes) {
     }
 }
 
-# A generation 2 VM with secure boot trusting Ubuntu's signed shim, static
-# memory, no checkpoints, its disk and seed disc, one adapter on Switch and
-# its second serial port on the named pipe Pipe.
+# A generation 2 VM with secure boot under the template SecureBootTemplate,
+# static memory, no checkpoints, its disk and seed disc, one adapter on
+# Switch and its second serial port on the named pipe Pipe.
 function New-RunnerUpVM {
-    param([string]$Name, [string]$Dir, [string]$Vhd, [string]$Dvd, [long]$MemoryMB, [int]$Cpu, [string]$Switch, [string]$Pipe)
+    param([string]$Name, [string]$Dir, [string]$Vhd, [string]$Dvd, [long]$MemoryMB, [int]$Cpu, [string]$Switch, [string]$Pipe,
+          [string]$SecureBootTemplate)
     $sw = Get-CimInstance -Namespace $script:ns -ClassName Msvm_VirtualEthernetSwitch -Filter "ElementName='$($Switch -replace "'", "''")'"
     if (-not $sw) { throw "Hyper-V has no switch named $Switch" }
     $vsms = Get-RunnerUpVsms
@@ -112,7 +114,7 @@ function New-RunnerUpVM {
         VirtualSystemSubType = 'Microsoft:Hyper-V:SubType:2'
         ConfigurationDataRoot = $Dir; SnapshotDataRoot = $Dir; SwapFileDataRoot = $Dir
         SecureBootEnabled = $true
-        SecureBootTemplateId = '272e7447-90a4-4563-a4b9-8e4ab00526ce' # MicrosoftUEFICertificateAuthority
+        SecureBootTemplateId = $SecureBootTemplate
         UserSnapshotType = [uint16]2                                    # checkpoints off
         AutomaticStartupAction = [uint16]2                              # stays off when Windows starts
         AutomaticShutdownAction = [uint16]2                             # turned off when Windows stops

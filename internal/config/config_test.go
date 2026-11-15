@@ -209,6 +209,37 @@ func TestWindowsSetupThatTheShellWouldChangeIsRefused(t *testing.T) {
 	}
 }
 
+// Intent (README, "Windows machines": a Hyper-V place runs Linux or Windows
+// guests, set by its guest): a Hyper-V place takes guest linux or windows,
+// and Linux when it sets none; a guest on another kind of place, or one no
+// Hyper-V place runs, is refused before any job.
+func TestOnlyAHyperVPlaceSetsItsGuest(t *testing.T) {
+	setup := func(p Place) *Config {
+		p.ID, p.Cores, p.MemoryMB, p.Pools = "win-pc-1", 4, 8192, []string{"ru-linux"}
+		cfg := initialSetup(t)
+		cfg.Machines = []Machine{{Name: "pc", OS: "windows", SSH: []string{"ci@pc"}, Places: []Place{p}}}
+		return cfg
+	}
+	for _, guest := range []string{"", GuestLinux, GuestWindows} {
+		if err := setup(Place{Provider: ProviderHyperV, Image: `C:\runner-up\win11.vhdx`, Guest: guest}).Validate(); err != nil {
+			t.Errorf("a Hyper-V place with guest %q was refused: %v", guest, err)
+		}
+	}
+	for _, tc := range []struct {
+		why  string
+		p    Place
+		want string
+	}{
+		{"an account place", Place{Provider: ProviderAccount, Guest: GuestWindows}, `place "win-pc-1": only a Hyper-V place sets its guest`},
+		{"a guest no Hyper-V place runs", Place{Provider: ProviderHyperV, Image: `C:\runner-up\win11.vhdx`, Guest: "Windows 11"},
+			`place "win-pc-1": guest must be linux or windows`},
+	} {
+		if err := setup(tc.p).Validate(); err == nil || err.Error() != tc.want {
+			t.Errorf("%s: validate said %v, want %q", tc.why, err, tc.want)
+		}
+	}
+}
+
 // Intent (README, "Setup file", priority; asked for as levels where 0 is
 // used first, then 1, then 2): a place takes its machine's priority unless it
 // sets its own, unset is 0, and a negative priority, or priorities that order

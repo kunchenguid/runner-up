@@ -11,27 +11,57 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf16"
 )
 
-// A Hyper-V place runs its job in a fresh Linux VM on a Windows machine: a
+// A Hyper-V place runs its job in a fresh VM on a Windows machine: a
 // generation 2 VM on a differencing disk over the place's base disk, which
 // nothing changes, joined to a Hyper-V switch (the Default Switch, with its
-// own address translation, unless the place names another). cloud-init sets
-// it up at boot from a seed disc the agent writes: a user named runner, with
+// own address translation, unless the place names another), with a seed disc
+// the agent writes.
+//
+// A Linux guest boots under secure boot trusting Ubuntu's signed shim, and
+// cloud-init sets it up from the seed disc: a user named runner, with
 // passwordless sudo as on GitHub's own runners, and runner-up's guest program
-// (hyperv-guest.py). The registration and the runner's output travel over the
-// VM's second serial port, which Hyper-V joins to a named pipe on the machine:
-// no network path from the machine into the VM is needed. The VM and its
-// folder are deleted before and after every job.
+// (hyperv-guest.py).
+//
+// A Windows guest boots under secure boot trusting Windows. Its image signs
+// the standard user runner in to its desktop and, at that sign-in, runs
+// guest.ps1 from the seed disc, which also holds the agent's own program for
+// the fork guard (hyperv-guest.ps1).
+//
+// Either way, the registration and the runner's output travel over the VM's
+// second serial port, which Hyper-V joins to a named pipe on the machine: no
+// network path from the machine into the VM is needed. The VM and its folder
+// are deleted before and after every job.
 
 //go:embed hyperv.ps1
 var hypervLibrary string
 
 //go:embed hyperv-guest.py
 var hypervGuest string
+
+//go:embed hyperv-guest.ps1
+var hypervWindowsGuest string
+
+// The secure boot templates Hyper-V knows a guest's boot loader by.
+const (
+	// secureBootLinux trusts the Microsoft UEFI CA, which signs Ubuntu's
+	// shim.
+	secureBootLinux = "272e7447-90a4-4563-a4b9-8e4ab00526ce"
+	// secureBootWindows trusts Microsoft Windows.
+	secureBootWindows = "1734c6e8-3154-4dda-ba5f-a874cc483422"
+)
+
+// The files on a Windows guest's seed disc: guest.ps1 is the name the
+// image's sign-in task looks for in the root of each CD drive.
+const (
+	windowsGuestFile   = "guest.ps1"
+	windowsGuestRunner = "runner-up.exe"
+)
 
 // guestReady is the line the guest program says until it has the
 // registration.
@@ -81,6 +111,49 @@ func linuxGuest(arch string, l runnerLaunch) (string, error) {
 	).Replace(hypervGuest), nil
 }
 
+// windowsGuest is runner-up's guest program for a Windows guest of arch,
+// filled in for one job: the pinned runner and the runner's launch l. It
+// holds no secret.
+func windowsGuest(arch string, l runnerLaunch) (string, error) {
+	sum, ok := runnerWindowsSHA256[arch]
+	if !ok {
+		return "", fmt.Errorf("no Windows runner release for %s", arch)
+	}
+	hook, guard := "''", "''"
+	if l.Hook != "" {
+		hook, guard = psWord(l.Hook), psQuote(l.Guard)
+	}
+	return strings.NewReplacer(
+		"@RUNNER_URL@", psQuote(runnerURL(runnerZipName(arch))),
+		"@RUNNER_SHA256@", psQuote(strings.ToUpper(sum)),
+		"@HOOK@", hook,
+		"@GUARD@", guard,
+		"@LAUNCH@", psLaunch(l),
+	).Replace(hypervWindowsGuest), nil
+}
+
+// hypervDisc is the seed disc of a's VM, for a guest of arch, as its volume
+// label and files. Neither holds the registration, which comes later over
+// the serial port.
+func hypervDisc(a *AgentRun, arch string, now time.Time) (string, map[string][]byte, error) {
+	l := hypervProvider{}.launch(a)
+	if a.Guest != config.GuestWindows {
+		seed, err := hypervSeed(a.Place, arch, l, now)
+		return "cidata", seed, err
+	}
+	guest, err := windowsGuest(arch, l)
+	if err != nil {
+		return "", nil, err
+	}
+	// Windows runs no program built for another system, so the agent's own
+	// runs in a Windows guest of the machine's architecture.
+	self, err := os.ReadFile(a.Self)
+	if err != nil {
+		return "", nil, err
+	}
+	return "RUNNER_UP", map[string][]byte{windowsGuestFile: []byte(guest), windowsGuestRunner: self}, nil
+}
+
 // hypervCreateScript makes the place's VM in dir, whose seed disc the agent
 // has written, and starts it.
 func hypervCreateScript(a *AgentRun, dir string) string {
@@ -88,12 +161,16 @@ func hypervCreateScript(a *AgentRun, dir string) string {
 	if size <= 0 {
 		size = config.DefaultDiskGB
 	}
+	template := secureBootLinux
+	if a.Guest == config.GuestWindows {
+		template = secureBootWindows
+	}
 	return fmt.Sprintf(`$dir = %[2]s
 New-RunnerUpDisk "$dir\disk.vhdx" %[3]s %[4]d
-$null = New-RunnerUpVM -Name %[1]s -Dir $dir -Vhd "$dir\disk.vhdx" -Dvd "$dir\seed.iso" -MemoryMB %[5]d -Cpu %[6]d -Switch %[7]s -Pipe %[8]s
+$null = New-RunnerUpVM -Name %[1]s -Dir $dir -Vhd "$dir\disk.vhdx" -Dvd "$dir\seed.iso" -MemoryMB %[5]d -Cpu %[6]d -Switch %[7]s -Pipe %[8]s -SecureBootTemplate %[9]s
 Start-RunnerUpVM %[1]s
 `, psQuote(hypervVMName(a.Place)), psQuote(dir), psQuote(a.Image), uint64(size)<<30, a.MemoryMB, a.Cores,
-		psQuote(orDefault(a.Switch, config.DefaultSwitch)), psQuote(hypervPipe(a.Place)))
+		psQuote(orDefault(a.Switch, config.DefaultSwitch)), psQuote(hypervPipe(a.Place)), psQuote(template))
 }
 
 func orDefault(s, fallback string) string {
