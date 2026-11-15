@@ -158,7 +158,8 @@ func TestWindowsGuestRunsOnlyThePinnedRunnerWithTheForkGuard(t *testing.T) {
 			t.Fatalf("the guest program did not run: %v\n%s", err, out)
 		}
 		printed, port, _ = strings.Cut(strings.ReplaceAll(string(out), "\r\n", "\n"), "--- port\n")
-		return home, printed, port
+		// PowerShell ends the port's text with a line break of its own.
+		return home, printed, strings.TrimSuffix(port, "\n")
 	}
 	lines := func(s string) map[string]string {
 		m := map[string]string{}
@@ -262,6 +263,7 @@ func TestWindowsReadsTheGuestsSeedDisc(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $image = Mount-DiskImage -ImagePath %[1]s -PassThru
 try {
     $drive = $null
@@ -273,9 +275,13 @@ try {
 `, psQuote(path))
 	cmd := testrun.Command(t, powershell, encodedScript(script)...)
 	cmd.Env = env
-	out, err := cmd.CombinedOutput()
+	// Only standard output lists the disc; PowerShell reports its progress
+	// on standard error.
+	var errs strings.Builder
+	cmd.Stderr = &errs
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("Windows could not read the disc: %v\n%s", err, out)
+		t.Fatalf("Windows could not read the disc: %v\n%s%s", err, out, errs.String())
 	}
 	want := map[string]string{}
 	for name, b := range files {
