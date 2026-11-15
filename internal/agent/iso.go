@@ -9,12 +9,13 @@ import (
 	"unicode/utf16"
 )
 
-// seedISO writes cloud-init's NoCloud seed for a Hyper-V place: a CD image
-// labelled cidata holding files, in the root folder only. Windows has no
-// program to make one, so runner-up writes it: ISO 9660 with Joliet names,
-// since cloud-init's names (user-data, meta-data) are not plain ISO 9660
-// ones, and Linux reads the Joliet names when both are there.
-func seedISO(files map[string][]byte) ([]byte, error) {
+// seedISO writes a Hyper-V place's seed disc: a CD image labelled label
+// holding files, in the root folder only, such as cloud-init's NoCloud seed,
+// labelled cidata. Windows has no program to make one, so runner-up writes
+// it: ISO 9660 with Joliet names, since names such as cloud-init's
+// (user-data, meta-data) are not plain ISO 9660 ones, and Linux and Windows
+// read the Joliet names when both are there.
+func seedISO(label string, files map[string][]byte) ([]byte, error) {
 	const sector = 2048
 	names := make([]string, 0, len(files))
 	for name := range files {
@@ -138,7 +139,7 @@ func seedISO(files map[string][]byte) ([]byte, error) {
 		copy(d[1:6], "CD001")
 		d[6] = 1
 		copy(d[8:40], text("", 32))
-		copy(d[40:72], text("cidata", 32))
+		copy(d[40:72], text(label, 32))
 		both32(d[80:], total)
 		both16(d[120:], 1)
 		both16(d[124:], 1)

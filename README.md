@@ -204,7 +204,8 @@ runner-up is young. Read this before you trust it with your jobs.
   places on a Mac, a job running on through a coordinator restart, and a
   crashed place's cleanup.
 - **Proven only in part:** Hyper-V places have run only a check's test jobs,
-  not yet anyone's daily work. Apple container places have run the runner
+  not yet anyone's daily work, and their Windows guests pass their tests on
+  Windows but have not yet run a real job. Apple container places have run the runner
   with a stand-in registration, not yet a real job. Account places on Windows pass their tests but
   have not yet run a real job. Changing the setup while the coordinator runs
   is proven by end-to-end tests with stand-ins for GitHub, ssh and Docker,
@@ -334,6 +335,28 @@ On each Windows machine (Windows 10, 11 or Server 2019 and later, x86-64):
   as a login would: set `RUNNER_TOOL_CACHE` there for tools you install in
   advance, as GitHub's Ubuntu images do.
 
+  A Hyper-V place set to a Windows guest (`"guest": "windows"`) boots a
+  Windows disk you build instead, and runs each job in that Windows's
+  desktop session, where the job can open windows. The disk is a generation
+  2 Windows of the machine's architecture, such as Windows 11, installed so
+  that it boots under Hyper-V's Microsoft Windows secure boot template
+  without a TPM, and set up so that:
+
+  - at every boot, Windows signs a standard account named `runner` in to its
+    desktop, with no lock screen, sleep or restart for updates on its own;
+  - at that sign-in, a task runs, as `runner` in that session,
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File X:\guest.ps1`,
+    where `X:` is the first CD drive whose root holds `guest.ps1`, once one
+    is there: runner-up's seed disc;
+  - `runner` may open the second serial port, `COM2`, and run
+    `shutdown.exe`.
+
+  The seed disc holds runner-up's guest program, which downloads and checks
+  the pinned runner for each job and turns the VM off after it, and the
+  agent's own `runner-up.exe`, which the fork guard runs. The disk needs no
+  runner. Windows keeps the partition size the disk has, whatever the
+  place's `diskGB`, so make it as large as the jobs need.
+
 runner-up installs itself on each Linux machine and Mac when you add it. A Windows
 machine needs one step first (see [Windows machines](#windows-machines)).
 
@@ -405,8 +428,16 @@ runner-up machine add pc --ssh ci@pc --provider hyperv \
 `machine add` notices the machine runs Windows. Account places run the jobs of
 a pool whose workflows expect Windows (`shell: pwsh`, Git Bash for
 `shell: bash` when Git for Windows is installed). Hyper-V places run Linux
-jobs. A Hyper-V place joins Hyper-V's Default Switch; set `--switch` for
-another.
+jobs, or Windows jobs in a fresh Windows virtual machine when the place sets
+`"guest": "windows"` in the setup file, on a Windows disk built as
+[What you need](#what-you-need) says:
+
+```json
+{"id": "pc-win-1", "provider": "hyperv", "guest": "windows", "pools": ["win11"],
+ "cores": 4, "memoryMB": 8192, "image": "C:\\runner-up\\win11.vhdx"}
+```
+
+A Hyper-V place joins Hyper-V's Default Switch; set `--switch` for another.
 
 ### Running as a service
 
@@ -569,6 +600,7 @@ Each place may also set:
 | `toolCache` | see meaning | the runner's tool cache (`RUNNER_TOOL_CACHE`). A host place keeps it between jobs, in its folder under the agent's by default, so a tool such as `setup-node`'s Node is downloaded once. For a tart place, a folder inside the clone that the image was set up with; by default the runner's own, which every job starts without |
 | `poolImages` | none | another image for some of the place's pools, by pool label. A job of a named pool runs on that image, any other job on `image` |
 | `priority` | its machine's | the place's [priority level](#priority-levels) |
+| `guest` | `linux` | the system a Hyper-V place's disks run: `linux`, or `windows` for a Windows disk (see [What you need](#what-you-need)) |
 
 A place that serves several pools can run each on its own image. For example,
 the same Hyper-V places can run Ubuntu 24.04 and 26.04 jobs:
@@ -1008,8 +1040,9 @@ cannot read. It allows every other job from the repository itself. Set
   network as the machine does. Use host places only for jobs you trust as
   you trust yourself, and keep the fork guard on. A machine gets one host
   place by default.
-- **A tart clone sees runner-up.** A clone's job can read the runner-up
-  program used for resource readings and its fork guard. It holds no secret.
+- **A tart clone and a Windows guest see runner-up.** Their jobs can read
+  the runner-up program their fork guard runs, which a tart clone also uses
+  for resource readings. It holds no secret.
 - **Account places share the machine.** A job account is a standard account
   with no network access to private addresses, but it runs on the machine
   itself, beside its owner. Use Hyper-V places for code you trust less.

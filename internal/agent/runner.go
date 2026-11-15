@@ -87,7 +87,12 @@ func runnerZip(ctx context.Context, cacheDir string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("no Windows runner release for %s", runtime.GOARCH)
 	}
-	return runnerDownload(ctx, cacheDir, fmt.Sprintf("actions-runner-win-%s-%s.zip", arch, runnerVersion), sum)
+	return runnerDownload(ctx, cacheDir, runnerZipName(arch), sum)
+}
+
+// runnerZipName is the runner's Windows release archive for arch.
+func runnerZipName(arch string) string {
+	return fmt.Sprintf("actions-runner-win-%s-%s.zip", arch, runnerVersion)
 }
 
 // runnerURL is where GitHub publishes the runner's release archive name.

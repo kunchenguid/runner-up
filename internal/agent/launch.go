@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kunchenguid/runner-up/internal/config"
 	"github.com/kunchenguid/runner-up/internal/quote"
 )
 
@@ -44,8 +45,8 @@ type runnerLaunch struct {
 	//
 	// A path may start with one variable its start script expands: $HOME/ in
 	// a tart clone, whose user the agent does not know, or $dir\ in an
-	// account job, whose folder the service picks. shellWord and psWord keep
-	// it live.
+	// account job, whose folder the service picks, or in a Windows guest,
+	// whose profile folder Windows picks. shellWord and psWord keep it live.
 	Hook, Guard string
 }
 
@@ -108,7 +109,15 @@ const (
 	linuxGuestGuard = "#!/bin/bash\nexec /usr/bin/python3 " + linuxGuestDir + "/guest.py guard\n"
 )
 
+// A Windows guest runs runner-up's own program, which its guest program
+// copies from the seed disc into $dir, a folder in the user's profile, beside
+// the hook. The runner runs a .ps1 hook with pwsh, or powershell without it.
+const windowsGuestGuard = "& (Join-Path $PSScriptRoot '" + windowsGuestRunner + "') fork-guard\nexit $LASTEXITCODE\n"
+
 func (hypervProvider) launch(a *AgentRun) runnerLaunch {
+	if a.Guest == config.GuestWindows {
+		return a.launch(`$dir\`+guardFile, windowsGuestGuard)
+	}
 	return a.launch(linuxGuestDir+"/fork-guard.sh", linuxGuestGuard)
 }
 
