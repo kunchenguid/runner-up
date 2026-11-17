@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,8 +36,8 @@ import (
 // coordinator's own machine - with the pool's image, hands it the
 // registration, and holds the agent's input open until the runner ends. The
 // agent makes a fresh place, runs one job there and removes the place
-// whatever happened; when its input closes, because this process ended or
-// gave up on the runner, it stops the job and cleans up.
+// whatever happened; when this process sends it "stop", it stops the job and
+// cleans up. When ssh loses the agent, the place runner reconnects (watch).
 
 // PlaceRun is a place's place.json for a job or borrow, written by the coordinator
 // just before launch. For jobs, the place's runner updates it as the job starts.
@@ -232,6 +233,11 @@ func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	if cfg.AllowForkPullRequests {
 		args = append(args, "--allow-forks")
 	}
+	// The agent's own wait is the default, which agents older than the
+	// flag never needed.
+	if cfg.ReconnectSeconds != config.DefaultReconnectSeconds {
+		args = append(args, "--reconnect-wait", strconv.Itoa(cfg.ReconnectSeconds))
+	}
 	return args
 }
 
@@ -296,22 +302,51 @@ type placeRunner struct {
 
 // watch runs the agent, feeding it the registration and holding its input
 // open, and watches its output for the job starting. A runner that runs past
-// the job limit, or that the coordinator asks to stop, is stopped by closing
-// the agent's input; one that does not stop then is killed. A runner no job
-// reached in time is the coordinator's to stop: it removes the runner's
-// registration first (Service.giveUp), since GitHub can give the
-// runner a job up to that moment. An agent that says the place failed
-// before a job reached the runner, unasked, failed to start the runner, for
-// the coordinator to rest the place (failedstart.go).
+// the job limit, or that the coordinator asks to stop, is stopped by sending
+// the agent "stop" and closing its input; one that does not stop then is
+// killed. A runner no job reached in time is the coordinator's to stop: it
+// removes the runner's registration first (Service.giveUp), since GitHub can
+// give the runner a job up to that moment. An agent that says the place
+// failed before a job reached the runner, unasked, failed to start the
+// runner, for the coordinator to rest the place (failedstart.go).
+//
+// When ssh loses a machine's agent that had answered, the place keeps
+// running there for reconnectSeconds (the agent's reconnect.go), and so the
+// place runner keeps the place and reconnects with `agent attach` until then.
+// Only once it gives up is the machine out of reach.
 func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int {
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		r.log.Error("agent did not start", "err", err)
-		return agent.ExitFailed
-	}
 	pr, pw := io.Pipe()
-	cmd.Stdout, cmd.Stderr = pw, pw
-	if err := cmd.Start(); err != nil {
+	// stopping closes once the runner is to stop: each agent command still
+	// running is sent "stop".
+	stopping := make(chan struct{})
+	current := cmd
+	start := func(cmd *exec.Cmd, input string) (<-chan error, error) {
+		current = cmd
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return nil, err
+		}
+		cmd.Stdout, cmd.Stderr = pw, pw
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		done := make(chan error, 1)
+		ended := make(chan struct{})
+		// Wait closes the agent's input once it has ended.
+		go func() {
+			io.WriteString(stdin, input)
+			select {
+			case <-stopping:
+				io.WriteString(stdin, agent.StopLine)
+				stdin.Close()
+			case <-ended:
+			}
+		}()
+		go func() { err := cmd.Wait(); close(ended); done <- err }()
+		return done, nil
+	}
+	done, err := start(cmd, jit+"\n")
+	if err != nil {
 		r.log.Error("agent did not start", "err", err)
 		r.markStartFailed()
 		return agent.ExitFailed
@@ -321,10 +356,11 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 		attrs = append(attrs, "image", image)
 	}
 	r.log.Info("agent started", attrs...)
-	// Wait closes the pipe once the agent has ended.
-	go io.WriteString(stdin, jit+"\n")
 	started := make(chan struct{})
 	scanned := make(chan struct{})
+	// heard is set once the agent itself has spoken, so ssh losing it later
+	// lost a running place.
+	var heard atomic.Bool
 	go func() {
 		defer close(scanned)
 		once := sync.Once{}
@@ -332,6 +368,9 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
+			if strings.HasPrefix(line, "runner-up agent: ") {
+				heard.Store(true)
+			}
 			fmt.Fprintln(os.Stdout, line)
 			if text, ok := strings.CutPrefix(line, agent.UsagePrefix); ok {
 				if usage, valid := agent.ParseUsage(text); valid {
@@ -346,60 +385,110 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 		}
 		io.Copy(io.Discard, pr)
 	}()
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait(); pw.Close() }()
 
 	jobTimer := time.NewTimer(r.cfg.Seconds(r.cfg.MaxJobSeconds))
 	defer jobTimer.Stop()
-	var kill <-chan time.Time
-	stopping := false
+	var kill, retry <-chan time.Time
+	var reconnectBy time.Time
+	stopped := false
 	end := func(why string) {
-		if kill != nil {
+		if stopped {
 			return
 		}
 		r.log.Warn(why)
-		stopping = true
-		stdin.Close()
-		kill = time.After(2 * time.Minute)
+		stopped = true
+		close(stopping)
+		if done != nil {
+			kill = time.After(2 * time.Minute)
+		}
 	}
 	gotJob := false
+	finish := func(code int, unreachable bool) int {
+		pw.Close()
+		// Retain the last reading before releasing busy.lock. The agent
+		// can print its completion and exit before this select sees started.
+		<-scanned
+		select {
+		case <-started:
+			gotJob = true
+		default:
+		}
+		r.log.Info("agent ended", "exit", code, "job", gotJob)
+		switch {
+		case unreachable:
+			r.markUnreachable()
+		case !gotJob && code == agent.ExitFailed && !stopped:
+			r.markStartFailed()
+		}
+		if !gotJob {
+			return agent.ExitUnstarted
+		}
+		return agent.ExitDone
+	}
+	remote := !r.cfg.Machine(r.p.Machine).Local()
 	for {
 		select {
 		case err := <-done:
-			// Retain the last reading before releasing busy.lock. The agent
-			// can print its completion and exit before this select sees started.
-			<-scanned
-			select {
-			case <-started:
-				gotJob = true
-			default:
-			}
+			done, kill = nil, nil
 			code := agent.ExitCode(err)
-			r.log.Info("agent ended", "exit", code, "job", gotJob)
 			switch {
-			case code == sshFailed && !r.cfg.Machine(r.p.Machine).Local():
-				r.markUnreachable()
-			case !gotJob && code == agent.ExitFailed && !stopping:
-				r.markStartFailed()
+			case code == agent.ExitGone:
+				r.log.Warn("the place's agent had already ended")
+				return finish(code, false)
+			case code != sshFailed || !remote:
+				return finish(code, false)
+			case stopped || !heard.Load() && reconnectBy.IsZero():
+				// Lost while stopping, or never reached: the agent
+				// stops the place itself.
+				return finish(code, true)
 			}
-			if !gotJob {
-				return agent.ExitUnstarted
+			if reconnectBy.IsZero() {
+				reconnectBy = time.Now().Add(r.cfg.Seconds(r.cfg.ReconnectSeconds))
+				r.log.Warn("lost the machine's agent; the place keeps running there while this reconnects",
+					"machine", r.p.Machine, "until", reconnectBy.Format(time.RFC3339))
 			}
-			return agent.ExitDone
+			if time.Now().After(reconnectBy) {
+				r.log.Warn("could not reconnect to the machine's agent in time")
+				return finish(code, true)
+			}
+			retry = time.After(reconnectEvery)
+		case <-retry:
+			retry = nil
+			argv := AgentCommand(r.cfg.Machine(r.p.Machine), AttachArgs(r.p)...)
+			if done, err = start(exec.Command(argv[0], argv[1:]...), ""); err != nil {
+				r.log.Warn("could not start reconnecting", "err", err)
+				retry = time.After(reconnectEvery)
+				done = nil
+			}
 		case <-started:
 			gotJob = true
 			started = nil
 		case <-jobTimer.C:
 			end("the job ran past the limit; stopping it")
+			if done == nil {
+				return finish(sshFailed, true)
+			}
 		case <-ctx.Done():
 			ctx = context.Background()
 			end("asked to stop; stopping the runner")
+			if done == nil {
+				return finish(sshFailed, true)
+			}
 		case <-kill:
 			r.log.Warn("the agent did not stop; killing it")
-			cmd.Process.Kill()
+			current.Process.Kill()
 			kill = nil
 		}
 	}
+}
+
+// reconnectEvery is how long the place runner waits between tries to
+// reconnect to its machine's agent.
+var reconnectEvery = 5 * time.Second
+
+// AttachArgs are the agent's arguments for reconnecting to place p's run.
+func AttachArgs(p config.Place) []string {
+	return []string{"agent", "attach", "--place", p.ID}
 }
 
 // markStarted records that a job reached the runner, and which: the runner

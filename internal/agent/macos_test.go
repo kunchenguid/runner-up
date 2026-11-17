@@ -484,11 +484,12 @@ func TestHostPlaceRunsOnTheMachineAndEndsEverythingTheJobStarted(t *testing.T) {
 		}
 	}
 
-	// The job starts a process of its own; then the coordinator lets go of
-	// the agent's input, as when it stops the runner or loses the machine.
+	// The job starts a process of its own; then the coordinator stops the
+	// runner.
 	m.touch("go")
 	m.eventually("the job starts its process", a, func() bool { return m.pid("job.pid") > 0 })
 	jobPID := m.pid("job.pid")
+	io.WriteString(a.in, StopLine)
 	a.in.Close()
 	if code := m.exit(a); code != ExitDone {
 		t.Fatalf("the agent exited %d:\n%s", code, a.output())
