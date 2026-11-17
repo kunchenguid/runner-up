@@ -32,10 +32,12 @@ import (
 // `runner-up agent run`. It reads the runner's one-time registration from its
 // first line of input, makes a fresh place with its provider, runs the runner
 // there for one job and removes the place whatever happened. Its input stays
-// open while the coordinator's place runner wants the runner; when it closes -
-// the place runner ended, gave up, or the SSH connection dropped - the agent
-// stops the runner and cleans up. Before making a place it removes anything
-// left of the same place by an agent that was killed outright.
+// open while the coordinator's place runner wants the runner; the place
+// runner stops it with the line "stop". Input that ends without it - the SSH
+// connection dropped - leaves the place running for a while for the place
+// runner to reconnect with `agent attach` (reconnect.go), and stops it if
+// none does. Before making a place it removes anything left of the same place
+// by an agent that was killed outright.
 
 // provider makes a machine's places.
 type provider interface {
@@ -75,6 +77,9 @@ type AgentRun struct {
 	StateDir string
 	// Self is this program, which a place runs as its fork guard.
 	Self string
+	// ReconnectWait is how long a run keeps its place after losing its link
+	// (reconnect.go).
+	ReconnectWait time.Duration
 }
 
 func (a *AgentRun) Dir() string { return filepath.Join(a.StateDir, "places", a.Place) }
@@ -106,7 +111,7 @@ func providerFor(name string) (provider, error) {
 }
 
 // AgentCommands are the agent's commands, the ones AgentMain takes.
-var AgentCommands = []string{"probe", "vms", "run", "clean", "measure", "service-version", "update-service"}
+var AgentCommands = []string{"probe", "vms", "run", "clean", "attach", "measure", "service-version", "update-service"}
 
 // AgentMain is `runner-up agent`.
 func AgentMain(args []string) int {
@@ -123,7 +128,7 @@ func AgentMain(args []string) int {
 		fmt.Fprintln(os.Stderr, usage)
 		return 2
 	}
-	// Only run, clean and measure take more than their name.
+	// Only run, attach, clean and measure take more than their name.
 	switch args[0] {
 	case "service-version", "update-service", "probe", "vms":
 		fs := flag.NewFlagSet("agent "+args[0], flag.ContinueOnError)
@@ -177,6 +182,7 @@ func AgentMain(args []string) int {
 	fs.StringVar(&a.Switch, "switch", config.DefaultSwitch, "the Hyper-V switch a Hyper-V place joins")
 	fs.StringVar(&a.Guest, "guest", config.GuestLinux, "the system a Hyper-V place's image runs: linux or windows")
 	fs.StringVar(&a.ToolCache, "tool-cache", "", "the runner's tool cache: a host place's, kept between jobs (in the place's folder by default), or a folder inside a tart clone")
+	reconnect := fs.Int("reconnect-wait", int(DefaultReconnectWait/time.Second), "seconds a place keeps running after its run's connection is lost, for the coordinator to reconnect")
 	boot := fs.Int("boot-timeout", 300, "seconds a KVM, tart or Hyper-V place may take to boot")
 	guestCheck := fs.Int("guest-check", 30, "seconds between readings of a tart clone's boot session")
 	fs.BoolVar(&a.AllowForks, "allow-forks", false, "run jobs from other repositories' pull requests")
@@ -185,6 +191,7 @@ func AgentMain(args []string) int {
 		return code
 	}
 	a.BootTimeout = time.Duration(*boot) * time.Second
+	a.ReconnectWait = time.Duration(max(*reconnect, 0)) * time.Second
 	a.GuestCheck = time.Duration(max(*guestCheck, 1)) * time.Second
 	if a.StateDir == "" {
 		a.StateDir = filepath.Join(config.DefaultStateDir(), "agent")
@@ -192,6 +199,9 @@ func AgentMain(args []string) int {
 	if a.Place == "" || strings.ContainsAny(a.Place, "/ \t\n") {
 		fmt.Fprintln(os.Stderr, "a plain --place is needed")
 		return 2
+	}
+	if args[0] == "attach" {
+		return agentAttach(a, os.Stdin, os.Stdout)
 	}
 	p, err := providerFor(a.Provider)
 	if err != nil {
@@ -213,23 +223,36 @@ func agentRunPlace(a *AgentRun, p provider, in io.Reader, stdout io.Writer) int 
 	// Once the SSH connection is gone, writing output fails; the agent must
 	// carry on and clean up rather than die of the broken pipe.
 	signal.Ignore(syscall.SIGPIPE)
-	out := &quietWriter{w: stdout}
-	say := func(format string, v ...any) { fmt.Fprintf(out, "runner-up agent: "+format+"\n", v...) }
-
 	r := bufio.NewReader(in)
 	jit, err := r.ReadString('\n')
 	jit = strings.TrimSpace(jit)
 	if jit == "" {
-		say("no runner registration on input (%v)", err)
+		fmt.Fprintf(stdout, "runner-up agent: no runner registration on input (%v)\n", err)
 		return ExitFailed
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	defer stop()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	s := newSession(a.ReconnectWait, cancel)
+	say := s.say
+	first := s.attach(&quietWriter{w: stdout}, nil)
+	go s.readLink(first, r)
+	// A stop signal ends the run on purpose; a hangup is a lost link.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(signals)
 	go func() {
-		io.Copy(io.Discard, r)
-		cancel()
+		for {
+			select {
+			case sig := <-signals:
+				if sig == syscall.SIGHUP {
+					s.lose(first)
+				} else {
+					s.stop()
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
 	}()
 
 	unlock, err := LockPlace(ctx, a)
@@ -238,6 +261,14 @@ func agentRunPlace(a *AgentRun, p provider, in io.Reader, stdout io.Writer) int 
 		return ExitFailed
 	}
 	defer unlock()
+	if closeLinks, err := s.listen(a); err != nil {
+		say("cannot take a reconnect, so a lost connection stops place %s: %v", a.Place, err)
+		s.mu.Lock()
+		s.wait = 0
+		s.mu.Unlock()
+	} else {
+		defer closeLinks()
+	}
 	cleanUp := func() {
 		c, done := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer done()
@@ -246,18 +277,19 @@ func agentRunPlace(a *AgentRun, p provider, in io.Reader, stdout io.Writer) int 
 		}
 	}
 	cleanUp()
-	defer cleanUp()
 	say("making place %s with %s (%d cores, %d MB)", a.Place, a.Provider, a.Cores, a.MemoryMB)
-	if err := p.run(ctx, a, jit, out); err != nil {
+	code := ExitDone
+	if err := p.run(ctx, a, jit, s); err != nil {
 		say("place %s failed: %v", a.Place, err)
-		return ExitFailed
-	}
-	if ctx.Err() != nil {
+		code = ExitFailed
+	} else if ctx.Err() != nil {
 		say("place %s stopped", a.Place)
 	} else {
 		say("place %s finished", a.Place)
 	}
-	return ExitDone
+	cleanUp()
+	s.finish(code)
+	return code
 }
 
 func agentClean(a *AgentRun, p provider) int {
@@ -285,6 +317,7 @@ func agentClean(a *AgentRun, p provider) int {
 func LockPlace(ctx context.Context, a *AgentRun) (func(), error) {
 	path := filepath.Join(a.Dir(), "agent.lock")
 	deadline := time.Now().Add(2 * time.Minute)
+	asked := false
 	for {
 		if err := os.MkdirAll(a.Dir(), 0o700); err != nil {
 			return nil, err
@@ -308,6 +341,12 @@ func LockPlace(ctx context.Context, a *AgentRun) (func(), error) {
 			// The holder before deleted it: lock the file now at path.
 			f.Close()
 			continue
+		}
+		if !asked {
+			// The holder may be a run that lost its link and waits for a
+			// reconnect that will not come, since the place is wanted again.
+			askToLetGo(a)
+			asked = true
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("place %s is still held by another agent", a.Place)
@@ -472,4 +511,6 @@ const (
 	ExitDone      = 0
 	ExitFailed    = 1
 	ExitUnstarted = 3
+	// ExitGone: agent attach found no run holding the place.
+	ExitGone = 4
 )

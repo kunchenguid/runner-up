@@ -753,9 +753,9 @@ func TestCrashedPlaceIsCleanedUpAndItsJobPlacedAgain(t *testing.T) {
 	first, _ := e.container()
 
 	// The place runner dies before the job reaches its runner, as when the
-	// coordinator's machine loses it or the SSH connection drops: the agent
-	// stops the container, the runner nobody used is removed, and the job
-	// gets a new runner in the place.
+	// coordinator's machine loses it: the runner nobody used is removed, and
+	// the job gets a new runner in the place, whose agent has the first one,
+	// still waiting for its place runner to reconnect, stop its container.
 	run, _ := e.placeRun()
 	syscall.Kill(run.PID, syscall.SIGKILL)
 	e.eventually("a second container starts", func() bool { return len(e.registrations()) == 2 })

@@ -60,6 +60,7 @@ On each machine (run by the coordinator):
   agent probe            show the machine's cores, memory and providers
   agent vms              list the macOS virtual machines running here
   agent run|clean        run one job in a place, or clean up after one
+  agent attach           reconnect to a place's run after a dropped connection
   agent measure          run a tart guest's runner and sample its use
   agent service-version  show the version of the Windows service here
   agent update-service   hand the Windows service here a signed release

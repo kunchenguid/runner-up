@@ -94,9 +94,13 @@ type Config struct {
 	// session while the job runs, to end the job if the clone's macOS
 	// restarted.
 	GuestCheckSeconds int `json:"guestCheckSeconds,omitempty"`
-	MaxJobSeconds     int `json:"maxJobSeconds,omitempty"`
-	TickSeconds       int `json:"tickSeconds,omitempty"`
-	LogKeepDays       int `json:"logKeepDays,omitempty"`
+	// ReconnectSeconds is how long a place keeps running after its place
+	// runner lost the SSH connection to its agent, and how long the place
+	// runner tries to reconnect.
+	ReconnectSeconds int `json:"reconnectSeconds,omitempty"`
+	MaxJobSeconds    int `json:"maxJobSeconds,omitempty"`
+	TickSeconds      int `json:"tickSeconds,omitempty"`
+	LogKeepDays      int `json:"logKeepDays,omitempty"`
 	// Release, when set, is the runner-up release the coordinator runs and
 	// copies to every machine as its agent (internal/coordinator/program.go).
 	Release *Release `json:"release,omitempty"`
@@ -367,6 +371,10 @@ func SaveConfig(path string, c *Config) error {
 	return WriteJSON(path, c)
 }
 
+// DefaultReconnectSeconds is the agent's own reconnect wait, so a setup that
+// keeps it passes the agent nothing.
+const DefaultReconnectSeconds = 600
+
 func (c *Config) Defaults() {
 	if c.AnnounceCapacity == 0 {
 		c.AnnounceCapacity = 50
@@ -379,6 +387,9 @@ func (c *Config) Defaults() {
 	}
 	if c.GuestCheckSeconds == 0 {
 		c.GuestCheckSeconds = 30
+	}
+	if c.ReconnectSeconds == 0 {
+		c.ReconnectSeconds = DefaultReconnectSeconds
 	}
 	if c.MaxJobSeconds == 0 {
 		c.MaxJobSeconds = 6 * 60 * 60

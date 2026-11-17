@@ -52,7 +52,7 @@ func newMachines() machines {
 }
 
 // sshFailed is ssh's exit code when it could not reach the machine or lost
-// it. The agent itself exits 0 to 3.
+// it. The agent itself exits 0 to 4.
 const sshFailed = 255
 
 // reachAskEvery is how often the coordinator asks a resting machine's agent.

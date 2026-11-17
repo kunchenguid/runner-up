@@ -505,8 +505,20 @@ picks them up again.
 
 ssh to a machine gives up after ten seconds without an answer
 (`ConnectTimeout=10`), unless the machine's own `ssh` options set
-`ConnectTimeout`. When a place's runner cannot reach its machine's agent,
-because SSH was refused, timed out or dropped, the machine rests. Its places
+`ConnectTimeout`.
+
+A job outlives a dropped connection. When SSH to a running place drops, as
+when the machine's network or VPN restarts, the agent keeps the place and its
+job running for `reconnectSeconds`, ten minutes by default, and holds the
+runner's output. The place's runner keeps the place busy and reconnects to
+the agent every few seconds; once it is back, it gets the held output and
+follows the job to its end. A place nobody reconnects to in that time is
+stopped and removed, and so is one a new run of the same place finds waiting.
+A machine that restarts loses its places' jobs all the same.
+
+When a place's runner cannot reach its machine's agent, because SSH was
+refused or timed out, or stays dropped for `reconnectSeconds`, the machine
+rests. Its places
 take no job, so the coordinator acquires no job and registers no runner for
 them, and the job the runner was started for goes to another place, in line
 from where it was. Once a minute the coordinator asks the machine's agent its
@@ -570,6 +582,7 @@ Besides what `init` and `machine add` write, you can set:
 | `startTimeoutSeconds` | 600 | how long a runner may wait for its job. Then the coordinator removes the runner from its scale set and stops it; a runner GitHub says is running a job keeps it |
 | `bootTimeoutSeconds` | 300 | how long a KVM, tart or Hyper-V place may take to boot |
 | `guestCheckSeconds` | 30 | how often a tart place checks its clone has not restarted |
+| `reconnectSeconds` | 600 | how long a place keeps running after SSH to it drops, for its runner to reconnect |
 | `maxJobSeconds` | 21600 | the longest a job may run |
 | `logKeepDays` | 30 | how long place logs are kept |
 | `release` | none | the runner-up the coordinator and its machines run: see [Updating runner-up](#updating-runner-up) |
