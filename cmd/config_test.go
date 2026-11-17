@@ -99,7 +99,7 @@ func TestMachineAddRefusesMachinesThatCannotRunThePlaces(t *testing.T) {
 		o    placeOptions
 		want string
 	}{
-		{dockerMac, placeOptions{Provider: config.ProviderDocker}, "lima runs darwin; docker places run on Linux machines only"},
+		{dockerMac, placeOptions{Provider: config.ProviderKVM, Image: "noble.img"}, "lima runs darwin; kvm places run on Linux machines only"},
 		{macProbe, placeOptions{Image: "ghcr.io/cirruslabs/macos-sequoia-base:latest"}, "lima cannot run tart places: tart is not installed"},
 		{macTartProbe, placeOptions{}, "a tart place needs --image"},
 		{macTartProbe, placeOptions{Provider: config.ProviderHyperV, Image: `C:\vm\noble.vhdx`}, "lima runs darwin; hyperv places run on Windows machines only"},
@@ -118,6 +118,28 @@ func TestMachineAddRefusesMachinesThatCannotRunThePlaces(t *testing.T) {
 		}
 		if len(cfg.Machines) != 0 {
 			t.Errorf("a refused machine joined the setup: %+v", cfg.Machines)
+		}
+	}
+}
+
+// Intent (README, "What you need", Docker places): Docker Desktop runs Linux
+// containers on a Mac, so machine add takes a Mac with docker ready for
+// docker places, where it once refused them as Linux-only.
+func TestMachineAddTakesDockerPlacesOnAMac(t *testing.T) {
+	lima := config.Machine{Name: "lima", SSH: []string{"ci@lima"}}
+	dockerMac := macTartProbe
+	dockerMac.Docker = "ok"
+	cfg := initialSetup(t)
+	if err := addMachine(cfg, lima, dockerMac, placeOptions{Provider: config.ProviderDocker, Cores: 2, MemoryMB: 4096}); err != nil {
+		t.Fatalf("machine add refused docker places on a Mac: %v", err)
+	}
+	places := cfg.Places()
+	if len(places) == 0 {
+		t.Fatal("the Mac joined with no places")
+	}
+	for _, p := range places {
+		if p.Machine != "lima" || p.Provider != config.ProviderDocker || p.Cores != 2 || p.MemoryMB != 4096 {
+			t.Errorf("place %+v, want a 2-core, 4096 MB docker place on lima", p)
 		}
 	}
 }
