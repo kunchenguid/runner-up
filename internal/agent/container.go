@@ -7,9 +7,12 @@ import (
 	"io"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kunchenguid/runner-up/internal/config"
 )
 
 // An Apple container place runs its job in a fresh Linux guest on a Mac, made
@@ -53,12 +56,30 @@ os.execv(sys.executable, [sys.executable, path, "stdin"])
 func appleContainerName(place string) string { return "runner-up-" + place }
 
 // appleContainerArgs run the place's guest: no secret is among them.
+// The place's own arguments (ContainerArgs) come after runner-up's and before
+// the image; an x86-64 place's guests run under Rosetta.
 func appleContainerArgs(a *AgentRun) []string {
-	return []string{"run", "--interactive", "--rm", "--init",
+	args := []string{"run", "--interactive", "--rm", "--init",
 		"--name", appleContainerName(a.Place), "--label", "runner-up.place=" + a.Place,
 		"--cpus", strconv.Itoa(a.Cores), "--memory", strconv.Itoa(a.MemoryMB) + "M",
-		"--user", "0:0", "--entrypoint", "/usr/bin/python3",
-		a.Image, "-c", containerBootstrap(containerGuestDir)}
+		"--user", "0:0", "--entrypoint", "/usr/bin/python3"}
+	if a.Arch == config.ArchAMD64 {
+		args = append(args, "--arch", "amd64")
+		if !slices.Contains(a.ContainerArgs, "--rosetta") {
+			args = append(args, "--rosetta")
+		}
+	}
+	args = append(args, a.ContainerArgs...)
+	return append(args, a.Image, "-c", containerBootstrap(containerGuestDir))
+}
+
+// containerGuestArch is the runner release a place's guests run: x64 for an
+// x86-64 place, else the Mac's own.
+func containerGuestArch(a *AgentRun) string {
+	if a.Arch == config.ArchAMD64 {
+		return "x64"
+	}
+	return runnerArch()
 }
 
 type appleContainerProvider struct{}
@@ -67,7 +88,7 @@ func (p appleContainerProvider) run(ctx context.Context, a *AgentRun, jit string
 	if a.Image == "" {
 		return errors.New("an Apple container place needs --image, the image its guests start from")
 	}
-	guest, err := linuxGuest(runnerArch(), p.launch(a))
+	guest, err := linuxGuest(containerGuestArch(a), p.launch(a))
 	if err != nil {
 		return err
 	}

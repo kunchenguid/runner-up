@@ -190,6 +190,20 @@ def runner_env(jit, image=None):
     return env
 
 
+# An image may start what its jobs expect before the runner does, such as a
+# Docker daemon: an executable GUEST_START runs as root, once, with no input
+# and the registration not yet in any environment. A failure fails the place.
+GUEST_START = "/etc/runner-up/guest-start"
+
+
+def guest_start(say, wfd):
+    if not os.access(GUEST_START, os.X_OK):
+        return
+    say("running the image's %s" % GUEST_START)
+    subprocess.run([GUEST_START], check=True, stdin=subprocess.DEVNULL,
+                   stdout=wfd, stderr=subprocess.STDOUT)
+
+
 def main():
     if sys.argv[1:] == ["guard"]:
         return run_guard()
@@ -206,6 +220,7 @@ def main():
     try:
         jit = registration(rfd, announce=not container)
         runner = prepare()
+        guest_start(say, wfd)
         env = runner_env(jit, image_environment())
         del jit
         say("starting the runner")
