@@ -312,6 +312,9 @@ func TestContainerPlaceArchAndArgumentsAreChecked(t *testing.T) {
 		{"unknown arch", func(p *Place) { p.Arch = "riscv64" }, "arch must be"},
 		{"runner-up's own", func(p *Place) { p.ContainerArgs = []string{"--memory=64G"} }, "runner-up's own"},
 		{"name", func(p *Place) { p.ContainerArgs = []string{"--name", "x"} }, "runner-up's own"},
+		{"detach in a short group", func(p *Place) { p.ContainerArgs = []string{"-dt"} }, "runner-up's own"},
+		{"tty in a short group", func(p *Place) { p.ContainerArgs = []string{"-it"} }, "runner-up's own"},
+		{"harmless short group", func(p *Place) { p.ContainerArgs = []string{"-pw"} }, ""},
 		{"line break", func(p *Place) { p.ContainerArgs = []string{"--kernel-arg", "a\nb"} }, "one line"},
 		{"not a container place", func(p *Place) { p.Provider = ProviderHost; p.Image = ""; p.Arch = ArchAMD64 }, "only an Apple container place"},
 	} {

@@ -268,15 +268,25 @@ var containerArgsRunnerUpSets = []string{"--name", "--label", "-l", "--cpus", "-
 	"--remove", "--init", "--detach", "-d", "--arch", "-a", "--platform", "--os"}
 
 // checkContainerArgs refuses a ContainerArgs that changes what runner-up
-// sets itself, or that holds a line break.
+// sets itself, alone or in a group of short flags such as -dt, or that holds
+// a line break.
 func checkContainerArgs(args []string) error {
 	for _, a := range args {
 		if strings.ContainsAny(a, "\n\r\x00") {
 			return fmt.Errorf("container argument %q must be one line", a)
 		}
 		name, _, _ := strings.Cut(a, "=")
-		if slices.Contains(containerArgsRunnerUpSets, name) {
-			return fmt.Errorf("container argument %s is runner-up's own; set arch, the pool's size or the image instead", name)
+		names := []string{name}
+		if len(name) > 2 && name[0] == '-' && name[1] != '-' {
+			names = nil
+			for _, letter := range name[1:] {
+				names = append(names, "-"+string(letter))
+			}
+		}
+		for _, n := range names {
+			if slices.Contains(containerArgsRunnerUpSets, n) {
+				return fmt.Errorf("container argument %s is runner-up's own; set arch, the pool's size or the image instead", n)
+			}
 		}
 	}
 	return nil
