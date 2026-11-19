@@ -615,7 +615,7 @@ Each place may also set:
 | `priority` | its machine's | the place's [priority level](#priority-levels) |
 | `guest` | `linux` | the system a Hyper-V place's disks run: `linux`, or `windows` for a Windows disk (see [What you need](#what-you-need)) |
 | `arch` | the Mac's | the architecture an Apple container place's guests run: `arm64`, or `amd64` for x86-64 guests under Rosetta (`container run --arch amd64 --rosetta`), which run the x64 runner; the image must be of that architecture |
-| `containerArgs` | none | more `container run` arguments for an Apple container place's guests, given before the image, such as `--rosetta` or `--cap-add`; ones runner-up sets itself (name, labels, size, user, entry point, architecture) are refused |
+| `containerArgs` | none | more `container run` arguments for an Apple container place's guests, given before the image, such as `--rosetta` or `--cap-add`; ones runner-up sets itself (name, labels, size, user, entry point, input, terminal, removal, init, detach, architecture), also as short flags or in a group such as `-dt`, are refused, as are line breaks |
 
 A place that serves several pools can run each on its own image. For example,
 the same Hyper-V places can run Ubuntu 24.04 and 26.04 jobs:
