@@ -217,6 +217,17 @@ type Place struct {
 	// Guest is the system a Hyper-V place's images run: GuestLinux when
 	// empty, or GuestWindows.
 	Guest string `json:"guest,omitempty"`
+	// Arch is the architecture an Apple container place's guests run: empty
+	// for the Mac's own, or ArchAMD64 for x86-64 guests that Rosetta
+	// translates (`container run --arch amd64 --rosetta`), which run the x64
+	// runner. The image must have that architecture.
+	Arch string `json:"arch,omitempty"`
+	// ContainerArgs are more `container run` arguments for an Apple container
+	// place's guests, given before the image: such as "--rosetta" (x86-64
+	// programs in an arm64 guest), "--cap-add" with a capability, or
+	// "--kernel-arg" with a boot argument. Arguments that runner-up sets
+	// itself are refused.
+	ContainerArgs []string `json:"containerArgs,omitempty"`
 	// ToolCache is the runner's tool cache (RUNNER_TOOL_CACHE), where
 	// actions such as setup-node keep the tools they download. A host place
 	// keeps it between jobs, in its folder under the agent's when empty, so
@@ -240,6 +251,45 @@ type Place struct {
 	// that has one, so a level is tried only once every place below it that
 	// serves the job's pool is full.
 	Level int `json:"-"`
+}
+
+// The architectures an Apple container place's guests may run.
+const (
+	ArchARM64 = "arm64"
+	ArchAMD64 = "amd64"
+)
+
+// containerArgsRunnerUpSets are `container run` options runner-up gives every
+// guest itself (its name and labels, size, user, entry point, input and
+// removal, and the architecture Arch sets): a place's ContainerArgs may not
+// change them.
+var containerArgsRunnerUpSets = []string{"--name", "--label", "-l", "--cpus", "-c", "--memory", "-m",
+	"--user", "-u", "--uid", "--gid", "--entrypoint", "--interactive", "-i", "--tty", "-t", "--rm",
+	"--remove", "--init", "--detach", "-d", "--arch", "-a", "--platform", "--os"}
+
+// checkContainerArgs refuses a ContainerArgs that changes what runner-up
+// sets itself, alone or in a group of short flags such as -dt, or that holds
+// a line break.
+func checkContainerArgs(args []string) error {
+	for _, a := range args {
+		if strings.ContainsAny(a, "\n\r\x00") {
+			return fmt.Errorf("container argument %q must be one line", a)
+		}
+		name, _, _ := strings.Cut(a, "=")
+		names := []string{name}
+		if len(name) > 2 && name[0] == '-' && name[1] != '-' {
+			names = nil
+			for _, letter := range name[1:] {
+				names = append(names, "-"+string(letter))
+			}
+		}
+		for _, n := range names {
+			if slices.Contains(containerArgsRunnerUpSets, n) {
+				return fmt.Errorf("container argument %s is runner-up's own; set arch, the pool's size or the image instead", n)
+			}
+		}
+	}
+	return nil
 }
 
 // Share is what a job reserves of its machine while its place runs.
@@ -555,6 +605,22 @@ func (c *Config) Validate() error {
 				}
 				if p.Guest != GuestLinux && p.Guest != GuestWindows {
 					return fmt.Errorf("place %q: guest must be %s or %s", p.ID, GuestLinux, GuestWindows)
+				}
+			}
+			if p.Arch != "" {
+				if p.Provider != ProviderContainer {
+					return fmt.Errorf("place %q: only an Apple container place sets its arch", p.ID)
+				}
+				if p.Arch != ArchARM64 && p.Arch != ArchAMD64 {
+					return fmt.Errorf("place %q: arch must be %s or %s", p.ID, ArchARM64, ArchAMD64)
+				}
+			}
+			if len(p.ContainerArgs) > 0 {
+				if p.Provider != ProviderContainer {
+					return fmt.Errorf("place %q: only an Apple container place sets container arguments", p.ID)
+				}
+				if err := checkContainerArgs(p.ContainerArgs); err != nil {
+					return fmt.Errorf("place %q: %w", p.ID, err)
 				}
 			}
 			if p.ToolCache != "" {

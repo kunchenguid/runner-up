@@ -230,6 +230,14 @@ func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	if p.ToolCache != "" {
 		args = append(args, "--tool-cache", p.ToolCache)
 	}
+	// Given only when set, so agents older than the flags run the places
+	// that set neither.
+	if p.Arch != "" {
+		args = append(args, "--arch", p.Arch)
+	}
+	for _, c := range p.ContainerArgs {
+		args = append(args, "--container-arg", c)
+	}
 	if cfg.AllowForkPullRequests {
 		args = append(args, "--allow-forks")
 	}

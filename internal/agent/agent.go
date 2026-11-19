@@ -68,8 +68,14 @@ type AgentRun struct {
 	// or config.GuestWindows.
 	Guest string
 	// ToolCache is the runner's tool cache for a host or tart place.
-	ToolCache   string
-	BootTimeout time.Duration
+	ToolCache string
+	// Arch is the architecture an Apple container place's guests run: empty
+	// for the Mac's own, or config.ArchAMD64 for x86-64 guests under Rosetta.
+	Arch string
+	// ContainerArgs are more `container run` arguments for an Apple
+	// container place's guests, before the image.
+	ContainerArgs []string
+	BootTimeout   time.Duration
 	// GuestCheck is how often a tart place reads its clone's boot session.
 	GuestCheck time.Duration
 	AllowForks bool
@@ -183,6 +189,11 @@ func AgentMain(args []string) int {
 	fs.StringVar(&a.Guest, "guest", config.GuestLinux, "the system a Hyper-V place's image runs: linux or windows")
 	fs.StringVar(&a.ToolCache, "tool-cache", "", "the runner's tool cache: a host place's, kept between jobs (in the place's folder by default), or a folder inside a tart clone")
 	reconnect := fs.Int("reconnect-wait", int(DefaultReconnectWait/time.Second), "seconds a place keeps running after its run's connection is lost, for the coordinator to reconnect")
+	fs.StringVar(&a.Arch, "arch", "", "the architecture an Apple container place's guests run: arm64, or amd64 under Rosetta")
+	fs.Func("container-arg", "one more `container run` argument for an Apple container place's guests (repeatable)", func(v string) error {
+		a.ContainerArgs = append(a.ContainerArgs, v)
+		return nil
+	})
 	boot := fs.Int("boot-timeout", 300, "seconds a KVM, tart or Hyper-V place may take to boot")
 	guestCheck := fs.Int("guest-check", 30, "seconds between readings of a tart clone's boot session")
 	fs.BoolVar(&a.AllowForks, "allow-forks", false, "run jobs from other repositories' pull requests")

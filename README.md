@@ -614,6 +614,8 @@ Each place may also set:
 | `poolImages` | none | another image for some of the place's pools, by pool label. A job of a named pool runs on that image, any other job on `image` |
 | `priority` | its machine's | the place's [priority level](#priority-levels) |
 | `guest` | `linux` | the system a Hyper-V place's disks run: `linux`, or `windows` for a Windows disk (see [What you need](#what-you-need)) |
+| `arch` | the Mac's | the architecture an Apple container place's guests run: `arm64`, or `amd64` for x86-64 guests under Rosetta (`container run --arch amd64 --rosetta`), which run the x64 runner; the image must be of that architecture |
+| `containerArgs` | none | more `container run` arguments for an Apple container place's guests, given before the image, such as `--rosetta` or `--cap-add`; ones runner-up sets itself (name, labels, size, user, entry point, input, terminal, removal, init, detach, architecture), also as short flags or in a group such as `-dt`, are refused, as are line breaks |
 
 A place that serves several pools can run each on its own image. For example,
 the same Hyper-V places can run Ubuntu 24.04 and 26.04 jobs:
@@ -867,6 +869,24 @@ through the container tool's own network; block what they should not reach
 on the Mac. Apple's tool gives a guest the cores it asks for as its CPU limit,
 but a guest may list one more processor (`nproc`); jobs should size their
 workers by `RUNNER_UP_CORES`.
+
+Before the runner starts, the guest program runs the image's
+`/etc/runner-up/guest-start` as root, when the image has one and it is
+executable: an image starts there what its jobs expect, such as a Docker
+daemon. It runs once, with no input, before the registration is in any
+environment; a failure fails the place. (Hyper-V Linux guests run it too.)
+
+A place's `arch` and `containerArgs` change how its guests start. With
+`"arch": "amd64"` and an x86-64 image, the guest is an x86-64 Linux that
+Rosetta translates, and runs GitHub's x64 runner: jobs that build or run
+x86-64 programs run on Apple silicon. `"containerArgs": ["--rosetta"]` lets
+an arm64 guest run x86-64 programs. Docker runs in a guest given
+`["--cap-add", "ALL", "--kernel-arg", "sysctl.net.ipv4.ip_forward=1",
+"--kernel-arg", "ipv6.disable=1"]` (the guest's `/proc/sys` is read-only, so
+the forwarding Docker's bridge needs is set at boot) and an image whose
+`guest-start` starts `dockerd` and opens its socket to the runner user, which
+runs with no supplementary groups. The guest is still the boundary: those
+capabilities hold only inside it.
 
 To prioritize a Mac's own jobs over its Linux guests, see `last:` in
 [Order rules](#order-rules).

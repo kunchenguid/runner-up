@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -405,4 +406,46 @@ func waitFor(t *testing.T, path string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("%s never appeared", path)
+}
+
+// An x86-64 place's guests run under Rosetta with the x64 runner, and a
+// place's own arguments come after runner-up's and before the image.
+func TestContainerPlaceArchAndArguments(t *testing.T) {
+	a := containerPlace(t)
+	a.Arch = config.ArchAMD64
+	a.ContainerArgs = []string{"--cap-add", "ALL", "--kernel-arg", "ipv6.disable=1"}
+	args := appleContainerArgs(a)
+	at := func(s string) int { return slices.Index(args, s) }
+	if at("--arch") < 0 || args[at("--arch")+1] != "amd64" || at("--rosetta") < 0 {
+		t.Errorf("an amd64 place's guest is not an x86-64 one under Rosetta: %q", args)
+	}
+	image := at(a.Image)
+	if at("--cap-add") < 0 || at("--cap-add") > image || args[at("--cap-add")+1] != "ALL" ||
+		at("--kernel-arg") > image || args[at("--kernel-arg")+1] != "ipv6.disable=1" {
+		t.Errorf("the place's arguments are not given before its image: %q", args)
+	}
+	if containerGuestArch(a) != "x64" {
+		t.Errorf("an amd64 place's guest runs the %s runner, want x64", containerGuestArch(a))
+	}
+
+	// Rosetta asked for by the place is not asked for twice.
+	a.ContainerArgs = []string{"--rosetta"}
+	n := 0
+	for _, s := range appleContainerArgs(a) {
+		if s == "--rosetta" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("--rosetta given %d times", n)
+	}
+
+	// A place of the Mac's own architecture keeps its runner and adds nothing.
+	b := containerPlace(t)
+	if got := appleContainerArgs(b); slices.Contains(got, "--arch") || slices.Contains(got, "--rosetta") {
+		t.Errorf("a place without arch sets one: %q", got)
+	}
+	if containerGuestArch(b) != runnerArch() {
+		t.Errorf("a place without arch runs the %s runner, want %s", containerGuestArch(b), runnerArch())
+	}
 }

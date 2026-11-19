@@ -298,3 +298,38 @@ func TestPriorityLevels(t *testing.T) {
 		}
 	}
 }
+
+// Arch and container arguments belong to Apple container places, and the
+// arguments may not change what runner-up sets itself.
+func TestContainerPlaceArchAndArgumentsAreChecked(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(p *Place)
+		want string
+	}{
+		{"amd64 ok", func(p *Place) { p.Arch = ArchAMD64 }, ""},
+		{"args ok", func(p *Place) { p.ContainerArgs = []string{"--rosetta", "--cap-add", "ALL"} }, ""},
+		{"unknown arch", func(p *Place) { p.Arch = "riscv64" }, "arch must be"},
+		{"runner-up's own", func(p *Place) { p.ContainerArgs = []string{"--memory=64G"} }, "runner-up's own"},
+		{"name", func(p *Place) { p.ContainerArgs = []string{"--name", "x"} }, "runner-up's own"},
+		{"detach in a short group", func(p *Place) { p.ContainerArgs = []string{"-dt"} }, "runner-up's own"},
+		{"tty in a short group", func(p *Place) { p.ContainerArgs = []string{"-it"} }, "runner-up's own"},
+		{"harmless short group", func(p *Place) { p.ContainerArgs = []string{"-pw"} }, ""},
+		{"line break", func(p *Place) { p.ContainerArgs = []string{"--kernel-arg", "a\nb"} }, "one line"},
+		{"not a container place", func(p *Place) { p.Provider = ProviderHost; p.Image = ""; p.Arch = ArchAMD64 }, "only an Apple container place"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Place{ID: "mini-1", Provider: ProviderContainer, Pools: []string{"mini"}, Cores: 2, MemoryMB: 4096, Image: "runner-up-linux:24.04"}
+			tc.edit(&p)
+			c := &Config{StateDir: t.TempDir(), GitHub: GitHub{Repos: []string{"o/r"}}, Pools: []Pool{{Label: "mini"}},
+				Machines: []Machine{{Name: "mini", SSH: []string{"you@mini"}, Cores: 8, MemoryMB: 16384, Places: []Place{p}}}}
+			err := c.Validate()
+			if tc.want == "" && err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("err %v, want one saying %q", err, tc.want)
+			}
+		})
+	}
+}
