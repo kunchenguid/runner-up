@@ -14,12 +14,15 @@ import (
 // splits the line in two, matching jobs first except for last:, which puts
 // them last. Later rules order ties; first-in, first-out breaks the last tie:
 //
-//	pool:NAME         jobs asking for the pool NAME, such as short jobs a
-//	                  merge waits on, on the places it shares with other pools
-//	last:NAME         the one rule that puts its jobs last: jobs asking for
-//	                  the pool NAME, such as Linux guests sharing a Mac's
-//	                  budget, go behind other jobs tied by earlier rules, so
-//	                  a waiting job of another pool keeps its room first
+//	pool:NAME,..      jobs asking for one of the pools NAME, such as short
+//	                  jobs a merge waits on, on the places it shares with
+//	                  other pools; the pools listed together tie, so a busy
+//	                  one never holds the others back
+//	last:NAME,..      the one rule that puts its jobs last: jobs asking for
+//	                  one of the pools NAME, such as Linux guests sharing a
+//	                  Mac's budget, go behind other jobs tied by earlier
+//	                  rules, so a waiting job of another pool keeps its room
+//	                  first
 //	label:NAME        jobs from an open pull request labeled NAME, from the
 //	                  same repository, including runs on its head branch
 //	waited:DURATION   jobs waiting at least DURATION, oldest first among them,
@@ -51,14 +54,14 @@ const (
 type Rule struct {
 	kind  ruleKind
 	label string
-	pool  string
+	pools []string
 	wait  time.Duration
 	globs []string
 }
 
 // ParseOrder reads and checks the setup's order rules, or the default order
-// when it has none. A pool or last rule must name a pool of the setup: one
-// that names no pool would order nothing, and say nothing.
+// when it has none. A pool or last rule must name only pools of the setup:
+// one that names no pool would order nothing, and say nothing.
 func ParseOrder(cfg *config.Config) ([]Rule, error) {
 	order := cfg.Order
 	if len(order) == 0 {
@@ -78,10 +81,19 @@ func ParseOrder(cfg *config.Config) ([]Rule, error) {
 			if arg == "" {
 				return nil, fmt.Errorf("order rule %q names no pool", s)
 			}
-			if !slices.ContainsFunc(cfg.Pools, func(p config.Pool) bool { return p.Label == arg }) {
-				return nil, fmt.Errorf("order rule %q names no pool of this setup", s)
+			for _, name := range strings.Split(arg, ",") {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					return nil, fmt.Errorf("order rule %q has an empty pool name", s)
+				}
+				if !slices.ContainsFunc(cfg.Pools, func(p config.Pool) bool { return p.Label == name }) {
+					return nil, fmt.Errorf("order rule %q names %q, no pool of this setup", s, name)
+				}
+				if slices.Contains(r.pools, name) {
+					return nil, fmt.Errorf("order rule %q names %q twice", s, name)
+				}
+				r.pools = append(r.pools, name)
 			}
-			r.pool = arg
 		case ruleWaited:
 			d, err := time.ParseDuration(arg)
 			if err != nil || d <= 0 {
@@ -113,11 +125,11 @@ func before(x, y Job, rules []Rule, now time.Time) bool {
 	for _, r := range rules {
 		switch r.kind {
 		case rulePool:
-			if a, b := x.Pool == r.pool, y.Pool == r.pool; a != b {
+			if a, b := slices.Contains(r.pools, x.Pool), slices.Contains(r.pools, y.Pool); a != b {
 				return a
 			}
 		case ruleLast:
-			if a, b := x.Pool == r.pool, y.Pool == r.pool; a != b {
+			if a, b := slices.Contains(r.pools, x.Pool), slices.Contains(r.pools, y.Pool); a != b {
 				return b
 			}
 		case ruleLabel:
