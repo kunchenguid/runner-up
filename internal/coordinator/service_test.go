@@ -69,6 +69,11 @@ type fakeSet struct {
 	unreachable int
 	// running are the runners GitHub gave a job, which it refuses to remove.
 	running map[int64]bool
+	// refuse, when set, is GitHub's answer to a runner registration in its
+	// place, such as a refusal while the sign-in's allowance is used up.
+	refuse func() error
+	// refused counts the registrations GitHub refused.
+	refused int
 }
 
 func (f *fakeSet) AcquireJobs(_ context.Context, ids []int64) ([]int64, error) {
@@ -89,6 +94,12 @@ func (f *fakeSet) GenerateJIT(_ context.Context, name, workFolder string) (strin
 	defer f.mu.Unlock()
 	if f.workFolders == nil {
 		f.workFolders = map[string]string{}
+	}
+	if f.refuse != nil {
+		if err := f.refuse(); err != nil {
+			f.refused++
+			return "", 0, err
+		}
 	}
 	f.workFolders[name] = workFolder
 	f.nextID++

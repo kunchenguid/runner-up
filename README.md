@@ -576,6 +576,28 @@ minutes after the finish, and the place frees. GitHub gives a one-job runner
 no second job and takes nothing more from it for the finished one, so
 stopping it loses nothing.
 
+### When GitHub refuses a start
+
+GitHub refuses to hand out a job or register a runner while the sign-in has
+used up its API allowance, or makes requests too fast, and names how long to
+wait. Every scale set signs in the same way, so until that time the
+coordinator acquires no job and registers no runner for any of them. The job
+whose start GitHub refused waits again, in line from where it was, and no
+place rests for it. Once the time passes, the next placement starts it. The
+wait is at least a minute and at most an hour. Borrows call no GitHub and are
+not held.
+
+### When GitHub cannot find a repository
+
+A repository or organization that was renamed, moved or deleted answers not
+found to each of its sessions, and every try uses the sign-in's allowance,
+which every session and API read shares. So each not-found answer in a row
+doubles the pause before the next try, from 30 seconds to 16 minutes, and
+after the seventh, about half an hour in, the coordinator logs `GitHub cannot
+find this repository or organization; its session stops` and stops trying.
+The next applied setup change, such as one that names the new name, or a
+coordinator restart, tries it again. A session that opens ends the count.
+
 ## Setup file
 
 Besides what `init` and `machine add` write, you can set:
@@ -677,8 +699,9 @@ is read whole, the coordinator checks it as `check-config` does and applies
 it in place:
 
 - Repositories, organizations and pools the change adds get their scale set
-  sessions, and ones it removes have theirs closed. Every other session stays
-  open.
+  sessions, and ones it removes have theirs closed. A session stopped because
+  GitHub could not find its repository or organization is tried again. Every
+  other session stays open.
 - Machines, places, sizes, order rules and the other settings apply to the
   next job the coordinator places.
 - Running jobs run on, each with the setup and reservation it started with.
