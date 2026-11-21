@@ -999,8 +999,8 @@ job breaks a final tie.
 
 | Rule | Puts first |
 | --- | --- |
-| `pool:NAME` | jobs asking for the pool NAME, which must be one of the setup's pools |
-| `last:NAME` | jobs not asking for pool NAME, which must be one of the setup's pools |
+| `pool:NAME,...` | jobs asking for one of the pools listed, each of which must be one of the setup's pools |
+| `last:NAME,...` | jobs not asking for any of the pools listed, each of which must be one of the setup's pools |
 | `label:NAME` | jobs from an open pull request labeled NAME, in the same repository (not from forks), including runs on its branch |
 | `waited:DURATION` | jobs that have waited at least DURATION, oldest first |
 | `workflow:GLOB,...` | jobs whose top-level workflow file (without `.yml`) matches, such as `release` or `deploy-*` |
@@ -1012,6 +1012,13 @@ A `pool:` rule matters where places serve several pools. To let short jobs that
 a merge waits on go ahead of everything else, give them a pool of their own,
 have the same places serve it, and list `pool:` first:
 `["pool:quick", "label:urgent", "waited:60m", "shortest"]`.
+
+Pools listed in one `pool:` rule tie, and the later rules order their jobs
+together; a rule per pool instead ranks every job of the first pool ahead of
+every job of the next, so a busy first pool holds the next back until the
+`waited:` rule, if any, lifts its jobs. To put a group of pools, such as a
+team's, ahead of the rest without ranking them among themselves, list them in
+one rule: `["waited:60m", "pool:team-api,team-web,team-docs", "shortest"]`.
 
 A `last:` rule matters where places of different pools share a machine's
 budget. The first-ranked job waiting only for room keeps it, so ranking a pool

@@ -2,6 +2,7 @@ package plan
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -170,13 +171,15 @@ func TestEachOrderRuleKindPutsItsJobsFirst(t *testing.T) {
 // have, which would order nothing and say nothing, is refused when the setup
 // loads.
 func TestOrderRulesAreChecked(t *testing.T) {
-	for _, bad := range []string{"label:", "pool:", "pool:ru-lagre", "last:", "last:ru-linx", "waited:soon", "waited:-5m",
+	for _, bad := range []string{"label:", "pool:", "pool:ru-lagre", "pool:ru-large,", "pool:ru-large,ru-lagre", "pool:ru-large,ru-large",
+		"last:", "last:ru-linx", "last:ru-linux,ru-linx", "waited:soon", "waited:-5m",
 		"workflow:[", "workflow:release,", "shortest:yes", "fastest"} {
 		if _, err := ParseOrder(setupWith(bad)); err == nil || !strings.Contains(err.Error(), `"`+bad+`"`) {
 			t.Errorf("order rule %q: the check said %v", bad, err)
 		}
 	}
-	if _, err := ParseOrder(setupWith("pool:ru-large", "last:ru-linux", "label:urgent", "waited:30m", "workflow:release,deploy-*", "shortest")); err != nil {
+	if _, err := ParseOrder(setupWith("pool:ru-large", "last:ru-linux", "pool:ru-large,ru-linux", "last:ru-linux, ru-large", "label:urgent",
+		"waited:30m", "workflow:release,deploy-*", "shortest")); err != nil {
 		t.Fatal(err)
 	}
 	if rules, err := ParseOrder(setupWith()); err != nil || len(rules) != len(defaultOrder) {
@@ -229,6 +232,56 @@ func TestRulesSayWhichReadingsTheyNeed(t *testing.T) {
 		}
 		if labels, workflows := Needs(rules); labels != tc.labels || workflows != tc.workflows {
 			t.Errorf("%v needs labels=%v workflows=%v, want %v %v", tc.rules, labels, workflows, tc.labels, tc.workflows)
+		}
+	}
+}
+
+// Intent (README, "Order rules": a pool: or last: rule may list several
+// pools, which tie): pools listed in one rule share its side of the line, in
+// the order the later rules give, so a busy pool listed first never holds
+// back another listed with it, while pools left out stay behind (or, for
+// last:, ahead of) them all. A rule per pool instead ranks each pool above
+// the next.
+func TestAPoolRuleListingSeveralPoolsTiesThem(t *testing.T) {
+	cfg := &config.Config{Pools: []config.Pool{{Label: "ru-busy"}, {Label: "ru-quiet"}, {Label: "ru-shared"}}}
+	now := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	job := func(pool string, id int64, waited time.Duration) Job {
+		return Job{Target: "octo-org/" + pool, Repo: "octo-org/" + pool, Pool: pool, RequestID: id, QueueTime: now.Add(-waited)}
+	}
+	// The quiet pool's job waited longest; the busy pool's arrived after it.
+	jobs := []Job{job("ru-shared", 1, 50*time.Minute), job("ru-quiet", 2, 40*time.Minute),
+		job("ru-busy", 3, 20*time.Minute), job("ru-busy", 4, 5*time.Minute)}
+	pools := func(ranked []Job) []string {
+		var out []string
+		for _, j := range ranked {
+			out = append(out, fmt.Sprintf("%s#%d", j.Pool, j.RequestID))
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		why   string
+		rules []string
+		want  []string
+	}{
+		{"a rule per pool ranks the first pool's later jobs ahead of the second's",
+			[]string{"pool:ru-busy", "pool:ru-quiet"},
+			[]string{"ru-busy#3", "ru-busy#4", "ru-quiet#2", "ru-shared#1"}},
+		{"one rule listing both keeps them in age order, ahead of the rest",
+			[]string{"pool:ru-busy,ru-quiet"},
+			[]string{"ru-quiet#2", "ru-busy#3", "ru-busy#4", "ru-shared#1"}},
+		{"one last: rule listing both puts them behind the rest, in age order",
+			[]string{"last:ru-quiet,ru-busy"},
+			[]string{"ru-shared#1", "ru-quiet#2", "ru-busy#3", "ru-busy#4"}},
+	} {
+		cfg.Order = tc.rules
+		rules, err := ParseOrder(cfg)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.why, err)
+		}
+		in := slices.Clone(jobs)
+		slices.Reverse(in)
+		if got := pools(Rank(in, rules, now)); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: ranked\n  %s\nwant\n  %s", tc.why, strings.Join(got, " "), strings.Join(tc.want, " "))
 		}
 	}
 }
