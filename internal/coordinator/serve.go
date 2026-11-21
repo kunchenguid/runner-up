@@ -67,13 +67,15 @@ func Serve(ctx context.Context, cfg *config.Config, o ServeOptions) int {
 	}
 	up.Service = svc
 	// Each reader is used only while the setup needs it: label and workflow
-	// reads while an order rule does, VM reads of the Macs with tart places.
+	// reads while an order rule does, VM reads of the Macs with tart places,
+	// free-memory reads of the machines with a floor.
 	if o.API != nil {
 		svc.RunReader = o.API.RunClosed
 		svc.LabelReader = o.API.PullLabels
 		svc.WorkflowReader = o.API.RunWorkflow
 	}
 	svc.VmReader = ReadVMs
+	svc.MemReader = ReadMemory
 	// serving ends when ctx does, or to restart as a new version.
 	serving, stopServing := context.WithCancel(ctx)
 	defer stopServing()

@@ -21,8 +21,9 @@ import (
 // places take jobs again.
 
 // machines is what the coordinator knows of its machines beyond the setup:
-// which rest because their agent could not be reached, and which macOS VMs
-// each Mac runs (vmlimit.go).
+// which rest because their agent could not be reached, which macOS VMs
+// each Mac runs (vmlimit.go), and how much memory is free on each machine
+// with a floor (memfloor.go).
 type machines struct {
 	// unreachable are the resting machines, by name, with when each was found
 	// unreachable, and reachAsked when each was last asked.
@@ -39,6 +40,11 @@ type machines struct {
 	VmReader vmReader
 	vms      map[string][]string
 	vmsRead  map[string]time.Time
+
+	// MemReader, set while serving, reads the free memory of each machine
+	// with a floor; Memory is the latest reading by machine.
+	MemReader memReader
+	Memory    map[string]MemoryReading
 }
 
 func newMachines() machines {
@@ -48,6 +54,7 @@ func newMachines() machines {
 		Reach:       ReachAgent,
 		vms:         map[string][]string{},
 		vmsRead:     map[string]time.Time{},
+		Memory:      map[string]MemoryReading{},
 	}
 }
 
