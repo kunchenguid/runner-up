@@ -33,11 +33,11 @@ import (
 // first line of input, makes a fresh place with its provider, runs the runner
 // there for one job and removes the place whatever happened. Its input stays
 // open while the coordinator's place runner wants the runner; the place
-// runner stops it with the line "stop". Input that ends without it - the SSH
-// connection dropped - leaves the place running for a while for the place
-// runner to reconnect with `agent attach` (reconnect.go), and stops it if
-// none does. Before making a place it removes anything left of the same place
-// by an agent that was killed outright.
+// runner stops it with the line "stop". Input that ends without it, or a
+// hangup - the SSH connection dropped - leaves the place and its job running
+// for the place runner to reconnect with `agent attach` (reconnect.go).
+// Before making a place it removes anything left of the same place by an
+// agent that was killed outright.
 
 // provider makes a machine's places.
 type provider interface {
@@ -77,9 +77,6 @@ type AgentRun struct {
 	StateDir string
 	// Self is this program, which a place runs as its fork guard.
 	Self string
-	// ReconnectWait is how long a run keeps its place after losing its link
-	// (reconnect.go).
-	ReconnectWait time.Duration
 }
 
 func (a *AgentRun) Dir() string { return filepath.Join(a.StateDir, "places", a.Place) }
@@ -182,7 +179,6 @@ func AgentMain(args []string) int {
 	fs.StringVar(&a.Switch, "switch", config.DefaultSwitch, "the Hyper-V switch a Hyper-V place joins")
 	fs.StringVar(&a.Guest, "guest", config.GuestLinux, "the system a Hyper-V place's image runs: linux or windows")
 	fs.StringVar(&a.ToolCache, "tool-cache", "", "the runner's tool cache: a host place's, kept between jobs (in the place's folder by default), or a folder inside a tart clone")
-	reconnect := fs.Int("reconnect-wait", int(DefaultReconnectWait/time.Second), "seconds a place keeps running after its run's connection is lost, for the coordinator to reconnect")
 	boot := fs.Int("boot-timeout", 300, "seconds a KVM, tart or Hyper-V place may take to boot")
 	guestCheck := fs.Int("guest-check", 30, "seconds between readings of a tart clone's boot session")
 	fs.BoolVar(&a.AllowForks, "allow-forks", false, "run jobs from other repositories' pull requests")
@@ -191,7 +187,6 @@ func AgentMain(args []string) int {
 		return code
 	}
 	a.BootTimeout = time.Duration(*boot) * time.Second
-	a.ReconnectWait = time.Duration(max(*reconnect, 0)) * time.Second
 	a.GuestCheck = time.Duration(max(*guestCheck, 1)) * time.Second
 	if a.StateDir == "" {
 		a.StateDir = filepath.Join(config.DefaultStateDir(), "agent")
@@ -232,7 +227,7 @@ func agentRunPlace(a *AgentRun, p provider, in io.Reader, stdout io.Writer) int 
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := newSession(a.ReconnectWait, cancel)
+	s := newSession(cancel)
 	say := s.say
 	first := s.attach(&quietWriter{w: stdout}, nil)
 	go s.readLink(first, r)
@@ -263,9 +258,7 @@ func agentRunPlace(a *AgentRun, p provider, in io.Reader, stdout io.Writer) int 
 	defer unlock()
 	if closeLinks, err := s.listen(a); err != nil {
 		say("cannot take a reconnect, so a lost connection stops place %s: %v", a.Place, err)
-		s.mu.Lock()
-		s.wait = 0
-		s.mu.Unlock()
+		s.noReconnect()
 	} else {
 		defer closeLinks()
 	}

@@ -233,11 +233,6 @@ func RunArgs(cfg *config.Config, p config.Place, pool string) []string {
 	if cfg.AllowForkPullRequests {
 		args = append(args, "--allow-forks")
 	}
-	// The agent's own wait is the default, which agents older than the
-	// flag never needed.
-	if cfg.ReconnectSeconds != config.DefaultReconnectSeconds {
-		args = append(args, "--reconnect-wait", strconv.Itoa(cfg.ReconnectSeconds))
-	}
 	return args
 }
 
@@ -310,10 +305,14 @@ type placeRunner struct {
 // failed before a job reached the runner, unasked, failed to start the
 // runner, for the coordinator to rest the place (failedstart.go).
 //
-// When ssh loses a machine's agent that had answered, the place keeps
-// running there for reconnectSeconds (the agent's reconnect.go), and so the
-// place runner keeps the place and reconnects with `agent attach` until then.
-// Only once it gives up is the machine out of reach.
+// When ssh loses a machine's agent that had answered, the place and its job
+// keep running there (the agent's reconnect.go), and so the place runner
+// keeps the place busy and reconnects with `agent attach` every few seconds,
+// for as long as it takes. It lets the place go once the machine answers and
+// it gets the run's result, or no run holds the place any more; or once the
+// coordinator stops it, as it does a runner still holding its place after
+// GitHub finished its job (finished.go). Stopped while the machine is out of
+// reach, it rests the machine.
 func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int {
 	pr, pw := io.Pipe()
 	// stopping closes once the runner is to stop: each agent command still
@@ -389,7 +388,8 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 	jobTimer := time.NewTimer(r.cfg.Seconds(r.cfg.MaxJobSeconds))
 	defer jobTimer.Stop()
 	var kill, retry <-chan time.Time
-	var reconnectBy time.Time
+	// lost is set once ssh lost an agent that had answered.
+	lost := false
 	stopped := false
 	end := func(why string) {
 		if stopped {
@@ -437,19 +437,13 @@ func (r *placeRunner) watch(ctx context.Context, cmd *exec.Cmd, jit string) int 
 				return finish(code, false)
 			case code != sshFailed || !remote:
 				return finish(code, false)
-			case stopped || !heard.Load() && reconnectBy.IsZero():
-				// Lost while stopping, or never reached: the agent
-				// stops the place itself.
+			case stopped || !heard.Load() && !lost:
+				// Lost while stopping, or never reached.
 				return finish(code, true)
 			}
-			if reconnectBy.IsZero() {
-				reconnectBy = time.Now().Add(r.cfg.Seconds(r.cfg.ReconnectSeconds))
-				r.log.Warn("lost the machine's agent; the place keeps running there while this reconnects",
-					"machine", r.p.Machine, "until", reconnectBy.Format(time.RFC3339))
-			}
-			if time.Now().After(reconnectBy) {
-				r.log.Warn("could not reconnect to the machine's agent in time")
-				return finish(code, true)
+			if !lost {
+				lost = true
+				r.log.Warn("lost the machine's agent; the place keeps running there while this reconnects", "machine", r.p.Machine)
 			}
 			retry = time.After(reconnectEvery)
 		case <-retry:

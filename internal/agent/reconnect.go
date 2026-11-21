@@ -15,24 +15,26 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/kunchenguid/runner-up/internal/config"
 )
 
 // An agent run reports to whoever holds its link: at first the coordinator's
 // place runner, over the run's own input and output (through SSH on another
 // machine). The place runner ends a run on purpose by sending the line
-// "stop". Input that ends without it means the link was lost, such as an SSH
-// connection that dropped: the place keeps running for ReconnectWait, its
-// output held, while the place runner reconnects with `agent attach`.
+// "stop". Input that ends without it, or a hangup, means the link was lost,
+// such as an SSH connection that dropped or that the machine's SSH server
+// closed when the coordinator stopped answering its keepalive: the place and
+// its job keep running, their output held, while the place runner reconnects
+// with `agent attach`. Losing the link never stops the place. It ends as any
+// place does: its runner ends after its job, or it is stopped on purpose -
+// by "stop" from whoever holds the link, by SIGTERM or SIGINT, or by a later
+// run of the same place asking this one to let go (askToLetGo).
 //
 // The attach reaches the run through a listener on this machine's loopback
 // address, whose port and secret the run keeps in the place's folder, which
 // only the agent's account may read. The run hands the attach the output it
 // held and reports to it from then on, ending with the line exitMarker and
-// its exit code. A place nobody reconnects to within ReconnectWait is
-// stopped and cleaned up. A run whose place ended while it had no link waits
-// out the rest of ReconnectWait to hand over its result.
+// its exit code. A run whose place ended while it had no link keeps its
+// result for resultWait for the place runner to reconnect and collect it.
 
 const (
 	// linkFile, in the place's folder, holds the listener's port and secret.
@@ -49,15 +51,16 @@ const (
 	maxHeld = 1 << 20
 )
 
-// DefaultReconnectWait is how long a run keeps its place after losing its
-// link, unless told otherwise.
-const DefaultReconnectWait = config.DefaultReconnectSeconds * time.Second
+// resultWait is how long a run whose place ended while it had no link keeps
+// its result for the place runner to reconnect. A place runner reconnects
+// every few seconds for as long as it holds the place, so it only goes
+// uncollected when the coordinator let the place go.
+const resultWait = 10 * time.Minute
 
 // session is a run's link to whoever it reports to. Its Write goes to the
 // current link, or is held while there is none.
 type session struct {
-	wait time.Duration
-	// stopPlace stops the place: on purpose, or because nobody reconnected.
+	// stopPlace stops the place on purpose.
 	stopPlace func()
 	notify    chan struct{}
 
@@ -67,14 +70,15 @@ type session struct {
 	conn    net.Conn
 	id      int
 	held    []byte
-	timer   *time.Timer
-	expired bool
 	stopped bool
-	say     func(format string, v ...any)
+	// cannotReconnect: the run could not open its listener, so nobody can
+	// reconnect to it, and a lost link stops the place.
+	cannotReconnect bool
+	say             func(format string, v ...any)
 }
 
-func newSession(wait time.Duration, stopPlace func()) *session {
-	s := &session{wait: wait, stopPlace: stopPlace, notify: make(chan struct{}, 1)}
+func newSession(stopPlace func()) *session {
+	s := &session{stopPlace: stopPlace, notify: make(chan struct{}, 1)}
 	s.say = func(format string, v ...any) { fmt.Fprintf(s, "runner-up agent: "+format+"\n", v...) }
 	return s
 }
@@ -114,12 +118,8 @@ func (s *session) attach(w io.Writer, conn net.Conn) int {
 	if s.conn != nil {
 		s.conn.Close()
 	}
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
-	}
 	s.id++
-	s.link, s.conn, s.expired = w, conn, false
+	s.link, s.conn = w, conn
 	if len(s.held) > 0 {
 		w.Write(s.held)
 		s.held = nil
@@ -128,31 +128,38 @@ func (s *session) attach(w io.Writer, conn net.Conn) int {
 	return s.id
 }
 
-// lose says link id is gone. Unless a newer link replaced it, the place
-// keeps running for the session's wait, then stops.
+// lose says link id is gone, unless a newer link replaced it. The place keeps
+// running for the place runner to reconnect, unless nobody can.
 func (s *session) lose(id int) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if id != s.id || s.link == nil {
+		s.mu.Unlock()
 		return
 	}
 	s.link, s.conn = nil, nil
 	if s.stopped {
+		s.mu.Unlock()
 		return
 	}
-	s.writeLocked([]byte(fmt.Sprintf("runner-up agent: lost the link to the coordinator; keeping the place for %s for it to reconnect\n", s.wait)))
-	s.timer = time.AfterFunc(s.wait, func() {
-		s.mu.Lock()
-		if s.id != id || s.link != nil {
-			s.mu.Unlock()
-			return
-		}
-		s.expired = true
-		s.writeLocked([]byte(fmt.Sprintf("runner-up agent: nobody reconnected within %s; stopping the place\n", s.wait)))
+	if !s.cannotReconnect {
+		s.writeLocked([]byte("runner-up agent: lost the link to the coordinator; the place keeps running for it to reconnect\n"))
 		s.mu.Unlock()
-		s.stopPlace()
-		s.poke()
-	})
+		return
+	}
+	s.mu.Unlock()
+	s.stop()
+}
+
+// noReconnect says nobody can reconnect to the run: from now on a lost link
+// stops the place, as does one lost already.
+func (s *session) noReconnect() {
+	s.mu.Lock()
+	s.cannotReconnect = true
+	lost := s.link == nil && !s.stopped
+	s.mu.Unlock()
+	if lost {
+		s.stop()
+	}
 }
 
 // stop ends the run on purpose: nobody waits for its result.
@@ -165,8 +172,10 @@ func (s *session) stop() {
 }
 
 // finish hands the run's exit code to its link. With no link, it waits for
-// one until the session's wait runs out or the run is stopped.
+// one for up to resultWait, unless the run was stopped on purpose or nobody
+// can reconnect.
 func (s *session) finish(code int) {
+	var giveUp <-chan time.Time
 	for {
 		s.mu.Lock()
 		if s.link != nil {
@@ -178,12 +187,22 @@ func (s *session) finish(code int) {
 			s.mu.Unlock()
 			return
 		}
-		if s.expired || s.stopped {
+		if s.stopped || s.cannotReconnect {
 			s.mu.Unlock()
 			return
 		}
+		if giveUp == nil {
+			s.writeLocked([]byte(fmt.Sprintf("runner-up agent: keeping the place's result for %s for the coordinator to reconnect\n", resultWait)))
+			t := time.NewTimer(resultWait)
+			defer t.Stop()
+			giveUp = t.C
+		}
 		s.mu.Unlock()
-		<-s.notify
+		select {
+		case <-s.notify:
+		case <-giveUp:
+			return
+		}
 	}
 }
 
