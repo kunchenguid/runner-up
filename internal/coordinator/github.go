@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -103,27 +104,41 @@ func ensureScaleSet(ctx context.Context, c *scaleset.Client, target, group, labe
 // Sessions keeps one scale set session open for each repository or
 // organization and pool of the setup the coordinator runs. A setup change
 // opens the sessions of the scale sets it adds and closes those of the ones
-// it removes; every other session stays open through it.
+// it removes; every other session stays open through it, except a session
+// that stopped because GitHub could not find its repository or organization
+// (RunSet), which every applied setup change tries again.
 type Sessions struct {
 	ctx     context.Context
 	svc     *Service
 	log     *slog.Logger
 	clients ClientFactory
-	wg      sync.WaitGroup
-	open    map[sessionKey]context.CancelFunc
+	// pause waits between a session's tries (RunSet).
+	pause pauseFunc
+	wg    sync.WaitGroup
+	open  map[sessionKey]*openSession
+
+	// mu guards missing: the sessions that stopped because GitHub could not
+	// find their target.
+	mu      sync.Mutex
+	missing map[sessionKey]bool
 }
+
+// openSession is a session Match started; cancel closes it.
+type openSession struct{ cancel context.CancelFunc }
 
 // sessionKey names one session: a target's scale set for a pool, found in
 // the runner group an organization's scale sets join.
 type sessionKey struct{ target, pool, group string }
 
 func NewSessions(ctx context.Context, svc *Service, log *slog.Logger, clients ClientFactory) *Sessions {
-	return &Sessions{ctx: ctx, svc: svc, log: log, clients: clients, open: map[sessionKey]context.CancelFunc{}}
+	return &Sessions{ctx: ctx, svc: svc, log: log, clients: clients, pause: sleep,
+		open: map[sessionKey]*openSession{}, missing: map[sessionKey]bool{}}
 }
 
-// Match opens a session for each scale set cfg serves that has none, and
-// closes each session of a scale set cfg no longer serves. Only one goroutine
-// calls it.
+// Match opens a session for each scale set cfg serves that has none, or
+// whose session stopped because GitHub could not find its target, and closes
+// each session of a scale set cfg no longer serves. Only one goroutine calls
+// it.
 func (ss *Sessions) Match(cfg *config.Config) {
 	var want []sessionKey
 	for _, target := range cfg.Targets() {
@@ -135,23 +150,40 @@ func (ss *Sessions) Match(cfg *config.Config) {
 			want = append(want, sessionKey{target, label, group})
 		}
 	}
-	for k, cancel := range ss.open {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	for k, o := range ss.open {
 		if !slices.Contains(want, k) {
-			ss.log.Info("the setup no longer serves this scale set; closing its session", "target", k.target, "pool", k.pool)
-			cancel()
+			if !ss.missing[k] {
+				ss.log.Info("the setup no longer serves this scale set; closing its session", "target", k.target, "pool", k.pool)
+			}
+			o.cancel()
 			delete(ss.open, k)
+			delete(ss.missing, k)
 		}
 	}
 	for _, k := range want {
-		if _, ok := ss.open[k]; ok {
+		if _, ok := ss.open[k]; ok && !ss.missing[k] {
 			continue
 		}
+		if ss.missing[k] {
+			ss.log.Info("the setup was applied again; trying the session GitHub could not find again", "target", k.target, "pool", k.pool)
+			delete(ss.missing, k)
+		}
 		ctx, cancel := context.WithCancel(ss.ctx)
-		ss.open[k] = cancel
+		o := &openSession{cancel}
+		ss.open[k] = o
 		ss.wg.Add(1)
 		go func() {
 			defer ss.wg.Done()
-			RunSet(ctx, ss.svc, ss.log, k.target, k.pool, ss.clients)
+			if RunSet(ctx, ss.svc, ss.log, k.target, k.pool, ss.clients, ss.pause) {
+				ss.mu.Lock()
+				// A later Match may have closed it meanwhile.
+				if ss.open[k] == o {
+					ss.missing[k] = true
+				}
+				ss.mu.Unlock()
+			}
 		}()
 	}
 }
@@ -167,34 +199,84 @@ func (ss *Sessions) Done() <-chan struct{} {
 	return done
 }
 
-// RunSet keeps one scale set's session open and feeds its messages to the
-// service, until ctx ends. It never acquires a job itself: the serve loop's
-// placement pass does, once a place is chosen, with the serving context.
-// Errors restart the session after a pause; the session's messages stay
-// queued at GitHub until acknowledged.
-func RunSet(ctx context.Context, svc *Service, log *slog.Logger, target, label string, clients ClientFactory) {
-	log = log.With("target", target, "pool", label)
-	for ctx.Err() == nil {
-		err := serveSet(ctx, svc, log, target, label, clients)
-		if ctx.Err() != nil {
-			return
-		}
-		log.Warn("scale set session ended; retrying in 30s", "err", err)
-		select {
-		case <-ctx.Done():
-		case <-time.After(30 * time.Second):
-		}
+const (
+	// sessionRetry is the pause before a session that ended is tried again.
+	sessionRetry = 30 * time.Second
+	// missingStop is how many times in a row GitHub answers that it cannot
+	// find a session's repository or organization before the session stops:
+	// with the pauses doubling from sessionRetry between them, about half an
+	// hour of answers.
+	missingStop = 7
+)
+
+// pauseFunc waits d, and reports false when ctx ended first.
+type pauseFunc func(ctx context.Context, d time.Duration) bool
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
-func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label string, clients ClientFactory) error {
+// RunSet keeps one scale set's session open and feeds its messages to the
+// service, until ctx ends. It never acquires a job itself: the serve loop's
+// placement pass does, once a place is chosen, with the serving context.
+// Errors restart the session after a pause of sessionRetry; the session's
+// messages stay queued at GitHub until acknowledged.
+//
+// A repository or organization that was renamed, moved or deleted answers
+// not found to every try, and every try uses the sign-in's allowance, which
+// every scale set and GitHub read shares: 29 sessions on one old name used it
+// up for hours. So each not found in a row doubles the pause, and after
+// missingStop of them RunSet logs that GitHub cannot find the target and
+// returns true, its session stopped. Any session that opens ends the count.
+func RunSet(ctx context.Context, svc *Service, log *slog.Logger, target, label string, clients ClientFactory, pause pauseFunc) (missing bool) {
+	log = log.With("target", target, "pool", label)
+	notFound := 0
+	for ctx.Err() == nil {
+		opened, err := serveSet(ctx, svc, log, target, label, clients)
+		if ctx.Err() != nil {
+			return false
+		}
+		if opened {
+			notFound = 0
+		}
+		wait := sessionRetry
+		if errors.Is(err, scaleset.NotFoundError) {
+			notFound++
+			if notFound >= missingStop {
+				log.Error("GitHub cannot find this repository or organization; its session stops until the setup changes or runner-up restarts",
+					"answers", notFound, "err", err)
+				return true
+			}
+			wait = sessionRetry << (notFound - 1)
+			log.Warn("GitHub cannot find this repository or organization; retrying later", "answers", notFound,
+				"retry", wait.String(), "err", err)
+		} else {
+			notFound = 0
+			log.Warn("scale set session ended; retrying in 30s", "err", err)
+		}
+		if !pause(ctx, wait) {
+			return false
+		}
+	}
+	return false
+}
+
+// serveSet serves one session of a scale set, and reports whether it opened.
+func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label string, clients ClientFactory) (opened bool, err error) {
 	c, err := clients(ctx, target)
 	if err != nil {
-		return err
+		return false, err
 	}
 	set, err := ensureScaleSet(ctx, c, target, svc.Setup().RunnerGroup(), label)
 	if err != nil {
-		return fmt.Errorf("scale set: %w", err)
+		return false, fmt.Errorf("scale set: %w", err)
 	}
 	c.SetSystemInfo(scaleset.SystemInfo{System: "runner-up", Version: version.Version, Subsystem: "coordinator", ScaleSetID: set.ID})
 	host, _ := os.Hostname()
@@ -202,7 +284,7 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 	// one lets go.
 	session, err := c.MessageSessionClient(ctx, set.ID, "runner-up-"+host)
 	if err != nil {
-		return fmt.Errorf("session: %w", err)
+		return false, fmt.Errorf("session: %w", err)
 	}
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionCleanupTimeout)
@@ -226,7 +308,7 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 	for ctx.Err() == nil {
 		msg, err := session.GetMessage(ctx, last, svc.Setup().AnnounceCapacity)
 		if err != nil {
-			return fmt.Errorf("get message: %w", err)
+			return true, fmt.Errorf("get message: %w", err)
 		}
 		svc.Handle(target, label, msg)
 		if msg != nil {
@@ -235,9 +317,9 @@ func serveSet(ctx context.Context, svc *Service, log *slog.Logger, target, label
 			err := session.DeleteMessage(ackCtx, msg.MessageID)
 			cancel()
 			if err != nil {
-				return fmt.Errorf("ack message %d: %w", msg.MessageID, err)
+				return true, fmt.Errorf("ack message %d: %w", msg.MessageID, err)
 			}
 		}
 	}
-	return ctx.Err()
+	return true, ctx.Err()
 }

@@ -76,7 +76,8 @@ func (s *Service) assignLocked(ctx context.Context, v *snapshot, a plan.Assignme
 	if !ok || j.TakenBack && j.BorrowID == "" {
 		return false
 	}
-	if _, ok := s.sets[setKey(j.Target, j.Pool)]; !ok && j.BorrowID == "" {
+	if _, ok := s.sets[setKey(j.Target, j.Pool)]; j.BorrowID == "" && (!ok || s.startsRefusedLocked(s.now())) {
+		// GitHub may have refused the start before this one in the plan.
 		return false
 	}
 	// A place given in the same plan as another may have to wait for it now.
@@ -117,6 +118,11 @@ func (s *Service) assignLocked(ctx context.Context, v *snapshot, a plan.Assignme
 			delete(s.acquired, k)
 			s.waiting[k] = a.Job
 		}
+		if wait, ok := githubWait(err); ok {
+			s.Log.Warn("GitHub refused to acquire a job; jobs wait until it takes starts again", "repo", j.Repo,
+				"job", j.Name, "retry", wait.String(), "until", s.refuseStartsLocked(wait).Format(time.RFC3339), "err", err)
+			return false
+		}
 		s.Log.Error("acquire failed", "repo", j.Repo, "job", j.Name, "err", err)
 		return false
 	case errors.Is(err, errGone):
@@ -127,6 +133,17 @@ func (s *Service) assignLocked(ctx context.Context, v *snapshot, a plan.Assignme
 		s.Log.Info("job no longer available", "repo", j.Repo, "job", j.Name, "request", j.RequestID)
 		return true
 	case err != nil:
+		if wait, ok := githubWait(err); ok {
+			// GitHub refused to register the runner: no runner will take
+			// the job, so it waits again, in line from where it was.
+			if a, ok := s.acquired[k]; ok && ours() {
+				delete(s.acquired, k)
+				s.waiting[k] = a.Job
+			}
+			s.Log.Warn("GitHub refused a runner start; the job waits until GitHub takes starts again", "place", p.ID,
+				"repo", j.Repo, "job", j.Name, "retry", wait.String(), "until", s.refuseStartsLocked(wait).Format(time.RFC3339), "err", err)
+			return true
+		}
 		// GitHub gives back an acquired job no runner took.
 		s.Log.Error("could not start a runner; the place rests a minute", "place", p.ID, "repo", j.Repo, "job", j.Name, "err", err)
 		s.cooling[p.ID] = now.Add(time.Minute)

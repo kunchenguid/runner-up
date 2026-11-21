@@ -22,6 +22,9 @@ type queue struct {
 	// waitWhy is why each waiting job last had no free place, as last
 	// logged (logWaitsLocked).
 	waitWhy map[string]string
+	// startsRefused is when GitHub, having refused a start, takes starts
+	// again (refused.go).
+	startsRefused time.Time
 }
 
 func newQueue() queue {
@@ -168,12 +171,14 @@ func (s *Service) handBackLocked(target, pool, runner string, started []string) 
 
 // waitingLocked is the jobs a place could take now, with what the rules read
 // filled in. A job whose scale set has no live session cannot be acquired
-// now, and a job GitHub took back is assigned to nothing until it is assigned
-// again. A job a drain names may take only that drain's places.
+// now, nor any while GitHub refuses starts (refused.go), and a job GitHub
+// took back is assigned to nothing until it is assigned again. A job a drain
+// names may take only that drain's places.
 func (s *Service) waitingLocked() []plan.Job {
 	out := make([]plan.Job, 0, len(s.waiting))
+	refused := s.startsRefusedLocked(s.now())
 	for _, j := range s.waiting {
-		if _, ok := s.sets[setKey(j.Target, j.Pool)]; j.BorrowID == "" && (!ok || j.TakenBack) {
+		if _, ok := s.sets[setKey(j.Target, j.Pool)]; j.BorrowID == "" && (!ok || j.TakenBack || refused) {
 			continue
 		}
 		j.Size = s.Cfg.PoolSize(j.Pool)
