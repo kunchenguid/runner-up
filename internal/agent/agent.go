@@ -172,12 +172,12 @@ func AgentMain(args []string) int {
 	}
 	fs := flag.NewFlagSet("agent "+args[0], flag.ContinueOnError)
 	a := &AgentRun{}
-	fs.StringVar(&a.Provider, "provider", "", "docker, kvm, tart, host, account, hyperv or container")
+	fs.StringVar(&a.Provider, "provider", "", "docker, kvm, tart, tart-linux, host, account, hyperv or container")
 	fs.StringVar(&a.Place, "place", "", "the place's id")
 	fs.IntVar(&a.Cores, "cores", 2, "cores the place gets")
 	fs.IntVar(&a.MemoryMB, "memory", 4096, "memory the place gets, in MB")
 	fs.IntVar(&a.DiskGB, "disk-gb", 0, "a KVM place's disk size, 40 GB by default, or the size a tart clone or Hyper-V disk grows to")
-	fs.StringVar(&a.Image, "image", "", "the runner image, a KVM or Hyper-V place's base disk image, the tart image a tart place clones, or the image an Apple container place starts from")
+	fs.StringVar(&a.Image, "image", "", "the runner image, a KVM or Hyper-V place's base disk image, the tart image a tart or tart-linux place clones, or the image an Apple container place starts from")
 	fs.StringVar(&a.Switch, "switch", config.DefaultSwitch, "the Hyper-V switch a Hyper-V place joins")
 	fs.StringVar(&a.Guest, "guest", config.GuestLinux, "the system a Hyper-V place's image runs: linux or windows")
 	fs.StringVar(&a.ToolCache, "tool-cache", "", "the runner's tool cache: a host place's, kept between jobs (in the place's folder by default), or a folder inside a tart clone")
